@@ -49,6 +49,15 @@ impl PortPoller {
             inner: Mutex::new(PollerInner::default()),
         }
     }
+
+    pub fn is_system_service(&self, pid: u32) -> Option<bool> {
+        let inner = self.inner.lock().ok()?;
+        inner
+            .last_result
+            .iter()
+            .find(|process| process.pid == pid)
+            .map(|process| process.is_system_service)
+    }
 }
 
 struct CacheSnapshot {
@@ -241,8 +250,31 @@ async fn run_scan(app: &AppHandle) {
 
     let (processes, error) = match scan_result {
         Ok(Ok(processes)) => (processes, None),
-        Ok(Err(err)) => (Vec::new(), Some(err)),
-        Err(err) => (Vec::new(), Some(format!("Scan task failed: {err}"))),
+        Ok(Err(err)) => {
+            let previous = {
+                let poller = app.state::<PortPoller>();
+                let inner = match poller.inner.lock() {
+                    Ok(inner) => inner,
+                    Err(_) => return,
+                };
+                inner.last_result.clone()
+            };
+            (previous, Some(err))
+        }
+        Err(err) => {
+            let previous = {
+                let poller = app.state::<PortPoller>();
+                let inner = match poller.inner.lock() {
+                    Ok(inner) => inner,
+                    Err(_) => return,
+                };
+                inner.last_result.clone()
+            };
+            (
+                previous,
+                Some(format!("Scan task failed: {err}")),
+            )
+        }
     };
 
     let payload = {
@@ -254,7 +286,9 @@ async fn run_scan(app: &AppHandle) {
 
         inner.in_flight = false;
         inner.last_scan_at = Some(Instant::now());
-        inner.last_result = processes.clone();
+        if error.is_none() {
+            inner.last_result = processes.clone();
+        }
         inner.last_error = error.clone();
 
         PortsUpdatedPayload {

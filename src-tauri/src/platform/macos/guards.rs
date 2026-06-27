@@ -56,8 +56,16 @@ pub fn validate_delete_path(path: &str) -> Result<(), String> {
     path_validation::validate_delete_path(path, is_protected_canonical)
 }
 
+pub fn resolve_delete_path(path: &str) -> Result<std::path::PathBuf, String> {
+    path_validation::resolve_delete_path(path, is_protected_canonical)
+}
+
 pub fn validate_permanent_delete(path: &str, confirmation: &str) -> Result<(), String> {
     path_validation::validate_permanent_delete(path, confirmation, is_protected_canonical)
+}
+
+pub fn resolve_permanent_delete(path: &str, confirmation: &str) -> Result<std::path::PathBuf, String> {
+    path_validation::resolve_permanent_delete(path, confirmation, is_protected_canonical)
 }
 
 #[cfg(test)]

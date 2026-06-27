@@ -112,10 +112,13 @@ fn run_lsof_tcp() -> Result<Vec<LsofRecord>, String> {
         .map_err(|e| format!("Failed to run lsof: {e}"))?;
 
     if !output.status.success() && output.stdout.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.trim().is_empty() {
+            return Ok(Vec::new());
+        }
         return Err(format!(
-            "lsof exited with status {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
+            "lsof exited with status {}: {stderr}",
+            output.status
         ));
     }
 
@@ -130,10 +133,13 @@ fn run_lsof_udp() -> Result<Vec<LsofRecord>, String> {
         .map_err(|e| format!("Failed to run lsof for UDP: {e}"))?;
 
     if !output.status.success() && output.stdout.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.trim().is_empty() {
+            return Ok(Vec::new());
+        }
         return Err(format!(
-            "lsof UDP exited with status {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
+            "lsof UDP exited with status {}: {stderr}",
+            output.status
         ));
     }
 

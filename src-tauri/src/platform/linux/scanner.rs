@@ -264,7 +264,7 @@ fn read_proc_uptime(proc_dir: &PathBuf) -> u64 {
         .and_then(|raw| raw.split_whitespace().next()?.parse::<f64>().ok())
         .unwrap_or(0.0);
     let start_secs = start_ticks as f64 / clock_ticks;
-    system_uptime.saturating_sub(start_secs).max(0.0) as u64
+    (system_uptime - start_secs).max(0.0) as u64
 }
 
 #[cfg(test)]

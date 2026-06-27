@@ -167,7 +167,6 @@ function App() {
           freePortTargets.some((process) => process.is_system_service) &&
           settings.allowSystemProcessActions
         }
-        allowSystemProcessActions={settings.allowSystemProcessActions}
         onStopped={() => void refresh()}
       />
 

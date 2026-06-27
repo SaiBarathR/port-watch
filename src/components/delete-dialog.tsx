@@ -63,23 +63,19 @@ export function DeleteDialog({
     try {
       await invoke("stop_process", {
         pid: target.process.pid,
-        isSystemService: target.process.is_system_service,
-        allowSystemActions: allowSystemProcessActions,
       });
 
       if (target.mode === "trash") {
         await invoke("move_to_trash", {
           path,
-          isSystemService: target.process.is_system_service,
-          allowSystemActions: allowSystemProcessActions,
+          pid: target.process.pid,
         });
         toast.success("Moved folder to Trash");
       } else {
         await invoke("delete_permanently", {
           path,
           confirmation,
-          isSystemService: target.process.is_system_service,
-          allowSystemActions: allowSystemProcessActions,
+          pid: target.process.pid,
         });
         toast.success("Folder deleted permanently");
       }

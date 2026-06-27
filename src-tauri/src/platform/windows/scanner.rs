@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde::Deserialize;
 
@@ -44,10 +45,13 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
         };
 
         let script_path = extract_script_path(&command_line, &listener.name);
+        let working_directory = infer_working_directory(&executable_path, &script_path);
         let project_root = infer_project_root(
-            script_path
-                .as_deref()
-                .unwrap_or(&executable_path),
+            if !working_directory.is_empty() {
+                &working_directory
+            } else {
+                script_path.as_deref().unwrap_or(&executable_path)
+            },
         );
 
         by_pid
@@ -70,7 +74,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
                     executable_path: executable_path.clone(),
                     script_path: script_path.clone(),
                     command_line: command_line.clone(),
-                    working_directory: String::new(),
+                    working_directory: working_directory.clone(),
                     project_root: project_root.clone(),
                     system_kind: SystemKind::User,
                     is_system_service: false,
@@ -99,6 +103,22 @@ fn normalize_address(address: &str) -> String {
     } else {
         address.to_string()
     }
+}
+
+fn infer_working_directory(executable_path: &str, script_path: &Option<String>) -> String {
+    if let Some(script) = script_path {
+        if let Some(parent) = Path::new(script).parent() {
+            return parent.to_string_lossy().into_owned();
+        }
+    }
+
+    if !executable_path.is_empty() {
+        if let Some(parent) = Path::new(executable_path).parent() {
+            return parent.to_string_lossy().into_owned();
+        }
+    }
+
+    String::new()
 }
 
 fn query_listeners(protocol: &str) -> Result<Vec<WindowsListener>, String> {
@@ -138,6 +158,17 @@ fn query_listeners(protocol: &str) -> Result<Vec<WindowsListener>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn infer_working_directory_from_script_path() {
+        assert_eq!(
+            infer_working_directory(
+                "C:\\Program Files\\nodejs\\node.exe",
+                &Some("C:\\Users\\dev\\app\\server.js".to_string()),
+            ),
+            "C:\\Users\\dev\\app"
+        );
+    }
 
     #[test]
     fn normalize_address_wildcard() {

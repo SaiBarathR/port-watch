@@ -22,7 +22,6 @@ interface StopDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   requireDoubleConfirm: boolean;
-  allowSystemProcessActions: boolean;
   onStopped: () => void;
   title?: string;
   description?: string;
@@ -33,7 +32,6 @@ export function StopDialog({
   open,
   onOpenChange,
   requireDoubleConfirm,
-  allowSystemProcessActions,
   onStopped,
   title,
   description,
@@ -61,8 +59,6 @@ export function StopDialog({
       try {
         await invoke("stop_process", {
           pid: process.pid,
-          isSystemService: process.is_system_service,
-          allowSystemActions: allowSystemProcessActions,
         });
         stopped += 1;
       } catch (err) {

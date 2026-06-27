@@ -56,6 +56,42 @@ pub fn validate_delete_path(path: &str) -> Result<(), String> {
     path_validation::validate_delete_path(path, is_protected_canonical)
 }
 
+pub fn resolve_delete_path(path: &str) -> Result<std::path::PathBuf, String> {
+    path_validation::resolve_delete_path(path, is_protected_canonical)
+}
+
 pub fn validate_permanent_delete(path: &str, confirmation: &str) -> Result<(), String> {
     path_validation::validate_permanent_delete(path, confirmation, is_protected_canonical)
+}
+
+pub fn resolve_permanent_delete(path: &str, confirmation: &str) -> Result<std::path::PathBuf, String> {
+    path_validation::resolve_permanent_delete(path, confirmation, is_protected_canonical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::home::user_home;
+    use std::fs;
+    use std::path::Path;
+
+    #[test]
+    fn blocks_system_paths() {
+        assert!(is_protected_path("/usr/bin/python3"));
+        assert!(is_protected_path("/opt/app"));
+    }
+
+    #[test]
+    fn allows_usr_local() {
+        assert!(!is_protected_path("/usr/local/bin/node"));
+    }
+
+    #[test]
+    fn allows_user_home() {
+        let path = Path::new(user_home()).join("port-watch-guard-user-test");
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        assert!(is_user_allowed_path(path.to_str().unwrap()));
+        let _ = fs::remove_dir_all(&path);
+    }
 }

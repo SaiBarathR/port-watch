@@ -171,7 +171,6 @@ export function PopoverApp() {
           stopTarget?.is_system_service === true &&
           settings.allowSystemProcessActions
         }
-        allowSystemProcessActions={settings.allowSystemProcessActions}
         onStopped={() => void refresh()}
       />
     </div>

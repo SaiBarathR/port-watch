@@ -438,6 +438,14 @@ export function usePortScan() {
   }, [settings.refreshIntervalMs, settings.includeUdp]);
 
   useEffect(() => {
+    void invoke("set_allow_system_process_actions", {
+      allow: settings.allowSystemProcessActions,
+    }).catch(() => {
+      // ignore outside Tauri
+    });
+  }, [settings.allowSystemProcessActions]);
+
+  useEffect(() => {
     return () => {
       if (changeClearTimerRef.current !== null) {
         window.clearTimeout(changeClearTimerRef.current);

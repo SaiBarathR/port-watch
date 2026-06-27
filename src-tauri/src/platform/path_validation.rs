@@ -59,18 +59,21 @@ pub fn assert_delete_allowed(
     Ok(())
 }
 
-pub fn validate_delete_path(path: &str, is_protected: fn(&Path) -> bool) -> Result<(), String> {
+pub fn resolve_delete_path(path: &str, is_protected: fn(&Path) -> bool) -> Result<PathBuf, String> {
     let canonical = resolve_existing_path(path)?;
-    assert_delete_allowed(&canonical, is_protected)
+    assert_delete_allowed(&canonical, is_protected)?;
+    Ok(canonical)
 }
 
-pub fn validate_permanent_delete(
+pub fn validate_delete_path(path: &str, is_protected: fn(&Path) -> bool) -> Result<(), String> {
+    resolve_delete_path(path, is_protected).map(|_| ())
+}
+
+pub fn resolve_permanent_delete(
     path: &str,
     confirmation: &str,
     is_protected: fn(&Path) -> bool,
-) -> Result<(), String> {
-    validate_delete_path(path, is_protected)?;
-
+) -> Result<PathBuf, String> {
     let expected = Path::new(path)
         .file_name()
         .and_then(|name| name.to_str())
@@ -86,7 +89,15 @@ pub fn validate_permanent_delete(
         ));
     }
 
-    Ok(())
+    resolve_delete_path(path, is_protected)
+}
+
+pub fn validate_permanent_delete(
+    path: &str,
+    confirmation: &str,
+    is_protected: fn(&Path) -> bool,
+) -> Result<(), String> {
+    resolve_permanent_delete(path, confirmation, is_protected).map(|_| ())
 }
 
 pub fn assert_system_actions_allowed(

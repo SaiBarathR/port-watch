@@ -133,23 +133,33 @@ fn parse_ss_output(stdout: &str, protocol: &str) -> Vec<SocketRecord> {
 }
 
 fn parse_ss_line(line: &str) -> Option<(u32, String, &str)> {
-    let users_idx = line.find("users:")?;
-    let before_users = line[..users_idx].trim();
-    let users_part = &line[users_idx..];
+    // `ss` only attaches the `users:(...)` process field for sockets the caller
+    // owns (or all of them when running as root). Sockets owned by other users
+    // appear without it, so the field is optional: keep the listener with an
+    // unknown owner (pid 0) rather than dropping it from the scan.
+    let (before_users, users_part) = match line.find("users:") {
+        Some(idx) => (line[..idx].trim(), Some(&line[idx..])),
+        None => (line.trim(), None),
+    };
 
-    let pid = users_part
-        .split("pid=")
-        .nth(1)?
-        .split([',', ')'])
-        .next()?
-        .parse()
-        .ok()?;
-
-    let name = users_part
-        .split('"')
-        .nth(1)
-        .unwrap_or("unknown")
-        .to_string();
+    let (pid, name) = match users_part {
+        Some(users_part) => {
+            let pid = users_part
+                .split("pid=")
+                .nth(1)?
+                .split([',', ')'])
+                .next()?
+                .parse()
+                .ok()?;
+            let name = users_part
+                .split('"')
+                .nth(1)
+                .unwrap_or("unknown")
+                .to_string();
+            (pid, name)
+        }
+        None => (0, "unknown".to_string()),
+    };
 
     let parts: Vec<&str> = before_users.split_whitespace().collect();
     let local = *parts.get(parts.len().checked_sub(2)?)?;
@@ -158,8 +168,16 @@ fn parse_ss_line(line: &str) -> Option<(u32, String, &str)> {
 
 fn merge_by_pid(records: Vec<SocketRecord>) -> Vec<SocketRecord> {
     let mut by_pid: HashMap<u32, SocketRecord> = HashMap::new();
+    // Ownerless sockets (pid 0, e.g. other users' listeners seen without root)
+    // share the placeholder pid, so they must not be merged into one another.
+    let mut ownerless: Vec<SocketRecord> = Vec::new();
 
     for record in records {
+        if record.pid == 0 {
+            ownerless.push(record);
+            continue;
+        }
+
         by_pid
             .entry(record.pid)
             .and_modify(|existing| {
@@ -179,7 +197,9 @@ fn merge_by_pid(records: Vec<SocketRecord>) -> Vec<SocketRecord> {
             .or_insert(record);
     }
 
-    by_pid.into_values().collect()
+    let mut merged: Vec<SocketRecord> = by_pid.into_values().collect();
+    merged.extend(ownerless);
+    merged
 }
 
 fn read_proc_info(pid: u32) -> Result<ProcInfo, String> {
@@ -306,6 +326,43 @@ mod tests {
         assert_eq!(pid, 999);
         assert_eq!(name, "nginx");
         assert_eq!(local, "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn parse_ss_line_without_users_field() {
+        // Non-root `ss` omits the users:(...) field for sockets owned by other
+        // users; the listener must still be parsed with an unknown owner.
+        let line = "LISTEN 0 4096 0.0.0.0:443 0.0.0.0:*";
+        let (pid, name, local) = parse_ss_line(line).unwrap();
+        assert_eq!(pid, 0);
+        assert_eq!(name, "unknown");
+        assert_eq!(local, "0.0.0.0:443");
+    }
+
+    #[test]
+    fn merge_by_pid_keeps_ownerless_sockets_separate() {
+        let records = vec![
+            SocketRecord {
+                pid: 0,
+                name: "unknown".into(),
+                bindings: vec![PortBinding {
+                    address: "0.0.0.0".into(),
+                    port: 443,
+                    protocol: "TCP".into(),
+                }],
+            },
+            SocketRecord {
+                pid: 0,
+                name: "unknown".into(),
+                bindings: vec![PortBinding {
+                    address: "0.0.0.0".into(),
+                    port: 80,
+                    protocol: "TCP".into(),
+                }],
+            },
+        ];
+        let merged = merge_by_pid(records);
+        assert_eq!(merged.len(), 2);
     }
 
     #[test]

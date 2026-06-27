@@ -7,7 +7,10 @@ import { PopoverHeader } from "@/components/popover/popover-header";
 import { PopoverList } from "@/components/popover/popover-list";
 import { StopDialog } from "@/components/stop-dialog";
 import { usePortScan } from "@/hooks/use-port-scan";
+import { useLiquidGlass } from "@/hooks/use-liquid-glass";
+import { getStoredTheme, resolveTheme } from "@/hooks/use-theme";
 import type { PortProcess } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { processHasPort, primaryPort } from "@/lib/types";
 
 function matchesPopoverSearch(process: PortProcess, query: string): boolean {
@@ -69,6 +72,12 @@ export function PopoverApp() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [stopTarget]);
 
+  useLiquidGlass(settings.liquidGlass, "popover", resolveTheme(getStoredTheme()), {
+    translucency: settings.glassTranslucency,
+    blur: settings.glassBlur,
+    tint: settings.glassTint,
+  });
+
   const userListeners = useMemo(
     () => allProcesses.filter((process) => !process.is_system_service),
     [allProcesses],
@@ -107,7 +116,14 @@ export function PopoverApp() {
 
   return (
     <div className="flex h-screen flex-col p-2">
-      <div className="flex h-full flex-col overflow-hidden rounded-xl border bg-background text-sm shadow-lg">
+      <div
+        className={cn(
+          "flex h-full flex-col overflow-hidden rounded-xl border text-sm shadow-lg",
+          settings.liquidGlass
+            ? "glass-window border-[var(--glass-border)]"
+            : "bg-background",
+        )}
+      >
         <PopoverHeader search={search} onSearchChange={setSearch} />
 
         {error && (

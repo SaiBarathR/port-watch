@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark-grey *, .dark-oled *));
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -49,7 +49,28 @@
   --ring: oklch(0.708 0 0);
 }
 
-.dark {
+.dark-grey {
+  --background: oklch(0.22 0 0);
+  --foreground: oklch(0.92 0 0);
+  --card: oklch(0.26 0 0);
+  --card-foreground: oklch(0.92 0 0);
+  --popover: oklch(0.26 0 0);
+  --popover-foreground: oklch(0.92 0 0);
+  --primary: oklch(0.88 0 0);
+  --primary-foreground: oklch(0.22 0 0);
+  --secondary: oklch(0.30 0 0);
+  --secondary-foreground: oklch(0.92 0 0);
+  --muted: oklch(0.30 0 0);
+  --muted-foreground: oklch(0.62 0 0);
+  --accent: oklch(0.30 0 0);
+  --accent-foreground: oklch(0.92 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 18%);
+  --ring: oklch(0.556 0 0);
+}
+
+.dark-oled {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -70,12 +91,141 @@
   --ring: oklch(0.556 0 0);
 }
 
+/*
+ * Liquid Glass.
+ *
+ * The window itself is a genuine frosted-glass pane: the webview is transparent so the
+ * native macOS NSGlassEffectView shows through (it picks up + blurs the wallpaper and is
+ * tinted per-theme from the hook), and .glass-window adds a CSS frost on top so the app
+ * reads as translucent glass regardless of what's behind it. --background is therefore
+ * meaningfully see-through. Other color tokens keep their solid base values so panels and
+ * controls don't turn muddy. Floating panels (dialog, dropdown, select, tooltip) paint
+ * their own self-contained glass via .glass-surface below.
+ */
+/*
+ * Each theme contributes only its base colors; the translucency level (set via
+ * data-glass-level by the hook) contributes the alpha percentages; the final surface
+ * colors are composed with color-mix so the two are independent. Blur level (data-glass-blur)
+ * drives --glass-blur. Defaults below are the "medium" values so the app still looks right
+ * if the attributes are ever absent.
+ */
+.liquid-glass {
+  --glass-base: oklch(1 0 0);
+  --glass-base-header: oklch(1 0 0);
+  --glass-base-fill: oklch(1 0 0);
+  --glass-border: oklch(1 0 0 / 0.5);
+  --glass-highlight: oklch(1 0 0 / 0.85);
+  --glass-shadow: 0 16px 48px -16px oklch(0 0 0 / 0.32);
+
+  --glass-alpha-window: 50%;
+  --glass-alpha-bg: 55%;
+  --glass-alpha-header: 72%;
+  --glass-alpha-fill: 64%;
+  --glass-blur: 30px;
+
+  --glass-window: color-mix(in oklch, var(--glass-base) var(--glass-alpha-window), transparent);
+  --background: color-mix(in oklch, var(--glass-base) var(--glass-alpha-bg), transparent);
+  --glass-header: color-mix(in oklch, var(--glass-base-header) var(--glass-alpha-header), transparent);
+  --glass-fill: color-mix(in oklch, var(--glass-base-fill) var(--glass-alpha-fill), transparent);
+}
+
+.liquid-glass.dark-grey {
+  --glass-base: oklch(0.22 0 0);
+  --glass-base-header: oklch(0.24 0 0);
+  --glass-base-fill: oklch(0.32 0 0);
+  --glass-border: oklch(1 0 0 / 0.16);
+  --glass-highlight: oklch(1 0 0 / 0.22);
+  --glass-shadow: 0 16px 48px -16px oklch(0 0 0 / 0.6);
+}
+
+.liquid-glass.dark-oled {
+  --glass-base: oklch(0.12 0 0);
+  --glass-base-header: oklch(0.16 0 0);
+  --glass-base-fill: oklch(0.22 0 0);
+  --glass-border: oklch(1 0 0 / 0.14);
+  --glass-highlight: oklch(1 0 0 / 0.18);
+  --glass-shadow: 0 16px 48px -16px oklch(0 0 0 / 0.72);
+}
+
+/* Translucency levels — alpha only, so they compose with any theme. */
+html.liquid-glass[data-glass-level="subtle"] {
+  --glass-alpha-window: 70%;
+  --glass-alpha-bg: 74%;
+  --glass-alpha-header: 86%;
+  --glass-alpha-fill: 80%;
+}
+html.liquid-glass[data-glass-level="clear"] {
+  --glass-alpha-window: 32%;
+  --glass-alpha-bg: 40%;
+  --glass-alpha-header: 58%;
+  --glass-alpha-fill: 50%;
+}
+
+/* Blur (frost) levels. */
+html.liquid-glass[data-glass-blur="light"] {
+  --glass-blur: 16px;
+}
+html.liquid-glass[data-glass-blur="heavy"] {
+  --glass-blur: 50px;
+}
+
+/* The whole window content as one frosted pane (over the native glass + wallpaper). */
+html.liquid-glass .glass-window {
+  background-color: var(--glass-window);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+}
+
+/*
+ * Sticky table elements (header row + pinned first/last columns) sit over body rows that
+ * scroll under them. Frost that scrolling content so it reads as soft vibrancy behind the
+ * sticky element rather than sharp text bleeding through — the macOS sticky-header look.
+ */
+html.liquid-glass [data-slot="table-header"] [data-slot="table-head"],
+html.liquid-glass td.sticky,
+html.liquid-glass th.sticky {
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(180%);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(180%);
+}
+
+/* The header sits above the whole body, so back it with a denser fill for legibility.
+   (Pinned body columns are left to their own translucent bg so row-hover tints show.) */
+html.liquid-glass [data-slot="table-header"] [data-slot="table-head"] {
+  background-color: var(--glass-header);
+}
+
+/*
+ * Reusable Apple-style glass panel: translucent fill + frosted backdrop blur/saturation,
+ * a crisp specular top-edge rim, and a soft depth shadow. Applied to floating panels via
+ * their data-slot attributes (these sit over opaque DOM, so backdrop-filter correctly
+ * blurs the content behind them — the "sheet over content" look).
+ */
+.glass-surface,
+html.liquid-glass [data-slot="dialog-content"],
+html.liquid-glass [data-slot="alert-dialog-content"],
+html.liquid-glass [data-slot="dropdown-menu-content"],
+html.liquid-glass [data-slot="dropdown-menu-sub-content"],
+html.liquid-glass [data-slot="select-content"],
+html.liquid-glass [data-slot="tooltip-content"] {
+  background-color: var(--glass-fill);
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.8)) saturate(180%);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.8)) saturate(180%);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 0 var(--glass-highlight);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground antialiased;
+  }
+  html.liquid-glass:not(.popover-window),
+  html.liquid-glass:not(.popover-window) body {
+    background: transparent;
   }
   html.popover-window,
   html.popover-window body {

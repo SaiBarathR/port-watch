@@ -25,6 +25,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_liquid_glass::init())
         .manage(PortPoller::new())
         .setup(|app| {
             setup_tray(app.handle())?;

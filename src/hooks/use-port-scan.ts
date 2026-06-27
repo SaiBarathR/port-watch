@@ -580,6 +580,34 @@ export function usePortScan() {
     [persistSettings],
   );
 
+  const setLiquidGlass = useCallback(
+    (liquidGlass: boolean) => {
+      persistSettings((current) => ({ ...current, liquidGlass }));
+    },
+    [persistSettings],
+  );
+
+  const setGlassTranslucency = useCallback(
+    (glassTranslucency: AppSettings["glassTranslucency"]) => {
+      persistSettings((current) => ({ ...current, glassTranslucency }));
+    },
+    [persistSettings],
+  );
+
+  const setGlassBlur = useCallback(
+    (glassBlur: AppSettings["glassBlur"]) => {
+      persistSettings((current) => ({ ...current, glassBlur }));
+    },
+    [persistSettings],
+  );
+
+  const setGlassTint = useCallback(
+    (glassTint: boolean) => {
+      persistSettings((current) => ({ ...current, glassTint }));
+    },
+    [persistSettings],
+  );
+
   const deferredSearch = useDeferredValue(search);
   const filtered = useMemo(
     () =>
@@ -655,6 +683,10 @@ export function usePortScan() {
     setWatchedPortNotifications,
     setIncludeUdp,
     setUseHttpsForLocalhost,
+    setLiquidGlass,
+    setGlassTranslucency,
+    setGlassBlur,
+    setGlassTint,
     setRefreshPaused,
     rowChanges,
     userCount,

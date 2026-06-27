@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import {
   MonitorIcon,
   MoonIcon,
+  MoonStarIcon,
   SunIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -25,9 +26,15 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { ThemeMode } from "@/hooks/use-theme";
+import { isMacOS } from "@/hooks/use-liquid-glass";
 import { PortHistoryList } from "@/components/port-history-timeline";
 import { clearPortHistory } from "@/lib/port-history";
-import type { AppSettings, RefreshInterval } from "@/lib/types";
+import {
+  GLASS_BLUR_OPTIONS,
+  GLASS_TRANSLUCENCY_OPTIONS,
+  type AppSettings,
+  type RefreshInterval,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const THEME_OPTIONS: {
@@ -36,7 +43,8 @@ const THEME_OPTIONS: {
   icon: typeof SunIcon;
 }[] = [
   { value: "light", label: "Light", icon: SunIcon },
-  { value: "dark", label: "Dark", icon: MoonIcon },
+  { value: "dark-grey", label: "Grey", icon: MoonIcon },
+  { value: "dark-oled", label: "OLED", icon: MoonStarIcon },
   { value: "system", label: "System", icon: MonitorIcon },
 ];
 
@@ -109,6 +117,10 @@ interface SettingsDialogProps {
   onWatchedPortsChange: (ports: number[]) => void;
   onIncludeUdpChange: (include: boolean) => void;
   onUseHttpsForLocalhostChange: (useHttps: boolean) => void;
+  onLiquidGlassChange: (enabled: boolean) => void;
+  onGlassTranslucencyChange: (value: AppSettings["glassTranslucency"]) => void;
+  onGlassBlurChange: (value: AppSettings["glassBlur"]) => void;
+  onGlassTintChange: (enabled: boolean) => void;
   trigger: ReactNode;
 }
 
@@ -125,6 +137,10 @@ export function SettingsDialog({
   onWatchedPortsChange,
   onIncludeUdpChange,
   onUseHttpsForLocalhostChange,
+  onLiquidGlassChange,
+  onGlassTranslucencyChange,
+  onGlassBlurChange,
+  onGlassTintChange,
   trigger,
 }: SettingsDialogProps) {
   const [open, setOpen] = useState(false);
@@ -196,7 +212,10 @@ export function SettingsDialog({
           </SettingSection>
 
           <SettingSection title="Appearance">
-            <SettingRow label="Theme" description="Light, dark, or match system.">
+            <SettingRow
+              label="Theme"
+              description="Light, grey dark, OLED dark, or match system."
+            >
               <div
                 className="flex items-center rounded-lg border bg-muted/40 p-0.5"
                 role="group"
@@ -226,6 +245,80 @@ export function SettingsDialog({
                 ))}
               </div>
             </SettingRow>
+            {isMacOS() && (
+              <SettingRow
+                htmlFor="settings-liquid-glass"
+                label="Liquid Glass"
+                description="Native macOS translucency. Requires window transparency."
+              >
+                <Switch
+                  id="settings-liquid-glass"
+                  checked={settings.liquidGlass}
+                  onCheckedChange={onLiquidGlassChange}
+                />
+              </SettingRow>
+            )}
+            {isMacOS() && settings.liquidGlass && (
+              <>
+                <SettingRow
+                  label="Translucency"
+                  description="How much shows through the window."
+                >
+                  <Select
+                    value={settings.glassTranslucency}
+                    onValueChange={(v) =>
+                      onGlassTranslucencyChange(
+                        v as AppSettings["glassTranslucency"],
+                      )
+                    }
+                  >
+                    <SelectTrigger size="sm" className="w-full min-w-[8.5rem] sm:w-[8.5rem]">
+                      <SelectValue placeholder="Translucency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GLASS_TRANSLUCENCY_OPTIONS.map(({ value, label }) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+                <SettingRow
+                  label="Blur"
+                  description="Frost strength behind the glass."
+                >
+                  <Select
+                    value={settings.glassBlur}
+                    onValueChange={(v) =>
+                      onGlassBlurChange(v as AppSettings["glassBlur"])
+                    }
+                  >
+                    <SelectTrigger size="sm" className="w-full min-w-[8.5rem] sm:w-[8.5rem]">
+                      <SelectValue placeholder="Blur" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GLASS_BLUR_OPTIONS.map(({ value, label }) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+                <SettingRow
+                  htmlFor="settings-glass-tint"
+                  label="Tint dark themes"
+                  description="Deepen the glass in grey and OLED themes for contrast."
+                >
+                  <Switch
+                    id="settings-glass-tint"
+                    checked={settings.glassTint}
+                    onCheckedChange={onGlassTintChange}
+                  />
+                </SettingRow>
+              </>
+            )}
           </SettingSection>
 
           <SettingSection title="Table">

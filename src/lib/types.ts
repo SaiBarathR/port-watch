@@ -36,6 +36,24 @@ export type SearchField =
   | "path"
   | "command";
 
+export type GlassTranslucency = "subtle" | "medium" | "clear";
+export type GlassBlur = "light" | "medium" | "heavy";
+
+export const GLASS_TRANSLUCENCY_OPTIONS: {
+  value: GlassTranslucency;
+  label: string;
+}[] = [
+  { value: "subtle", label: "Subtle" },
+  { value: "medium", label: "Medium" },
+  { value: "clear", label: "Clear" },
+];
+
+export const GLASS_BLUR_OPTIONS: { value: GlassBlur; label: string }[] = [
+  { value: "light", label: "Light" },
+  { value: "medium", label: "Medium" },
+  { value: "heavy", label: "Heavy" },
+];
+
 export const SEARCH_FIELD_OPTIONS: { value: SearchField; label: string }[] = [
   { value: "all", label: "All fields" },
   { value: "port", label: "Port" },
@@ -61,6 +79,10 @@ export interface AppSettings {
   watchedPortNotifications: boolean;
   includeUdp: boolean;
   useHttpsForLocalhost: boolean;
+  liquidGlass: boolean;
+  glassTranslucency: GlassTranslucency;
+  glassBlur: GlassBlur;
+  glassTint: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -78,6 +100,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   watchedPortNotifications: false,
   includeUdp: false,
   useHttpsForLocalhost: false,
+  liquidGlass: false,
+  glassTranslucency: "medium",
+  glassBlur: "medium",
+  glassTint: true,
 };
 
 export function formatPorts(

@@ -64,6 +64,10 @@ interface PortToolbarProps {
   onWatchedPortsChange: (ports: number[]) => void;
   onIncludeUdpChange: (include: boolean) => void;
   onUseHttpsForLocalhostChange: (useHttps: boolean) => void;
+  onLiquidGlassChange: (enabled: boolean) => void;
+  onGlassTranslucencyChange: (value: AppSettings["glassTranslucency"]) => void;
+  onGlassBlurChange: (value: AppSettings["glassBlur"]) => void;
+  onGlassTintChange: (enabled: boolean) => void;
   onFreePort: (port: number, occupants: PortProcess[]) => void;
   onRefresh: () => void;
   loading: boolean;
@@ -96,6 +100,10 @@ export function PortToolbar({
   onWatchedPortsChange,
   onIncludeUdpChange,
   onUseHttpsForLocalhostChange,
+  onLiquidGlassChange,
+  onGlassTranslucencyChange,
+  onGlassBlurChange,
+  onGlassTintChange,
   onFreePort,
   onRefresh,
   loading,
@@ -312,6 +320,10 @@ export function PortToolbar({
           onWatchedPortsChange={onWatchedPortsChange}
           onIncludeUdpChange={onIncludeUdpChange}
           onUseHttpsForLocalhostChange={onUseHttpsForLocalhostChange}
+          onLiquidGlassChange={onLiquidGlassChange}
+          onGlassTranslucencyChange={onGlassTranslucencyChange}
+          onGlassBlurChange={onGlassBlurChange}
+          onGlassTintChange={onGlassTintChange}
           trigger={
             <Button
               variant="outline"

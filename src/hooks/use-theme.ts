@@ -1,26 +1,43 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type ThemeMode = "light" | "dark" | "system";
+export type ThemeMode = "light" | "dark-grey" | "dark-oled" | "system";
+export type ResolvedTheme = "light" | "dark-grey" | "dark-oled";
 
 const THEME_KEY = "port-watch-theme";
 
 export function getStoredTheme(): ThemeMode {
   const value = localStorage.getItem(THEME_KEY);
-  if (value === "light" || value === "dark" || value === "system") {
+  if (value === "dark") {
+    return "dark-oled";
+  }
+  if (
+    value === "light" ||
+    value === "dark-grey" ||
+    value === "dark-oled" ||
+    value === "system"
+  ) {
     return value;
   }
   return "system";
 }
 
-export function resolveTheme(mode: ThemeMode): "light" | "dark" {
+export function resolveTheme(mode: ThemeMode): ResolvedTheme {
   if (mode === "system") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark-grey"
+      : "light";
   }
   return mode;
 }
 
 export function applyTheme(mode: ThemeMode) {
-  document.documentElement.classList.toggle("dark", resolveTheme(mode) === "dark");
+  const resolved = resolveTheme(mode);
+  document.documentElement.classList.remove("dark-grey", "dark-oled");
+  if (resolved === "dark-grey") {
+    document.documentElement.classList.add("dark-grey");
+  } else if (resolved === "dark-oled") {
+    document.documentElement.classList.add("dark-oled");
+  }
 }
 
 export function initTheme() {

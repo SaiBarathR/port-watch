@@ -44,9 +44,13 @@ pub fn canonicalize_if_exists(path: &Path) -> Option<PathBuf> {
 }
 
 pub fn path_starts_with(path: &Path, prefix: &Path) -> bool {
+    if path.starts_with(prefix) {
+        return true;
+    }
+
     match (canonicalize_if_exists(path), canonicalize_if_exists(prefix)) {
-        (Some(path), Some(prefix)) => path.starts_with(prefix),
-        _ => path.starts_with(prefix),
+        (Some(path), Some(prefix)) => path.starts_with(&prefix),
+        _ => false,
     }
 }
 

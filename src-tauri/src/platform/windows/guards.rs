@@ -10,7 +10,12 @@ fn is_protected_canonical(path: &Path) -> bool {
 pub fn is_protected_path(path: &str) -> bool {
     path_validation::resolve_existing_path(path)
         .map(|canonical| is_protected_canonical(&canonical))
-        .unwrap_or_else(|_| is_protected_canonical(Path::new(path.trim())))
+        .unwrap_or_else(|_| {
+            let normalized = Path::new(path.trim());
+            paths::protected_prefixes()
+                .iter()
+                .any(|prefix| normalized.starts_with(prefix))
+        })
 }
 
 pub fn is_user_allowed_path(path: &str) -> bool {

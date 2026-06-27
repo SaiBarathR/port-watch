@@ -60,12 +60,15 @@ pub fn is_protected_path(path: &Path) -> bool {
         .any(|prefix| path_starts_with(path, prefix))
 }
 
-pub fn is_microsoft_path(executable_path: &str, command_line: &str) -> bool {
+pub fn is_microsoft_path(executable_path: &str, _command_line: &str) -> bool {
     let executable = PathBuf::from(executable_path);
     if !executable_path.is_empty() && is_protected_path(&executable) {
         return true;
     }
 
-    let cmd = command_line.to_ascii_lowercase();
-    cmd.contains("microsoft") || cmd.contains("windows\\system32")
+    // Match on the executable's own path segments rather than the free-form
+    // command line, so a user project that merely mentions "microsoft" (e.g. a
+    // folder named microsoft-graph-demo) is not flagged as a system service.
+    let exe = executable_path.to_ascii_lowercase();
+    exe.contains("\\windows\\system32\\") || exe.contains("\\program files\\windowsapps\\")
 }

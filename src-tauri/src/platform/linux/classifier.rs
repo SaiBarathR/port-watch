@@ -29,16 +29,10 @@ fn detect_system_kind(process: &PortProcess) -> SystemKind {
         return SystemKind::System;
     }
 
-    if is_current_user {
-        if is_under_user_home(&process.executable_path) {
-            return SystemKind::User;
-        }
-    }
-
-    if is_binary_outside_user_home(&process.executable_path) {
-        return SystemKind::System;
-    }
-
+    // A binary owned by the current user that is not a distro/system binary is
+    // the user's own process regardless of where it lives on disk (AppImage,
+    // Snap, Flatpak, /opt, ...), so it must not be locked behind the
+    // system-actions opt-in.
     if is_current_user {
         return SystemKind::User;
     }
@@ -68,14 +62,6 @@ fn is_system_user(user: &str) -> bool {
     }
 
     user.starts_with('_') && user != current_username()
-}
-
-fn is_binary_outside_user_home(executable_path: &str) -> bool {
-    if executable_path.is_empty() {
-        return false;
-    }
-
-    !executable_path.starts_with(user_home())
 }
 
 fn is_under_user_home(path: &str) -> bool {
@@ -115,5 +101,37 @@ mod tests {
         };
         classify(&mut p);
         assert_eq!(p.system_kind, SystemKind::Distro);
+    }
+
+    #[test]
+    fn classifies_current_user_binary_outside_home_as_user() {
+        // A user-launched AppImage/Snap/opt binary lives outside $HOME but is
+        // still the user's own process, not a system service.
+        let user = current_username();
+        if user == "root" {
+            return; // root is a system user by definition; skip in that env
+        }
+
+        let mut p = PortProcess {
+            pid: 2,
+            name: "myapp".into(),
+            user,
+            ports: vec![PortBinding {
+                address: "*".into(),
+                port: 9000,
+                protocol: "TCP".into(),
+            }],
+            executable_path: "/opt/myapp/bin/myapp".into(),
+            script_path: None,
+            command_line: String::new(),
+            working_directory: "/".into(),
+            project_root: String::new(),
+            system_kind: SystemKind::User,
+            is_system_service: false,
+            uptime_seconds: 0,
+        };
+        classify(&mut p);
+        assert_eq!(p.system_kind, SystemKind::User);
+        assert!(!p.is_system_service);
     }
 }

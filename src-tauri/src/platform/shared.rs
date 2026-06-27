@@ -10,11 +10,11 @@ pub fn extract_script_path(command_line: &str, process_name: &str) -> Option<Str
     let name_lower = process_name.to_lowercase();
     let is_interpreter = interpreters.iter().any(|i| name_lower.contains(i));
 
-    let tokens: Vec<&str> = command_line.split_whitespace().collect();
+    let tokens = tokenize(command_line);
     let start_idx = if is_interpreter { 1 } else { 0 };
 
     for token in tokens.iter().skip(start_idx) {
-        let cleaned = token.trim_matches('"').trim_matches('\'');
+        let cleaned = token.as_str();
         if cleaned.starts_with('-') {
             continue;
         }
@@ -26,6 +26,35 @@ pub fn extract_script_path(command_line: &str, process_name: &str) -> Option<Str
     }
 
     None
+}
+
+/// Split a command line into tokens, honoring single/double quotes so that a
+/// quoted path containing spaces (e.g. `"C:\Program Files\node.exe"`) stays a
+/// single token instead of being shattered on the embedded space.
+fn tokenize(command_line: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for ch in command_line.chars() {
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => current.push(ch),
+            None if ch == '"' || ch == '\'' => quote = Some(ch),
+            None if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(ch),
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
 }
 
 pub fn parse_address_port(value: &str, protocol: &str) -> Option<crate::scanner::PortBinding> {
@@ -96,5 +125,25 @@ mod tests {
     #[test]
     fn skips_connected_udp_socket() {
         assert!(parse_address_port("192.168.1.10:54321->8.8.8.8:53", "UDP").is_none());
+    }
+
+    #[test]
+    fn extract_script_path_quoted_interpreter_with_spaces() {
+        // The interpreter path contains spaces and is quoted; the real script
+        // is the following argument. The interpreter token must not be split.
+        let cmd = "\"C:\\Program Files\\nodejs\\node.exe\" C:\\app\\server.js";
+        assert_eq!(
+            extract_script_path(cmd, "node"),
+            Some("C:\\app\\server.js".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_script_path_unix_interpreter() {
+        let cmd = "node /srv/app/server.js --port 3000";
+        assert_eq!(
+            extract_script_path(cmd, "node"),
+            Some("/srv/app/server.js".to_string())
+        );
     }
 }

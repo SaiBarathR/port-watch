@@ -1,5 +1,6 @@
 mod classifier;
 pub mod cli;
+pub mod cli_install;
 pub mod commands;
 mod guards;
 mod home;
@@ -7,6 +8,9 @@ mod poller;
 pub mod scanner;
 mod tray;
 
+use commands::cli_install::{
+    get_cli_install_status, install_cli_to_path, uninstall_cli_from_path,
+};
 use commands::filesystem::{delete_permanently, move_to_trash, open_in_finder};
 use commands::notifications::send_macos_notification;
 use commands::ports::list_listening_ports;
@@ -49,6 +53,9 @@ pub fn run() {
             set_menu_bar_mode,
             show_full_window_command,
             send_macos_notification,
+            get_cli_install_status,
+            install_cli_to_path,
+            uninstall_cli_from_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

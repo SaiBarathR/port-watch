@@ -3,6 +3,11 @@
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 2 && args[1] == "install-cli" {
+        port_watch_lib::cli_install::run_install_cli();
+        return;
+    }
+
     if args.len() >= 3 && args[1] == "check" {
         port_watch_lib::cli::run_check(&args[2..]);
         return;

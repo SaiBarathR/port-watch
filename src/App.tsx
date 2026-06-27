@@ -5,6 +5,7 @@ import { Toaster } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { PortTable } from "@/components/port-table";
 import { PortToolbar } from "@/components/port-toolbar";
+import { CliInstallPrompt } from "@/components/cli-install-prompt";
 import { StopDialog } from "@/components/stop-dialog";
 import { usePortScan } from "@/hooks/use-port-scan";
 import { useLiquidGlass } from "@/hooks/use-liquid-glass";
@@ -168,6 +169,8 @@ function App() {
         }
         onStopped={() => void refresh()}
       />
+
+      <CliInstallPrompt />
 
       <Toaster
         richColors

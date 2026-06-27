@@ -81,9 +81,22 @@ Search for a specific port to see whether it is free, who is using it, and its r
 
 ### CLI
 
+Install the command-line tool from **Settings → Command line** (one click). Port Watch symlinks `/usr/local/bin/port-watch` to the app binary so you can run:
+
 ```bash
 port-watch check 3000
 port-watch check 53 --udp
+```
+
+On first launch, Port Watch may offer to install the CLI automatically. macOS may ask for your password to write to `/usr/local/bin`.
+
+**Exit codes:** `0` = port free, `1` = port in use (JSON on stdout), `2` = error.
+
+**Without PATH install**, use the bundled binary directly:
+
+```bash
+"/Applications/Port Watch.app/Contents/MacOS/port-watch" check 3000
+"/Applications/Port Watch.app/Contents/MacOS/port-watch" install-cli
 ```
 
 ## How it works

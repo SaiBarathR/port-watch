@@ -1,11 +1,13 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   MonitorIcon,
   MoonIcon,
   MoonStarIcon,
   SunIcon,
+  TerminalIcon,
   Trash2Icon,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,6 +31,12 @@ import type { ThemeMode } from "@/hooks/use-theme";
 import { isMacOS } from "@/hooks/use-liquid-glass";
 import { PortHistoryList } from "@/components/port-history-timeline";
 import { clearPortHistory } from "@/lib/port-history";
+import {
+  fetchCliInstallStatus,
+  installCliToPath,
+  uninstallCliFromPath,
+  type CliInstallStatus,
+} from "@/lib/cli-install";
 import {
   GLASS_BLUR_OPTIONS,
   GLASS_TRANSLUCENCY_OPTIONS,
@@ -147,6 +155,64 @@ export function SettingsDialog({
   const [watchedPortInput, setWatchedPortInput] = useState("");
   const [historyVersion, setHistoryVersion] = useState(0);
   const [selectedHistoryPort, setSelectedHistoryPort] = useState<number | null>(null);
+  const [cliStatus, setCliStatus] = useState<CliInstallStatus | null>(null);
+  const [cliBusy, setCliBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open || !isMacOS()) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void fetchCliInstallStatus().then((status) => {
+      if (!cancelled) {
+        setCliStatus(status);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const refreshCliStatus = async () => {
+    const status = await fetchCliInstallStatus();
+    setCliStatus(status);
+    return status;
+  };
+
+  const handleInstallCli = async () => {
+    setCliBusy(true);
+    try {
+      await installCliToPath();
+      await refreshCliStatus();
+      toast.success("Command-line tool installed", {
+        description: "Run port-watch check 3000 from Terminal.",
+      });
+    } catch (err) {
+      toast.error("Could not install CLI", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setCliBusy(false);
+    }
+  };
+
+  const handleUninstallCli = async () => {
+    setCliBusy(true);
+    try {
+      await uninstallCliFromPath();
+      await refreshCliStatus();
+      toast.success("Command-line tool removed");
+    } catch (err) {
+      toast.error("Could not uninstall CLI", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setCliBusy(false);
+    }
+  };
 
   const addWatchedPort = () => {
     const port = Number.parseInt(watchedPortInput.trim(), 10);
@@ -482,6 +548,58 @@ export function SettingsDialog({
               </Select>
             </SettingRow>
           </SettingSection>
+
+          {isMacOS() && (
+            <SettingSection title="Command line">
+              <div className="py-3">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">Install CLI to PATH</p>
+                    <p className="text-xs text-muted-foreground">
+                      Run{" "}
+                      <span className="font-mono">port-watch check 3000</span> from
+                      Terminal and CI scripts.
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {cliStatus?.pointsToApp
+                        ? "Installed at /usr/local/bin/port-watch"
+                        : cliStatus?.installed
+                          ? "Another port-watch is installed at /usr/local/bin/port-watch"
+                          : "Not installed"}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      May ask for your password to write to /usr/local/bin.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {!cliStatus?.pointsToApp && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={cliBusy}
+                        onClick={() => void handleInstallCli()}
+                      >
+                        <TerminalIcon data-icon="inline-start" />
+                        {cliBusy ? "Working…" : "Install"}
+                      </Button>
+                    )}
+                    {cliStatus?.pointsToApp && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={cliBusy}
+                        onClick={() => void handleUninstallCli()}
+                      >
+                        {cliBusy ? "Working…" : "Uninstall"}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </SettingSection>
+          )}
 
           <SettingSection title="Menu bar">
             <SettingRow

@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { ThemeMode } from "@/hooks/use-theme";
-import { isMacOS } from "@/hooks/use-liquid-glass";
+import { cliInstallPrivilegeHint, isMacOS } from "@/lib/platform";
 import { PortHistoryList } from "@/components/port-history-timeline";
 import { clearPortHistory } from "@/lib/port-history";
 import {
@@ -159,7 +159,7 @@ export function SettingsDialog({
   const [cliBusy, setCliBusy] = useState(false);
 
   useEffect(() => {
-    if (!open || !isMacOS()) {
+    if (!open) {
       return;
     }
 
@@ -427,7 +427,7 @@ export function SettingsDialog({
             <SettingRow
               htmlFor="settings-watched-port-notifications"
               label="Watched port alerts"
-              description="macOS notifications when watched ports change."
+              description="Desktop notifications when watched ports change."
             >
               <Switch
                 id="settings-watched-port-notifications"
@@ -549,68 +549,68 @@ export function SettingsDialog({
             </SettingRow>
           </SettingSection>
 
-          {isMacOS() && (
-            <SettingSection title="Command line">
-              <div className="py-3">
-                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">Install CLI to PATH</p>
-                    <p className="text-xs text-muted-foreground">
-                      Run{" "}
-                      <span className="font-mono">port-watch check 3000</span> from
-                      Terminal and CI scripts.
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {cliStatus?.pointsToApp
-                        ? "Installed at /usr/local/bin/port-watch"
-                        : cliStatus?.installed
-                          ? "Another port-watch is installed at /usr/local/bin/port-watch"
-                          : "Not installed"}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      May ask for your password to write to /usr/local/bin.
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    {!cliStatus?.pointsToApp && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={cliBusy}
-                        onClick={() => void handleInstallCli()}
-                      >
-                        <TerminalIcon data-icon="inline-start" />
-                        {cliBusy ? "Working…" : "Install"}
-                      </Button>
-                    )}
-                    {cliStatus?.pointsToApp && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={cliBusy}
-                        onClick={() => void handleUninstallCli()}
-                      >
-                        {cliBusy ? "Working…" : "Uninstall"}
-                      </Button>
-                    )}
-                  </div>
+          <SettingSection title="Command line">
+            <div className="py-3">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">Install CLI to PATH</p>
+                  <p className="text-xs text-muted-foreground">
+                    Run{" "}
+                    <span className="font-mono">port-watch check 3000</span> from
+                    Terminal and CI scripts.
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {cliStatus?.pointsToApp
+                      ? `Installed at ${cliStatus.linkPath}`
+                      : cliStatus?.installed
+                        ? `Another port-watch is installed at ${cliStatus.linkPath}`
+                        : "Not installed"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {cliInstallPrivilegeHint()}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {!cliStatus?.pointsToApp && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={cliBusy}
+                      onClick={() => void handleInstallCli()}
+                    >
+                      <TerminalIcon data-icon="inline-start" />
+                      {cliBusy ? "Working…" : "Install"}
+                    </Button>
+                  )}
+                  {cliStatus?.pointsToApp && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={cliBusy}
+                      onClick={() => void handleUninstallCli()}
+                    >
+                      {cliBusy ? "Working…" : "Uninstall"}
+                    </Button>
+                  )}
                 </div>
               </div>
+            </div>
+          </SettingSection>
+
+          {isMacOS() && (
+            <SettingSection title="Menu bar">
+              <SettingRow
+                label="Menu bar mode"
+                description="Right-click the menu bar icon to enable. Hides the dock icon and opens a compact popover panel on tray click instead of the full window."
+              >
+                <span className="text-xs font-medium text-muted-foreground">
+                  {settings.menuBarMode ? "On" : "Off"}
+                </span>
+              </SettingRow>
             </SettingSection>
           )}
-
-          <SettingSection title="Menu bar">
-            <SettingRow
-              label="Menu bar mode"
-              description="Right-click the menu bar icon to enable. Hides the dock icon and opens a compact popover panel on tray click instead of the full window."
-            >
-              <span className="text-xs font-medium text-muted-foreground">
-                {settings.menuBarMode ? "On" : "Off"}
-              </span>
-            </SettingRow>
-          </SettingSection>
         </div>
       </DialogContent>
     </Dialog>

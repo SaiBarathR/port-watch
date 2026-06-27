@@ -9,6 +9,7 @@ use crate::scanner::{scan_listening_ports, PortProcess};
 pub struct PortsUpdatedPayload {
     pub processes: Vec<PortProcess>,
     pub error: Option<String>,
+    pub scanning: bool,
 }
 
 #[derive(Debug)]
@@ -50,47 +51,65 @@ impl PortPoller {
     }
 }
 
-fn read_cache(app: &AppHandle) -> Result<PortsUpdatedPayload, String> {
+struct CacheSnapshot {
+    payload: PortsUpdatedPayload,
+    scan_complete: bool,
+    in_flight: bool,
+}
+
+fn read_cache(app: &AppHandle) -> Result<CacheSnapshot, String> {
     let poller = app.state::<PortPoller>();
     let inner = poller
         .inner
         .lock()
         .map_err(|_| "Port poller lock poisoned".to_string())?;
 
-    Ok(PortsUpdatedPayload {
-        processes: inner.last_result.clone(),
-        error: inner.last_error.clone(),
+    let scan_complete = inner.last_scan_at.is_some();
+    let in_flight = inner.in_flight;
+
+    Ok(CacheSnapshot {
+        payload: PortsUpdatedPayload {
+            processes: inner.last_result.clone(),
+            error: inner.last_error.clone(),
+            scanning: in_flight && !scan_complete,
+        },
+        scan_complete,
+        in_flight,
     })
 }
 
 #[tauri::command]
 pub async fn get_listening_ports(app: AppHandle) -> Result<PortsUpdatedPayload, String> {
-    const MAX_WAIT: Duration = Duration::from_secs(8);
+    const MAX_WAIT: Duration = Duration::from_secs(30);
     let started = Instant::now();
     let mut triggered_scan = false;
 
     loop {
         let snapshot = read_cache(&app)?;
-        if !snapshot.processes.is_empty() || snapshot.error.is_some() {
-            return Ok(snapshot);
+
+        if snapshot.scan_complete {
+            return Ok(PortsUpdatedPayload {
+                scanning: false,
+                ..snapshot.payload
+            });
         }
 
-        let in_flight = {
-            let poller = app.state::<PortPoller>();
-            let inner = poller
-                .inner
-                .lock()
-                .map_err(|_| "Port poller lock poisoned".to_string())?;
-            inner.in_flight
-        };
-
-        if !in_flight && !triggered_scan {
+        if !snapshot.in_flight && !triggered_scan {
             triggered_scan = true;
             spawn_scan(app.clone());
         }
 
         if started.elapsed() >= MAX_WAIT {
-            return Ok(snapshot);
+            return Ok(PortsUpdatedPayload {
+                processes: snapshot.payload.processes,
+                error: Some(
+                    snapshot
+                        .payload
+                        .error
+                        .unwrap_or_else(|| "Scan timed out before completing".into()),
+                ),
+                scanning: false,
+            });
         }
 
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -241,8 +260,29 @@ async fn run_scan(app: &AppHandle) {
         PortsUpdatedPayload {
             processes,
             error,
+            scanning: false,
         }
     };
 
     let _ = app.emit("ports-updated", &payload);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_complete_when_last_scan_at_set() {
+        let inner = PollerInner {
+            last_scan_at: Some(Instant::now()),
+            ..PollerInner::default()
+        };
+        assert!(inner.last_scan_at.is_some());
+    }
+
+    #[test]
+    fn scan_incomplete_before_first_scan() {
+        let inner = PollerInner::default();
+        assert!(inner.last_scan_at.is_none());
+    }
 }

@@ -1,7 +1,10 @@
 use std::path::Path;
 
+use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
+
 #[tauri::command]
-pub fn open_url(url: String) -> Result<(), String> {
+pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     let url = url.trim();
     if url.is_empty() {
         return Err("URL is empty".into());
@@ -11,16 +14,9 @@ pub fn open_url(url: String) -> Result<(), String> {
         return Err("URL must start with http:// or https://".into());
     }
 
-    let status = std::process::Command::new("open")
-        .arg(url)
-        .status()
-        .map_err(|e| format!("Failed to open URL: {e}"))?;
-
-    if !status.success() {
-        return Err(format!("open command failed for: {url}"));
-    }
-
-    Ok(())
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("Failed to open URL: {e}"))
 }
 
 #[tauri::command]
@@ -34,16 +30,7 @@ pub fn open_in_terminal(cwd: String) -> Result<(), String> {
         return Err(format!("Directory does not exist: {cwd}"));
     }
 
-    let status = std::process::Command::new("open")
-        .args(["-a", "Terminal", cwd])
-        .status()
-        .map_err(|e| format!("Failed to open Terminal: {e}"))?;
-
-    if !status.success() {
-        return Err(format!("Failed to open Terminal at: {cwd}"));
-    }
-
-    Ok(())
+    crate::platform::shell::open_in_terminal(cwd)
 }
 
 #[tauri::command]

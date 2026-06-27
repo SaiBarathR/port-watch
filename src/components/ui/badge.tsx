@@ -13,6 +13,10 @@ const badgeVariants = cva(
         destructive: "border-transparent bg-destructive text-white",
         outline: "text-foreground",
         apple: "border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200",
+        microsoft:
+          "border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200",
+        distro:
+          "border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200",
         system:
           "border-transparent bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200",
         user: "border-transparent bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200",

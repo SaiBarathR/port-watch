@@ -4,6 +4,7 @@ pub mod cli_install;
 pub mod commands;
 mod guards;
 mod home;
+mod platform;
 mod poller;
 pub mod scanner;
 mod tray;
@@ -12,7 +13,7 @@ use commands::cli_install::{
     get_cli_install_status, install_cli_to_path, uninstall_cli_from_path,
 };
 use commands::filesystem::{delete_permanently, move_to_trash, open_in_finder};
-use commands::notifications::send_macos_notification;
+use commands::notifications::send_notification;
 use commands::ports::list_listening_ports;
 use commands::process::stop_process;
 use commands::workflow::{open_in_editor, open_in_terminal, open_url};
@@ -26,10 +27,18 @@ use tray::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_positioner::init())
-        .plugin(tauri_plugin_liquid_glass::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_os::init());
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_plugin_liquid_glass::init());
+    }
+
+    builder
         .manage(PortPoller::new())
         .setup(|app| {
             setup_tray(app.handle())?;
@@ -52,7 +61,7 @@ pub fn run() {
             update_tray_count,
             set_menu_bar_mode,
             show_full_window_command,
-            send_macos_notification,
+            send_notification,
             get_cli_install_status,
             install_cli_to_path,
             uninstall_cli_from_path,

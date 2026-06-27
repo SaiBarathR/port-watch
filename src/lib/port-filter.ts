@@ -93,7 +93,13 @@ export function filterPortProcesses(
     return matchesSearch(process, search, searchField, searchHaystacks);
   });
 
-  if (filtered.length === 0 && processes.length > 0 && !trimmedSearch) {
+  if (
+    filtered.length === 0 &&
+    processes.length > 0 &&
+    !trimmedSearch &&
+    hideSystemServices &&
+    !hideUserServices
+  ) {
     const userProcesses = processes.filter((process) => !process.is_system_service);
     if (userProcesses.length > 0) {
       return userProcesses;

@@ -14,8 +14,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { protectedPathsDescription } from "@/lib/platform";
 import type { PortProcess } from "@/lib/types";
-import { formatPorts } from "@/lib/types";
+import { formatPorts, pinPath } from "@/lib/types";
 import { basename } from "@/lib/utils";
 
 interface DeleteTarget {
@@ -27,6 +28,7 @@ interface DeleteDialogProps {
   target: DeleteTarget | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  allowSystemProcessActions: boolean;
   onComplete: () => void;
 }
 
@@ -34,18 +36,18 @@ export function DeleteDialog({
   target,
   open,
   onOpenChange,
+  allowSystemProcessActions,
   onComplete,
 }: DeleteDialogProps) {
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const path =
-    target?.process.working_directory ||
-    target?.process.script_path ||
-    target?.process.executable_path ||
-    "";
-
+  const path = target ? pinPath(target.process) || target.process.working_directory : "";
   const folderBasename = basename(path);
+  const canDelete =
+    !!target &&
+    !!path &&
+    (!target.process.is_system_service || allowSystemProcessActions);
 
   useEffect(() => {
     if (!open) {
@@ -55,17 +57,30 @@ export function DeleteDialog({
   }, [open]);
 
   const handleDelete = async () => {
-    if (!target || !path) return;
+    if (!target || !path || !canDelete) return;
 
     setBusy(true);
     try {
-      await invoke("stop_process", { pid: target.process.pid });
+      await invoke("stop_process", {
+        pid: target.process.pid,
+        isSystemService: target.process.is_system_service,
+        allowSystemActions: allowSystemProcessActions,
+      });
 
       if (target.mode === "trash") {
-        await invoke("move_to_trash", { path });
+        await invoke("move_to_trash", {
+          path,
+          isSystemService: target.process.is_system_service,
+          allowSystemActions: allowSystemProcessActions,
+        });
         toast.success("Moved folder to Trash");
       } else {
-        await invoke("delete_permanently", { path, confirmation });
+        await invoke("delete_permanently", {
+          path,
+          confirmation,
+          isSystemService: target.process.is_system_service,
+          allowSystemActions: allowSystemProcessActions,
+        });
         toast.success("Folder deleted permanently");
       }
 
@@ -81,8 +96,8 @@ export function DeleteDialog({
   if (!target) return null;
 
   const isPermanent = target.mode === "permanent";
-  const canDelete =
-    !isPermanent || confirmation === folderBasename;
+  const canSubmit =
+    canDelete && (!isPermanent || confirmation === folderBasename);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -111,10 +126,7 @@ export function DeleteDialog({
         <Alert variant="destructive">
           <AlertTriangleIcon />
           <AlertTitle>Destructive action</AlertTitle>
-          <AlertDescription>
-            Protected system paths under /System, /usr, /bin, /sbin, and /Library
-            cannot be deleted.
-          </AlertDescription>
+          <AlertDescription>{protectedPathsDescription()}</AlertDescription>
         </Alert>
 
         {isPermanent && (
@@ -139,7 +151,7 @@ export function DeleteDialog({
           </Button>
           <Button
             variant="destructive"
-            disabled={busy || !canDelete || !path}
+            disabled={busy || !canSubmit}
             onClick={() => void handleDelete()}
           >
             {isPermanent ? "Delete Permanently" : "Move to Trash"}

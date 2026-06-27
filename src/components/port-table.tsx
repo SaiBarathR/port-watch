@@ -92,7 +92,9 @@ function changeBadge(change: RowChangeKind | undefined) {
   );
 }
 
-function kindBadgeVariant(kind: SystemKind): "apple" | "system" | "user" {
+function kindBadgeVariant(
+  kind: SystemKind,
+): "apple" | "microsoft" | "distro" | "system" | "user" {
   return kind;
 }
 
@@ -824,6 +826,7 @@ export function PortTable({
           stopTargets.some((process) => process.is_system_service) &&
           settings.allowSystemProcessActions
         }
+        allowSystemProcessActions={settings.allowSystemProcessActions}
         onStopped={onRefresh}
       />
 
@@ -831,6 +834,7 @@ export function PortTable({
         target={deleteTarget}
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
+        allowSystemProcessActions={settings.allowSystemProcessActions}
         onComplete={onRefresh}
       />
 

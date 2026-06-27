@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "macos",
+  "description": "macOS-only capabilities",
+  "platforms": ["macOS"],
+  "windows": ["main", "popover"],
+  "permissions": ["liquid-glass:default"]
+}

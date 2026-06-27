@@ -228,7 +228,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               onClick={() => void openFolder(folderPath)}
             >
               <FolderOpenIcon data-icon="inline-start" />
-              Open Folder
+              Reveal in file manager
             </DropdownMenuItem>
             {port !== null && (
               <>
@@ -284,7 +284,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
           <DropdownMenuGroup>
             <DropdownMenuItem
               variant="destructive"
-              disabled={!folderPath}
+              disabled={!folderPath || !handlers.canStop(process)}
               onClick={() => {
                 setOpenMenuPid(null);
                 handlers.setDeleteTarget({ process, mode: "trash" });
@@ -295,7 +295,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
             </DropdownMenuItem>
             <DropdownMenuItem
               variant="destructive"
-              disabled={!folderPath}
+              disabled={!folderPath || !handlers.canStop(process)}
               onClick={() => {
                 setOpenMenuPid(null);
                 handlers.setDeleteTarget({ process, mode: "permanent" });

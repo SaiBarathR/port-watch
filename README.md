@@ -25,28 +25,36 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 ## Features
 
 - **Live port scan** with configurable auto-refresh (3s / 10s / off), optional UDP
-- **Process classification** — system vs user listeners, with filters to hide system services
+- **Process classification** — vendor/system/user listeners (Apple, Microsoft, distro packages), with filters to hide system services
 - **Port lookup** — search by port, PID, process name, path, or command; history timeline and one-click **Free port**
 - **Row actions** — stop process, open in browser, file manager, terminal, editor (Cursor / VS Code), copy path/URL, pin project, move to trash, delete permanently
 - **Compact tray popover** for quick access without opening the full window
-- **Watched-port notifications** — in-app toasts and system alerts when specific ports change
+- **Watched-port notifications** — in-app toasts and desktop alerts when specific ports change
 - **Export snapshot** — copy filtered results as JSON or Markdown
 - **CLI** — `port-watch check <port> [--udp]` for scripting and CI
 - **Safety guards** — blocks destructive actions on protected system paths
 
 ## Platform support
 
-| Platform | Status |
-| --- | --- |
-| macOS | Available |
-| Windows | Planned |
-| Linux | Planned |
+| Platform | Scanner backend | CLI PATH install |
+| --- | --- | --- |
+| macOS | `lsof` + `ps` | `/usr/local/bin/port-watch` (symlink; may prompt for password) |
+| Linux | `ss` + `/proc` | `~/.local/bin/port-watch` (symlink; ensure `~/.local/bin` is on PATH) |
+| Windows | PowerShell (`Get-NetTCPConnection`) | `%LOCALAPPDATA%\Programs\Port Watch\port-watch.exe` (user PATH) |
+
+macOS-only UI: **Liquid Glass** translucency and **menu bar mode** (accessory app / dockless tray).
 
 ## Requirements
 
 - [Node.js](https://nodejs.org/) (npm or [bun](https://bun.sh/))
 - [Rust toolchain](https://www.rust-lang.org/tools/install) (for Tauri)
-- Platform-specific build dependencies — see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+- Platform build dependencies — see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+
+**Linux (Debian/Ubuntu)** additionally needs:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+```
 
 ## Install from source
 
@@ -63,7 +71,7 @@ npm run tauri dev
 npm run tauri build
 ```
 
-Release bundles are written to `src-tauri/target/release/bundle/`.
+Release bundles are written to `src-tauri/target/release/bundle/` (`.app` on macOS, `.deb`/AppImage on Linux, `.msi`/`.exe` on Windows).
 
 ## Usage
 
@@ -73,7 +81,7 @@ The full window shows all listening ports in a sortable, resizable table. Use th
 
 ### Tray popover
 
-Enable tray mode from the tray icon context menu. The compact popover lists user listeners with quick stop, browser, and file manager actions.
+Click the tray icon for a compact popover with quick stop, browser, and file manager actions. On macOS, enable **menu bar mode** from the tray context menu to hide the dock icon.
 
 ### Port lookup
 
@@ -81,22 +89,23 @@ Search for a specific port to see whether it is free, who is using it, and its r
 
 ### CLI
 
-Install the command-line tool from **Settings → Command line** (one click). Port Watch symlinks `/usr/local/bin/port-watch` to the app binary so you can run:
+Install from **Settings → Command line** (one click) or run `install-cli` on the bundled binary:
 
 ```bash
 port-watch check 3000
 port-watch check 53 --udp
 ```
 
-On first launch, Port Watch may offer to install the CLI automatically. macOS may ask for your password to write to `/usr/local/bin`.
-
 **Exit codes:** `0` = port free, `1` = port in use (JSON on stdout), `2` = error.
 
-**Without PATH install**, use the bundled binary directly:
+**Direct binary examples:**
 
 ```bash
+# macOS
 "/Applications/Port Watch.app/Contents/MacOS/port-watch" check 3000
-"/Applications/Port Watch.app/Contents/MacOS/port-watch" install-cli
+
+# Linux / Windows (path varies by install location)
+port-watch install-cli
 ```
 
 ## How it works
@@ -110,7 +119,7 @@ flowchart LR
   end
   subgraph backend [Tauri Rust Backend]
     Poller[BackgroundPoller]
-    Scanner[PortScanner]
+    Scanner[PlatformScanner]
     Tray[SystemTray]
     Commands[ProcessFilesystemWorkflow]
   end
@@ -124,7 +133,11 @@ flowchart LR
 
 ## Safety
 
-Destructive actions (move to trash, delete permanently) are blocked for processes running from protected system paths such as `/System`, `/usr`, `/bin`, `/sbin`, and `/Library`.
+Destructive actions (move to trash, delete permanently) are blocked for protected system paths:
+
+- **macOS:** `/System`, `/usr`, `/bin`, `/sbin`, `/Library`
+- **Linux:** `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/opt` (not `/usr/local`)
+- **Windows:** `C:\Windows`, `Program Files`, `Program Files (x86)`, `ProgramData`
 
 System process stop/delete requires an explicit opt-in in Settings.
 

@@ -1,4 +1,4 @@
-export type SystemKind = "apple" | "system" | "user";
+export type SystemKind = "apple" | "microsoft" | "distro" | "system" | "user";
 
 export type PreferredEditor = "cursor" | "code";
 
@@ -151,11 +151,19 @@ export function systemKindLabel(kind: SystemKind): string {
   switch (kind) {
     case "apple":
       return "Apple System";
+    case "microsoft":
+      return "Microsoft System";
+    case "distro":
+      return "Distro System";
     case "system":
       return "System";
     case "user":
       return "User";
   }
+}
+
+export function isVendorSystemKind(kind: SystemKind): boolean {
+  return kind === "apple" || kind === "microsoft" || kind === "distro";
 }
 
 export function primaryPath(process: PortProcess): string {

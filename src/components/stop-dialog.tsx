@@ -15,12 +15,14 @@ import {
 import { Button } from "@/components/ui/button";
 import type { PortProcess } from "@/lib/types";
 import { formatPorts } from "@/lib/types";
+import { stopMultipleProcessDescription, stopProcessDescription, systemStopWarning } from "@/lib/platform";
 
 interface StopDialogProps {
   processes: PortProcess[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   requireDoubleConfirm: boolean;
+  allowSystemProcessActions: boolean;
   onStopped: () => void;
   title?: string;
   description?: string;
@@ -31,6 +33,7 @@ export function StopDialog({
   open,
   onOpenChange,
   requireDoubleConfirm,
+  allowSystemProcessActions,
   onStopped,
   title,
   description,
@@ -56,7 +59,11 @@ export function StopDialog({
 
     for (const process of processes) {
       try {
-        await invoke("stop_process", { pid: process.pid });
+        await invoke("stop_process", {
+          pid: process.pid,
+          isSystemService: process.is_system_service,
+          allowSystemActions: allowSystemProcessActions,
+        });
         stopped += 1;
       } catch (err) {
         failures.push(`${process.name} (${process.pid}): ${String(err)}`);
@@ -110,8 +117,8 @@ export function StopDialog({
   const dialogDescription =
     description ??
     (single
-      ? `This sends SIGTERM to PID ${single.pid}, then SIGKILL after 2 seconds if the process is still running.`
-      : "Each process receives SIGTERM, then SIGKILL after 2 seconds if still running.");
+      ? stopProcessDescription(single.pid)
+      : stopMultipleProcessDescription());
 
   return (
     <AlertDialog open={open} onOpenChange={handleOpenChange}>
@@ -135,10 +142,7 @@ export function StopDialog({
           <Alert variant="destructive">
             <AlertTriangleIcon />
             <AlertTitle>System service warning</AlertTitle>
-            <AlertDescription>
-              You are about to stop one or more system services. This may affect
-              macOS functionality. Confirm again to proceed.
-            </AlertDescription>
+            <AlertDescription>{systemStopWarning()}</AlertDescription>
           </Alert>
         )}
 

@@ -5,12 +5,11 @@ static USER_HOME: OnceLock<String> = OnceLock::new();
 
 pub fn user_home() -> &'static str {
     USER_HOME.get_or_init(|| {
-        std::env::var("HOME")
-            .ok()
-            .or_else(|| {
-                dirs::home_dir().map(|p| p.to_string_lossy().into_owned())
-            })
-            .unwrap_or_else(|| "/tmp".to_string())
+        dirs::home_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .or_else(|| std::env::var("HOME").ok())
+            .or_else(|| std::env::var("USERPROFILE").ok())
+            .unwrap_or_default()
     })
 }
 
@@ -48,7 +47,7 @@ pub fn infer_project_root(path: &str) -> String {
         }
     }
 
-    path.trim_end_matches('/').to_string()
+    path.trim_end_matches(['/', '\\']).to_string()
 }
 
 #[cfg(test)]

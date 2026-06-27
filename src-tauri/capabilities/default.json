@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "liquid-glass:default"
+    "notification:default",
+    "os:default"
   ]
 }

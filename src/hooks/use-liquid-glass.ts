@@ -3,10 +3,9 @@ import {
   GlassMaterialVariant,
   setLiquidGlassEffect,
 } from "tauri-plugin-liquid-glass-api";
+import { isMacOS } from "@/lib/platform";
 
-export function isMacOS(): boolean {
-  return navigator.platform.toLowerCase().includes("mac");
-}
+export { isMacOS };
 
 export type LiquidGlassSurface = "main" | "popover";
 export type LiquidGlassTheme = "light" | "dark-grey" | "dark-oled";

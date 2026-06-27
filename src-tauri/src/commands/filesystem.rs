@@ -1,6 +1,8 @@
 use std::path::Path;
 
 use crate::guards::{validate_delete_path, validate_permanent_delete};
+use crate::platform;
+use crate::platform::path_validation;
 
 #[tauri::command]
 pub fn open_in_finder(path: String) -> Result<(), String> {
@@ -12,31 +14,29 @@ pub fn open_in_finder(path: String) -> Result<(), String> {
         return Err(format!("Path does not exist: {path}"));
     }
 
-    let status = std::process::Command::new("open")
-        .arg(&path)
-        .status()
-        .map_err(|e| format!("Failed to open Finder: {e}"))?;
-
-    if !status.success() {
-        return Err(format!("open command failed for: {path}"));
-    }
-
-    Ok(())
+    platform::shell::open_in_file_manager(&path)
 }
 
 #[tauri::command]
-pub fn move_to_trash(path: String) -> Result<(), String> {
+pub fn move_to_trash(
+    path: String,
+    is_system_service: bool,
+    allow_system_actions: bool,
+) -> Result<(), String> {
+    path_validation::assert_system_actions_allowed(is_system_service, allow_system_actions)?;
     validate_delete_path(&path)?;
-
-    if !Path::new(&path).exists() {
-        return Err(format!("Path does not exist: {path}"));
-    }
 
     trash::delete(&path).map_err(|e| format!("Failed to move to Trash: {e}"))
 }
 
 #[tauri::command]
-pub fn delete_permanently(path: String, confirmation: String) -> Result<(), String> {
+pub fn delete_permanently(
+    path: String,
+    confirmation: String,
+    is_system_service: bool,
+    allow_system_actions: bool,
+) -> Result<(), String> {
+    path_validation::assert_system_actions_allowed(is_system_service, allow_system_actions)?;
     validate_permanent_delete(&path, &confirmation)?;
 
     let path_obj = Path::new(&path);

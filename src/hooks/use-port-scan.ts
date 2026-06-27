@@ -32,6 +32,7 @@ const CHANGE_HIGHLIGHT_MS = 10_000;
 interface PortsUpdatedPayload {
   processes: PortProcess[];
   error: string | null;
+  scanning?: boolean;
 }
 
 import {
@@ -61,6 +62,7 @@ function parsePortsPayload(payload: unknown): PortsUpdatedPayload {
           )
         : [],
       error: typeof error === "string" ? error : null,
+      scanning: record.scanning === true,
     };
   }
 
@@ -348,7 +350,7 @@ export function usePortScan() {
                 ? `Port ${event.port} is now in use`
                 : `Port ${event.port} is free`;
             const message = `${event.processName} (PID ${event.pid})`;
-            void invoke("send_macos_notification", { title, message }).catch(
+            void invoke("send_notification", { title, message }).catch(
               () => {
                 // notifications may be unavailable
               },
@@ -394,6 +396,15 @@ export function usePortScan() {
         const payload = parsePortsPayload(
           await invoke<PortsUpdatedPayload>("get_listening_ports"),
         );
+
+        if (payload.scanning) {
+          return;
+        }
+
+        if (payload.error) {
+          applyScanResultRef.current(payload.processes, payload.error);
+          return;
+        }
 
         if (payload.processes.length === 0 && !payload.error) {
           const direct = parsePortsPayload(

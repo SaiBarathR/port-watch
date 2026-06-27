@@ -12,24 +12,16 @@ pub fn open_in_file_manager(path: &str) -> Result<(), String> {
 }
 
 pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
-    let wt_status = std::process::Command::new("wt")
-        .args(["-d", cwd])
-        .status();
-
-    if let Ok(status) = wt_status {
+    if let Ok(status) = std::process::Command::new("wt").args(["-d", cwd]).status() {
         if status.success() {
             return Ok(());
         }
     }
 
-    let status = std::process::Command::new("cmd")
-        .args(["/C", "start", "cmd", "/K", &format!("cd /d {cwd}")])
-        .status()
+    std::process::Command::new("cmd")
+        .current_dir(cwd)
+        .spawn()
         .map_err(|e| format!("Failed to open terminal: {e}"))?;
-
-    if !status.success() {
-        return Err(format!("Failed to open terminal at: {cwd}"));
-    }
 
     Ok(())
 }

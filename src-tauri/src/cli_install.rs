@@ -245,27 +245,15 @@ fn platform_uninstall_cli_from_path() -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn platform_get_cli_install_status() -> Result<CliInstallStatus, String> {
-    let app_exe = current_app_executable()?;
     let link_path_string = platform_cli_link_path()?;
     let link_path = PathBuf::from(&link_path_string);
-
-    if !link_path.exists() {
-        return Ok(CliInstallStatus {
-            installed: false,
-            link_path: link_path_string,
-            target_path: None,
-            points_to_app: false,
-        });
-    }
-
-    let target_path = Some(link_path.to_string_lossy().into_owned());
-    let points_to_app = paths_refer_to_same_file(&link_path.to_string_lossy(), &app_exe);
+    let installed = link_path.exists();
 
     Ok(CliInstallStatus {
-        installed: true,
+        installed,
         link_path: link_path_string,
-        target_path,
-        points_to_app,
+        target_path: installed.then(|| link_path.to_string_lossy().into_owned()),
+        points_to_app: installed,
     })
 }
 
@@ -273,16 +261,6 @@ fn platform_get_cli_install_status() -> Result<CliInstallStatus, String> {
 fn platform_install_cli_to_path() -> Result<(), String> {
     let app_exe = current_app_executable()?;
     let link_path = PathBuf::from(platform_cli_link_path()?);
-
-    if link_path.exists() {
-        if paths_refer_to_same_file(&link_path.to_string_lossy(), &app_exe) {
-            return Ok(());
-        }
-        return Err(format!(
-            "Another port-watch is installed at {} (not this app)",
-            link_path.display()
-        ));
-    }
 
     if let Some(parent) = link_path.parent() {
         std::fs::create_dir_all(parent)
@@ -297,18 +275,10 @@ fn platform_install_cli_to_path() -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn platform_uninstall_cli_from_path() -> Result<(), String> {
-    let app_exe = current_app_executable()?;
     let link_path = PathBuf::from(platform_cli_link_path()?);
 
     if !link_path.exists() {
         return Ok(());
-    }
-
-    if !paths_refer_to_same_file(&link_path.to_string_lossy(), &app_exe) {
-        return Err(format!(
-            "{} is not this app's CLI shim. Uninstall skipped.",
-            link_path.display()
-        ));
     }
 
     if let Some(parent) = link_path.parent() {

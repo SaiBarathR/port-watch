@@ -609,7 +609,7 @@ export function PortTable({
       table
         .getRowModel()
         .rows.map((row) => row.original)
-        .filter((process) => canStop(process) && !process.is_system_service),
+        .filter((process) => canStop(process)),
     [table, tableData, canStop],
   );
 
@@ -826,7 +826,6 @@ export function PortTable({
           stopTargets.some((process) => process.is_system_service) &&
           settings.allowSystemProcessActions
         }
-        allowSystemProcessActions={settings.allowSystemProcessActions}
         onStopped={onRefresh}
       />
 

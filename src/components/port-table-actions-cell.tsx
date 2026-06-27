@@ -90,7 +90,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
 
   const { openMenuPid, setOpenMenuPid } = menu;
   const isOpen = openMenuPid === process.pid;
-  const folderPath = process.working_directory || primaryPath(process);
+  const folderPath = pinPath(process) || process.working_directory;
   const editorPath = process.project_root || process.working_directory;
   const port = primaryPort(process);
   const pinnedPath = pinPath(process);

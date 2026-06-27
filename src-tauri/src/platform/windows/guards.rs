@@ -10,7 +10,7 @@ fn is_protected_canonical(path: &Path) -> bool {
 pub fn is_protected_path(path: &str) -> bool {
     path_validation::resolve_existing_path(path)
         .map(|canonical| is_protected_canonical(&canonical))
-        .unwrap_or(false)
+        .unwrap_or_else(|_| is_protected_canonical(Path::new(path.trim())))
 }
 
 pub fn is_user_allowed_path(path: &str) -> bool {
@@ -45,6 +45,15 @@ mod tests {
         if let Some(program_files) = super::super::paths::program_files() {
             assert!(is_protected_path(
                 program_files.join("Example").to_str().unwrap()
+            ));
+        }
+    }
+
+    #[test]
+    fn blocks_system_root() {
+        if let Some(system_root) = super::super::paths::system_root() {
+            assert!(is_protected_path(
+                system_root.join("System32").to_str().unwrap()
             ));
         }
     }

@@ -151,7 +151,8 @@ fn parse_ss_line(line: &str) -> Option<(u32, String, &str)> {
         .unwrap_or("unknown")
         .to_string();
 
-    let local = before_users.split_whitespace().last()?;
+    let parts: Vec<&str> = before_users.split_whitespace().collect();
+    let local = *parts.get(parts.len().checked_sub(2)?)?;
     Some((pid, name, local))
 }
 
@@ -278,6 +279,33 @@ mod tests {
         assert_eq!(pid, 1234);
         assert_eq!(name, "node");
         assert_eq!(local, "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn parse_ss_line_with_listen_state() {
+        let line = "LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:((\"node\",pid=1234,fd=21))";
+        let (pid, name, local) = parse_ss_line(line).unwrap();
+        assert_eq!(pid, 1234);
+        assert_eq!(name, "node");
+        assert_eq!(local, "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn parse_ss_line_ipv6_local() {
+        let line = "0 4096 [::1]:3000 0.0.0.0:* users:((\"node\",pid=5678,fd=3))";
+        let (pid, name, local) = parse_ss_line(line).unwrap();
+        assert_eq!(pid, 5678);
+        assert_eq!(name, "node");
+        assert_eq!(local, "[::1]:3000");
+    }
+
+    #[test]
+    fn parse_ss_line_wildcard_local() {
+        let line = "0 4096 0.0.0.0:8080 0.0.0.0:* users:((\"nginx\",pid=999,fd=5))";
+        let (pid, name, local) = parse_ss_line(line).unwrap();
+        assert_eq!(pid, 999);
+        assert_eq!(name, "nginx");
+        assert_eq!(local, "0.0.0.0:8080");
     }
 
     #[test]

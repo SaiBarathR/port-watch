@@ -1,0 +1,54 @@
+mod classifier;
+pub mod cli;
+pub mod commands;
+mod guards;
+mod home;
+mod poller;
+pub mod scanner;
+mod tray;
+
+use commands::filesystem::{delete_permanently, move_to_trash, open_in_finder};
+use commands::notifications::send_macos_notification;
+use commands::ports::list_listening_ports;
+use commands::process::stop_process;
+use commands::workflow::{open_in_editor, open_in_terminal, open_url};
+use poller::{
+    get_listening_ports, set_refresh_paused, set_scan_settings, start_poller, trigger_port_scan,
+    PortPoller,
+};
+use tray::{
+    set_menu_bar_mode, setup_tray, show_full_window_command, update_tray_count,
+};
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_positioner::init())
+        .manage(PortPoller::new())
+        .setup(|app| {
+            setup_tray(app.handle())?;
+            start_poller(app.handle().clone());
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            list_listening_ports,
+            get_listening_ports,
+            set_scan_settings,
+            set_refresh_paused,
+            trigger_port_scan,
+            stop_process,
+            open_in_finder,
+            move_to_trash,
+            delete_permanently,
+            open_url,
+            open_in_terminal,
+            open_in_editor,
+            update_tray_count,
+            set_menu_bar_mode,
+            show_full_window_command,
+            send_macos_notification,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

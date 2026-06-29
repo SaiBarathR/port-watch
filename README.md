@@ -73,6 +73,29 @@ npm run tauri build
 
 Release bundles are written to `src-tauri/target/release/bundle/` (`.app` on macOS, `.deb`/AppImage on Linux, `.msi`/`.exe` on Windows).
 
+## Releases
+
+Pre-built installers are published on [GitHub Releases](https://github.com/SaiBarathR/port-watch/releases):
+
+| Platform | Download |
+| --- | --- |
+| macOS | `.dmg` |
+| Windows | `.msi` or `.exe` setup |
+| Linux | `.deb` or `.AppImage` |
+
+Builds are unsigned. macOS may show Gatekeeper warnings (right-click → Open, or allow in System Settings → Privacy & Security). Windows SmartScreen may prompt for “More info” → “Run anyway”.
+
+### Publishing a new release
+
+1. Bump `version` in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` (keep them in sync).
+2. Commit and push to `main`.
+3. Tag and push:
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+4. GitHub Actions builds on macOS, Linux, and Windows and uploads assets to a draft release. Review and publish it on the Releases page.
+
 ## Usage
 
 ### Main window

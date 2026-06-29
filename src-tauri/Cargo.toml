@@ -1,6 +1,6 @@
 [package]
 name = "port-watch"
-version = "0.1.0"
+version = "0.1.1"
 description = "Cross-platform port monitor — watch listening TCP/UDP ports and manage processes"
 authors = ["ginpachi"]
 edition = "2021"

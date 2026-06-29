@@ -11,8 +11,36 @@ pub fn open_in_file_manager(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
-    Err("Clipboard copy is not supported on this platform".into())
+pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let candidates: [(&str, &[&str]); 3] = [
+        ("wl-copy", &[]),
+        ("xclip", &["-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--input"]),
+    ];
+
+    for (cmd, args) in candidates {
+        let mut child = match Command::new(cmd).args(args).stdin(Stdio::piped()).spawn() {
+            Ok(child) => child,
+            Err(_) => continue,
+        };
+
+        if let Some(stdin) = child.stdin.as_mut() {
+            if stdin.write_all(text.as_bytes()).is_err() {
+                continue;
+            }
+        }
+
+        if let Ok(status) = child.wait() {
+            if status.success() {
+                return Ok(());
+            }
+        }
+    }
+
+    Err("No clipboard utility found (install wl-clipboard, xclip, or xsel)".into())
 }
 
 pub fn open_in_terminal(cwd: &str) -> Result<(), String> {

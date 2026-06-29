@@ -19,7 +19,9 @@ use commands::filesystem::{delete_permanently, move_to_trash, open_in_finder};
 use commands::notifications::send_notification;
 use commands::ports::list_listening_ports;
 use commands::process::stop_process;
-use commands::settings::set_allow_system_process_actions;
+use commands::settings::{
+    set_allow_system_process_actions, set_preferred_editor, set_use_https_for_localhost,
+};
 use commands::workflow::{open_in_editor, open_in_terminal, open_url};
 use poller::{
     get_listening_ports, set_refresh_paused, set_scan_settings, start_poller, trigger_port_scan,
@@ -33,6 +35,7 @@ use tray::{
 pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_os::init());
 
@@ -56,6 +59,8 @@ pub fn run() {
             set_refresh_paused,
             trigger_port_scan,
             set_allow_system_process_actions,
+            set_use_https_for_localhost,
+            set_preferred_editor,
             stop_process,
             open_in_finder,
             move_to_trash,

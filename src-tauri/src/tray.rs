@@ -56,12 +56,20 @@ fn primary_port(process: &PortProcess) -> Option<u16> {
     process.ports.first().map(|binding| binding.port)
 }
 
+/// Directory used by the Finder/Terminal/Editor actions. Matches the main
+/// window's table actions, which prefer `project_root` over `working_directory`
+/// (see `port-table-actions-cell.tsx`).
 fn directory_for(process: &PortProcess) -> String {
-    if !process.working_directory.is_empty() {
-        process.working_directory.clone()
-    } else {
+    if !process.project_root.is_empty() {
         process.project_root.clone()
+    } else {
+        process.working_directory.clone()
     }
+}
+
+fn localhost_url(port: u16, use_https: bool) -> String {
+    let scheme = if use_https { "https" } else { "http" };
+    format!("{scheme}://localhost:{port}")
 }
 
 fn build_port_submenu(
@@ -217,7 +225,13 @@ fn menu_signature(processes: &[PortProcess], allow_system: bool, menu_bar_enable
                 .map(|binding| format!("{}:{}/{}", binding.address, binding.port, binding.protocol))
                 .collect();
             bindings.sort();
-            format!("{}|{}|{}", process.pid, process.name, bindings.join(","))
+            format!(
+                "{}|{}|{}|{}",
+                process.pid,
+                process.name,
+                bindings.join(","),
+                directory_for(process)
+            )
         })
         .collect();
     parts.sort();
@@ -335,11 +349,13 @@ fn run_port_action(
     match action {
         "pw-open" => {
             let port = port.ok_or("No port available")?;
-            crate::commands::workflow::open_url(app.clone(), format!("http://localhost:{port}"))
+            let use_https = app.state::<AppSettings>().use_https_for_localhost();
+            crate::commands::workflow::open_url(app.clone(), localhost_url(port, use_https))
         }
         "pw-copy" => {
             let port = port.ok_or("No port available")?;
-            crate::platform::shell::copy_to_clipboard(&format!("http://localhost:{port}"))
+            let use_https = app.state::<AppSettings>().use_https_for_localhost();
+            crate::platform::shell::copy_to_clipboard(&localhost_url(port, use_https))
         }
         "pw-finder" => {
             crate::commands::filesystem::open_in_finder(require_directory(process)?)
@@ -348,11 +364,42 @@ fn run_port_action(
             crate::commands::workflow::open_in_terminal(require_directory(process)?)
         }
         "pw-editor" => {
-            crate::commands::workflow::open_in_editor(require_directory(process)?, "cursor".to_string())
+            let editor = app.state::<AppSettings>().preferred_editor();
+            crate::commands::workflow::open_in_editor(require_directory(process)?, editor)
         }
-        "pw-stop" => crate::commands::process::stop_process(app.clone(), pid, Some(false)),
+        "pw-stop" => {
+            if !confirm_stop(app, process) {
+                return Ok(());
+            }
+            crate::commands::process::stop_process(app.clone(), pid, Some(false))
+        }
         _ => Ok(()),
     }
+}
+
+/// Native confirmation before terminating a process — restores the safety the
+/// removed popover's StopDialog provided. Runs on a background thread (the
+/// caller is `spawn_blocking`), so blocking on the user's response is fine.
+fn confirm_stop(app: &AppHandle, process: Option<&PortProcess>) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    let name = process.map(|p| p.name.as_str()).unwrap_or("this process");
+    let is_system = process.map(|p| p.is_system_service).unwrap_or(false);
+    let message = if is_system {
+        format!("{name} is a system service. Stopping it may affect your system.\n\nStop it anyway?")
+    } else {
+        format!("Stop {name}? This terminates the process and frees its ports.")
+    };
+
+    app.dialog()
+        .message(message)
+        .title("Stop process")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Stop".to_string(),
+            "Cancel".to_string(),
+        ))
+        .blocking_show()
 }
 
 fn require_directory(process: Option<&PortProcess>) -> Result<String, String> {

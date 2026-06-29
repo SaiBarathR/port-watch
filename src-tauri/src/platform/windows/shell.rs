@@ -11,8 +11,28 @@ pub fn open_in_file_manager(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
-    Err("Clipboard copy is not supported on this platform".into())
+pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("clip")
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run clip: {e}"))?;
+
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "Failed to open clip stdin".to_string())?
+        .write_all(text.as_bytes())
+        .map_err(|e| format!("Failed to write to clip: {e}"))?;
+
+    let status = child.wait().map_err(|e| format!("clip failed: {e}"))?;
+    if !status.success() {
+        return Err("clip exited with an error".into());
+    }
+
+    Ok(())
 }
 
 pub fn open_in_terminal(cwd: &str) -> Result<(), String> {

@@ -445,6 +445,24 @@ export function usePortScan() {
     });
   }, [settings.allowSystemProcessActions]);
 
+  // Keep the native tray menu's open/copy actions in sync with the URL scheme.
+  useEffect(() => {
+    void invoke("set_use_https_for_localhost", {
+      useHttps: settings.useHttpsForLocalhost,
+    }).catch(() => {
+      // ignore outside Tauri
+    });
+  }, [settings.useHttpsForLocalhost]);
+
+  // Keep the native tray menu's "Open in Editor" action in sync with the choice.
+  useEffect(() => {
+    void invoke("set_preferred_editor", {
+      editor: settings.preferredEditor,
+    }).catch(() => {
+      // ignore outside Tauri
+    });
+  }, [settings.preferredEditor]);
+
   useEffect(() => {
     return () => {
       if (changeClearTimerRef.current !== null) {

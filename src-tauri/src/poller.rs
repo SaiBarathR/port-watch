@@ -58,6 +58,22 @@ impl PortPoller {
             .find(|process| process.pid == pid)
             .map(|process| process.is_system_service)
     }
+
+    pub fn find_by_pid(&self, pid: u32) -> Option<PortProcess> {
+        let inner = self.inner.lock().ok()?;
+        inner
+            .last_result
+            .iter()
+            .find(|process| process.pid == pid)
+            .cloned()
+    }
+
+    pub fn snapshot(&self) -> Vec<PortProcess> {
+        self.inner
+            .lock()
+            .map(|inner| inner.last_result.clone())
+            .unwrap_or_default()
+    }
 }
 
 struct CacheSnapshot {
@@ -299,6 +315,8 @@ async fn run_scan(app: &AppHandle) {
     };
 
     let _ = app.emit("ports-updated", &payload);
+
+    crate::tray::rebuild_tray_menu(app);
 }
 
 #[cfg(test)]

@@ -20,19 +20,6 @@
         "minWidth": 900,
         "minHeight": 600,
         "transparent": true
-      },
-      {
-        "label": "popover",
-        "title": "Port Watch",
-        "width": 380,
-        "height": 480,
-        "minWidth": 380,
-        "minHeight": 480,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "visible": false,
-        "skipTaskbar": true
       }
     ],
     "security": {

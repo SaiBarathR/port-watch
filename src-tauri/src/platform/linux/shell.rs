@@ -11,6 +11,10 @@ pub fn open_in_file_manager(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
+    Err("Clipboard copy is not supported on this platform".into())
+}
+
 pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
     if let Ok(terminal) = std::env::var("TERMINAL") {
         if !terminal.is_empty() {

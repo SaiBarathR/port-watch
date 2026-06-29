@@ -603,7 +603,7 @@ export function SettingsDialog({
             <SettingSection title="Menu bar">
               <SettingRow
                 label="Menu bar mode"
-                description="Right-click the menu bar icon to enable. Hides the dock icon and opens a compact popover panel on tray click instead of the full window."
+                description="Toggle this from the menu bar icon's menu. Hides the dock icon so Port Watch runs only in the menu bar; clicking the icon opens a native menu of your active ports."
               >
                 <span className="text-xs font-medium text-muted-foreground">
                   {settings.menuBarMode ? "On" : "Off"}

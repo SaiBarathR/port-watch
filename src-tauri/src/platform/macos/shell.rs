@@ -11,6 +11,33 @@ pub fn open_in_file_manager(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("pbcopy")
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run pbcopy: {e}"))?;
+
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "Failed to open pbcopy stdin".to_string())?
+        .write_all(text.as_bytes())
+        .map_err(|e| format!("Failed to write to pbcopy: {e}"))?;
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("pbcopy failed: {e}"))?;
+
+    if !status.success() {
+        return Err("pbcopy exited with an error".into());
+    }
+
+    Ok(())
+}
+
 pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
     let status = std::process::Command::new("open")
         .args(["-a", "Terminal", cwd])

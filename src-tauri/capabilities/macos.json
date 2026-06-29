@@ -3,6 +3,6 @@
   "identifier": "macos",
   "description": "macOS-only capabilities",
   "platforms": ["macOS"],
-  "windows": ["main", "popover"],
+  "windows": ["main"],
   "permissions": ["liquid-glass:default"]
 }

@@ -223,12 +223,8 @@ html.liquid-glass [data-slot="tooltip-content"] {
   body {
     @apply bg-background text-foreground antialiased;
   }
-  html.liquid-glass:not(.popover-window),
-  html.liquid-glass:not(.popover-window) body {
-    background: transparent;
-  }
-  html.popover-window,
-  html.popover-window body {
+  html.liquid-glass,
+  html.liquid-glass body {
     background: transparent;
   }
 }

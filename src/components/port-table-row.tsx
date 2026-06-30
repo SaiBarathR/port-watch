@@ -30,17 +30,28 @@ interface PortTableDataRowProps {
   row: Row<PortProcess>;
   change: RowChangeKind | undefined;
   columnCount: number;
+  // isSelected/canSelect are passed as primitives so this memoized row re-renders
+  // when its selection state changes. TanStack reuses the same Row reference across
+  // selection-only updates, so without these props the checkbox tick never updates.
+  isSelected: boolean;
+  canSelect: boolean;
 }
 
 export const PortTableDataRow = memo(function PortTableDataRow({
   row,
   change,
   columnCount,
+  isSelected,
+  canSelect,
 }: PortTableDataRowProps) {
   return (
     <tr
+      aria-selected={isSelected}
+      data-state={isSelected ? "selected" : undefined}
+      data-can-select={canSelect}
       className={cn(
         "group border-b transition-colors hover:bg-muted/50",
+        "data-[state=selected]:bg-accent",
         changeRowClass(change),
       )}
     >

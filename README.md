@@ -42,7 +42,7 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 | Linux | `ss` + `/proc` | `~/.local/bin/port-watch` (symlink; ensure `~/.local/bin` is on PATH) |
 | Windows | PowerShell (`Get-NetTCPConnection`) | `%LOCALAPPDATA%\Programs\Port Watch\port-watch.exe` (user PATH) |
 
-macOS-only UI: **Liquid Glass** translucency and **menu bar mode** (accessory app / dockless tray).
+macOS-only UI: **menu bar mode** (accessory app / dockless tray).
 
 ## Requirements
 

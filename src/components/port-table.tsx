@@ -786,6 +786,8 @@ export function PortTable({
                   <PortTableDataRow
                     key={item.id}
                     row={item.row}
+                    isSelected={item.row.getIsSelected()}
+                    canSelect={item.row.getCanSelect()}
                     change={rowChanges.get(item.row.original.pid)}
                     columnCount={columnCount}
                   />

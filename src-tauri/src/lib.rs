@@ -33,16 +33,11 @@ use tray::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_os::init());
-
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder.plugin(tauri_plugin_liquid_glass::init());
-    }
 
     builder
         .manage(PortPoller::new())

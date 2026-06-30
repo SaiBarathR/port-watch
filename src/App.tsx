@@ -8,12 +8,11 @@ import { PortToolbar } from "@/components/port-toolbar";
 import { CliInstallPrompt } from "@/components/cli-install-prompt";
 import { StopDialog } from "@/components/stop-dialog";
 import { usePortScan } from "@/hooks/use-port-scan";
-import { useLiquidGlass } from "@/hooks/use-liquid-glass";
 import { useTheme } from "@/hooks/use-theme";
 import type { PortProcess } from "@/lib/types";
 
 function App() {
-  const { theme, setTheme, resolvedTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const {
     processes,
     allProcesses,
@@ -39,10 +38,6 @@ function App() {
     setWatchedPortNotifications,
     setIncludeUdp,
     setUseHttpsForLocalhost,
-    setLiquidGlass,
-    setGlassTranslucency,
-    setGlassBlur,
-    setGlassTint,
     setRefreshPaused,
     rowChanges,
     userCount,
@@ -77,14 +72,8 @@ function App() {
     };
   }, [refresh]);
 
-  useLiquidGlass(settings.liquidGlass, "main", resolvedTheme, {
-    translucency: settings.glassTranslucency,
-    blur: settings.glassBlur,
-    tint: settings.glassTint,
-  });
-
   return (
-    <div className="glass-window flex h-screen flex-col bg-background">
+    <div className="flex h-screen flex-col bg-background">
       <main className="flex flex-1 flex-col gap-4 overflow-hidden p-4 px-6">
         <PortToolbar
           search={search}
@@ -109,10 +98,6 @@ function App() {
           onWatchedPortsChange={setWatchedPorts}
           onIncludeUdpChange={setIncludeUdp}
           onUseHttpsForLocalhostChange={setUseHttpsForLocalhost}
-          onLiquidGlassChange={setLiquidGlass}
-          onGlassTranslucencyChange={setGlassTranslucency}
-          onGlassBlurChange={setGlassBlur}
-          onGlassTintChange={setGlassTint}
           onFreePort={handleFreePort}
           onRefresh={() => void refresh()}
           loading={refreshing}

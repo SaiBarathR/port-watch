@@ -51,10 +51,18 @@ fn is_system_user(user: &str) -> bool {
 fn users_match(left: &str, right: &str) -> bool {
     let left = left.to_ascii_lowercase();
     let right = right.to_ascii_lowercase();
-    left == right
-        || left.ends_with(&format!("\\{right}"))
-        || right.ends_with(&format!("\\{left}"))
-        || left.split('\\').next_back() == right.split('\\').next_back()
+    if left == right {
+        return true;
+    }
+
+    // Allow "DOMAIN\user" vs bare "user" only when one side has no domain —
+    // comparing last components on both sides would let OTHERDOMAIN\bob pass
+    // as the local bob.
+    match (left.split_once('\\'), right.split_once('\\')) {
+        (Some((_, l)), None) => l == right,
+        (None, Some((_, r))) => left == r,
+        _ => false,
+    }
 }
 
 fn is_under_user_home(path: &str) -> bool {

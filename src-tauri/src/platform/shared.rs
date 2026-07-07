@@ -9,11 +9,15 @@ pub fn extract_script_path(command_line: &str, process_name: &str) -> Option<Str
 
     let name_lower = process_name.to_lowercase();
     let is_interpreter = interpreters.iter().any(|i| name_lower.contains(i));
+    if !is_interpreter {
+        // For non-interpreter processes the first path-like token is argv0
+        // (the executable itself), not a script.
+        return None;
+    }
 
     let tokens = tokenize(command_line);
-    let start_idx = if is_interpreter { 1 } else { 0 };
 
-    for token in tokens.iter().skip(start_idx) {
+    for token in tokens.iter().skip(1) {
         let cleaned = token.as_str();
         if cleaned.starts_with('-') {
             continue;
@@ -55,6 +59,39 @@ fn tokenize(command_line: &str) -> Vec<String> {
     }
 
     tokens
+}
+
+/// Compare a live process name against the name the user saw in the last
+/// scan, tolerating truncation (macOS/Linux report at most ~15 chars), a
+/// Windows `.exe` suffix, and full-path vs basename differences. Used to
+/// refuse killing a PID that has been reused by a different process.
+pub fn process_names_match(current: &str, expected: &str) -> bool {
+    fn normalize(name: &str) -> String {
+        let base = name
+            .trim()
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(name)
+            .to_ascii_lowercase();
+        base.strip_suffix(".exe").map(str::to_string).unwrap_or(base)
+    }
+
+    let current = normalize(current);
+    let expected = normalize(expected);
+    if current.is_empty() || expected.is_empty() {
+        return false;
+    }
+    if current == expected {
+        return true;
+    }
+
+    // Kernel-truncated names (15 chars) still match their long form.
+    let (short, long) = if current.len() < expected.len() {
+        (&current, &expected)
+    } else {
+        (&expected, &current)
+    };
+    short.len() >= 15 && long.starts_with(short.as_str())
 }
 
 pub fn parse_address_port(value: &str, protocol: &str) -> Option<crate::scanner::PortBinding> {
@@ -145,5 +182,25 @@ mod tests {
             extract_script_path(cmd, "node"),
             Some("/srv/app/server.js".to_string())
         );
+    }
+
+    #[test]
+    fn extract_script_path_ignores_non_interpreters() {
+        assert_eq!(extract_script_path("/usr/sbin/nginx -g daemon", "nginx"), None);
+    }
+
+    #[test]
+    fn process_names_match_variants() {
+        assert!(process_names_match("node", "node"));
+        assert!(process_names_match("Node", "node"));
+        assert!(process_names_match("/usr/local/bin/node", "node"));
+        assert!(process_names_match("node.exe", "node"));
+        assert!(process_names_match(
+            "com.docker.backe",
+            "com.docker.backend"
+        ));
+        assert!(!process_names_match("nginx", "node"));
+        assert!(!process_names_match("node", "nodemon"));
+        assert!(!process_names_match("", "node"));
     }
 }

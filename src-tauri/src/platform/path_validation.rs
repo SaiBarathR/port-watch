@@ -36,6 +36,23 @@ pub fn resolve_existing_path(path: &str) -> Result<PathBuf, String> {
     std::fs::canonicalize(path).map_err(|err| format!("Failed to resolve path: {err}"))
 }
 
+// Deleting these top-level directories is never what "delete this project
+// folder" means, even though they live under home.
+const PROTECTED_HOME_CHILDREN: &[&str] = &[
+    "Desktop",
+    "Documents",
+    "Downloads",
+    "Library",
+    "Movies",
+    "Music",
+    "Pictures",
+    "Public",
+    "AppData",
+    ".ssh",
+    ".gnupg",
+    ".config",
+];
+
 pub fn assert_delete_allowed(
     canonical: &Path,
     is_protected: fn(&Path) -> bool,
@@ -56,6 +73,25 @@ pub fn assert_delete_allowed(
         ));
     }
 
+    if canonical == home {
+        return Err("The home directory itself cannot be deleted".into());
+    }
+
+    if let Ok(relative) = canonical.strip_prefix(&home) {
+        let mut components = relative.components();
+        if let (Some(first), None) = (components.next(), components.next()) {
+            if PROTECTED_HOME_CHILDREN
+                .iter()
+                .any(|name| first.as_os_str().eq_ignore_ascii_case(name))
+            {
+                return Err(format!(
+                    "{} is a protected user directory and cannot be deleted",
+                    canonical.display()
+                ));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -63,10 +99,6 @@ pub fn resolve_delete_path(path: &str, is_protected: fn(&Path) -> bool) -> Resul
     let canonical = resolve_existing_path(path)?;
     assert_delete_allowed(&canonical, is_protected)?;
     Ok(canonical)
-}
-
-pub fn validate_delete_path(path: &str, is_protected: fn(&Path) -> bool) -> Result<(), String> {
-    resolve_delete_path(path, is_protected).map(|_| ())
 }
 
 pub fn resolve_permanent_delete(
@@ -90,14 +122,6 @@ pub fn resolve_permanent_delete(
     }
 
     resolve_delete_path(path, is_protected)
-}
-
-pub fn validate_permanent_delete(
-    path: &str,
-    confirmation: &str,
-    is_protected: fn(&Path) -> bool,
-) -> Result<(), String> {
-    resolve_permanent_delete(path, confirmation, is_protected).map(|_| ())
 }
 
 pub fn assert_system_actions_allowed(
@@ -124,6 +148,29 @@ mod tests {
     }
 
     #[test]
+    fn rejects_home_itself() {
+        let home = canonical_home().unwrap();
+        let err = assert_delete_allowed(&home, not_protected).unwrap_err();
+        assert!(err.contains("home directory"));
+    }
+
+    #[test]
+    fn rejects_protected_home_children() {
+        let home = canonical_home().unwrap();
+        let err = assert_delete_allowed(&home.join("Documents"), not_protected).unwrap_err();
+        assert!(err.contains("protected user directory"));
+        let err = assert_delete_allowed(&home.join(".ssh"), not_protected).unwrap_err();
+        assert!(err.contains("protected user directory"));
+    }
+
+    #[test]
+    fn allows_projects_inside_protected_children() {
+        let home = canonical_home().unwrap();
+        assert_delete_allowed(&home.join("Documents/my-project"), not_protected).unwrap();
+        assert_delete_allowed(&home.join("Dev/my-project"), not_protected).unwrap();
+    }
+
+    #[test]
     fn rejects_symlinks() {
         let temp = std::env::temp_dir().join("port-watch-symlink-test");
         let target = temp.join("target");
@@ -135,7 +182,7 @@ mod tests {
 
         #[cfg(unix)]
         {
-            let err = validate_delete_path(link.to_str().unwrap(), not_protected).unwrap_err();
+            let err = resolve_delete_path(link.to_str().unwrap(), not_protected).unwrap_err();
             assert!(err.contains("Symlinks"));
         }
 

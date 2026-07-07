@@ -47,6 +47,15 @@ pub fn run() {
             start_poller(app.handle().clone());
             Ok(())
         })
+        // Tray-centric app: closing the window hides it instead of exiting
+        // (which would kill the tray and the poller). Quit lives in the tray
+        // menu.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             list_listening_ports,
             get_listening_ports,

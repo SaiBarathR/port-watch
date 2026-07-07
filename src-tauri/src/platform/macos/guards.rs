@@ -49,19 +49,11 @@ pub fn is_protected_path(path: &str) -> bool {
 
 #[allow(dead_code)]
 pub fn is_user_allowed_path(path: &str) -> bool {
-    path_validation::validate_delete_path(path, is_protected_canonical).is_ok()
-}
-
-pub fn validate_delete_path(path: &str) -> Result<(), String> {
-    path_validation::validate_delete_path(path, is_protected_canonical)
+    path_validation::resolve_delete_path(path, is_protected_canonical).is_ok()
 }
 
 pub fn resolve_delete_path(path: &str) -> Result<std::path::PathBuf, String> {
     path_validation::resolve_delete_path(path, is_protected_canonical)
-}
-
-pub fn validate_permanent_delete(path: &str, confirmation: &str) -> Result<(), String> {
-    path_validation::validate_permanent_delete(path, confirmation, is_protected_canonical)
 }
 
 pub fn resolve_permanent_delete(path: &str, confirmation: &str) -> Result<std::path::PathBuf, String> {
@@ -104,7 +96,7 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
         let escape = nested.join("../../../../../../../etc/passwd");
         if escape.exists() {
-            assert!(validate_delete_path(escape.to_str().unwrap()).is_err());
+            assert!(resolve_delete_path(escape.to_str().unwrap()).is_err());
         }
         let _ = fs::remove_dir_all(&base);
     }
@@ -122,7 +114,7 @@ mod tests {
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(outside.as_os_str(), &link).unwrap();
-            assert!(validate_delete_path(link.to_str().unwrap()).is_err());
+            assert!(resolve_delete_path(link.to_str().unwrap()).is_err());
         }
         let _ = fs::remove_dir_all(&temp);
         let _ = fs::remove_dir_all(outside);

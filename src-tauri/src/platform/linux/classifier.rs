@@ -64,8 +64,12 @@ fn is_system_user(user: &str) -> bool {
     user.starts_with('_') && user != current_username()
 }
 
+// Component-wise so /home/foobar does not count as under /home/foo.
 fn is_under_user_home(path: &str) -> bool {
-    !path.is_empty() && path.starts_with(user_home())
+    let home = user_home();
+    !path.is_empty()
+        && !home.is_empty()
+        && std::path::Path::new(path).starts_with(std::path::Path::new(home))
 }
 
 fn current_username() -> String {

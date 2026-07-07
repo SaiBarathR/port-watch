@@ -77,7 +77,7 @@ fn platform_get_cli_install_status() -> Result<CliInstallStatus, String> {
     let app_exe = current_app_executable()?;
     let link_path = PathBuf::from(CLI_LINK_PATH);
 
-    if !link_path.exists() {
+    if !link_entry_exists(&link_path) {
         return Ok(CliInstallStatus {
             installed: false,
             link_path: CLI_LINK_PATH.to_string(),
@@ -104,18 +104,24 @@ fn platform_install_cli_to_path() -> Result<(), String> {
     let app_exe = current_app_executable()?;
     let link_path = PathBuf::from(CLI_LINK_PATH);
 
-    if link_path.exists() {
+    if link_entry_exists(&link_path) {
         if let Some(target) = read_link_target(&link_path) {
             if paths_refer_to_same_file(&target, &app_exe) {
                 return Ok(());
             }
+            if Path::new(&target).exists() {
+                return Err(format!(
+                    "Another port-watch is installed at {CLI_LINK_PATH} (points to {target})"
+                ));
+            }
+            // Dangling link left behind by a moved/updated app — replace it.
+            std::fs::remove_file(&link_path)
+                .map_err(|err| format!("Failed to replace stale CLI link: {err}"))?;
+        } else {
             return Err(format!(
-                "Another port-watch is installed at {CLI_LINK_PATH} (points to {target})"
+                "{CLI_LINK_PATH} exists but is not a symlink. Remove it manually and try again."
             ));
         }
-        return Err(format!(
-            "{CLI_LINK_PATH} exists but is not a symlink. Remove it manually and try again."
-        ));
     }
 
     if let Some(parent) = link_path.parent() {
@@ -140,7 +146,7 @@ fn platform_uninstall_cli_from_path() -> Result<(), String> {
     let app_exe = current_app_executable()?;
     let link_path = PathBuf::from(CLI_LINK_PATH);
 
-    if !link_path.exists() {
+    if !link_entry_exists(&link_path) {
         return Ok(());
     }
 
@@ -150,7 +156,8 @@ fn platform_uninstall_cli_from_path() -> Result<(), String> {
         ));
     };
 
-    if !paths_refer_to_same_file(&target, &app_exe) {
+    // A dangling link is removable regardless of where it pointed.
+    if !paths_refer_to_same_file(&target, &app_exe) && Path::new(&target).exists() {
         return Err(format!(
             "{CLI_LINK_PATH} points to {target}, not this app. Uninstall skipped."
         ));
@@ -165,7 +172,7 @@ fn platform_get_cli_install_status() -> Result<CliInstallStatus, String> {
     let link_path_string = platform_cli_link_path()?;
     let link_path = PathBuf::from(&link_path_string);
 
-    if !link_path.exists() {
+    if !link_entry_exists(&link_path) {
         return Ok(CliInstallStatus {
             installed: false,
             link_path: link_path_string,
@@ -192,20 +199,26 @@ fn platform_install_cli_to_path() -> Result<(), String> {
     let app_exe = current_app_executable()?;
     let link_path = PathBuf::from(platform_cli_link_path()?);
 
-    if link_path.exists() {
+    if link_entry_exists(&link_path) {
         if let Some(target) = read_link_target(&link_path) {
             if paths_refer_to_same_file(&target, &app_exe) {
                 return Ok(());
             }
+            if Path::new(&target).exists() {
+                return Err(format!(
+                    "Another port-watch is installed at {} (points to {target})",
+                    link_path.display()
+                ));
+            }
+            // Dangling link left behind by a moved/updated app — replace it.
+            std::fs::remove_file(&link_path)
+                .map_err(|err| format!("Failed to replace stale CLI link: {err}"))?;
+        } else {
             return Err(format!(
-                "Another port-watch is installed at {} (points to {target})",
+                "{} exists but is not a symlink. Remove it manually and try again.",
                 link_path.display()
             ));
         }
-        return Err(format!(
-            "{} exists but is not a symlink. Remove it manually and try again.",
-            link_path.display()
-        ));
     }
 
     if let Some(parent) = link_path.parent() {
@@ -222,7 +235,7 @@ fn platform_uninstall_cli_from_path() -> Result<(), String> {
     let app_exe = current_app_executable()?;
     let link_path = PathBuf::from(platform_cli_link_path()?);
 
-    if !link_path.exists() {
+    if !link_entry_exists(&link_path) {
         return Ok(());
     }
 
@@ -233,7 +246,8 @@ fn platform_uninstall_cli_from_path() -> Result<(), String> {
         ));
     };
 
-    if !paths_refer_to_same_file(&target, &app_exe) {
+    // A dangling link is removable regardless of where it pointed.
+    if !paths_refer_to_same_file(&target, &app_exe) && Path::new(&target).exists() {
         return Err(format!(
             "{} points to {target}, not this app. Uninstall skipped.",
             link_path.display()
@@ -293,6 +307,13 @@ fn current_app_executable() -> Result<PathBuf, String> {
 }
 
 #[cfg(unix)]
+// `Path::exists()` follows symlinks, so a dangling link (the app moved or was
+// updated) would report "not installed" while still blocking reinstall with
+// EEXIST. Check the directory entry itself instead.
+fn link_entry_exists(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
 fn read_link_target(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     if !metadata.file_type().is_symlink() {
@@ -319,7 +340,7 @@ fn paths_refer_to_same_file(left: &str, right: &Path) -> bool {
         canonicalize_if_exists(&right.to_string_lossy()),
     ) {
         (Some(left_path), Some(right_path)) => left_path == right_path,
-        _ => PathBuf::from(left) == right,
+        _ => Path::new(left) == right,
     }
 }
 
@@ -403,7 +424,9 @@ $updated = $parts -join ";"
 
 #[cfg(target_os = "windows")]
 fn run_powershell(script: &str) -> Result<(), String> {
+    use crate::platform::shell::NoWindow;
     let output = std::process::Command::new("powershell")
+        .no_window()
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .output()
         .map_err(|err| format!("Failed to run PowerShell: {err}"))?;

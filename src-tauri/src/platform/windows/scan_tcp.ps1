@@ -1,14 +1,22 @@
+# Redirected stdout defaults to the OEM codepage, which mangles non-ASCII
+# user names and paths — force UTF-8 so Rust can parse it losslessly.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+# One process snapshot instead of one WMI query per connection.
+$procs = @{}
+foreach ($p in (Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+  $procs[[uint32]$p.ProcessId] = $p
+}
 $result = @()
 $connections = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue
 foreach ($conn in $connections) {
-  $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($conn.OwningProcess)" -ErrorAction SilentlyContinue
+  $proc = $procs[[uint32]$conn.OwningProcess]
   if ($null -eq $proc) { continue }
   $owner = $proc | Invoke-CimMethod -MethodName GetOwner -ErrorAction SilentlyContinue
   $user = if ($owner -and $owner.User) { "$($owner.Domain)\$($owner.User)" } else { "" }
   $uptime = 0
   if ($proc.CreationDate) {
     $created = [Management.ManagementDateTimeConverter]::ToDateTime($proc.CreationDate)
-    $uptime = [int]([DateTime]::UtcNow - $created.ToUniversalTime()).TotalSeconds
+    $uptime = [Math]::Max(0, [int]([DateTime]::UtcNow - $created.ToUniversalTime()).TotalSeconds)
   }
   $result += [PSCustomObject]@{
     pid = [int]$conn.OwningProcess
@@ -22,4 +30,4 @@ foreach ($conn in $connections) {
     uptimeSeconds = $uptime
   }
 }
-if ($result.Count -eq 0) { "" } else { $result | ConvertTo-Json -Compress -Depth 4 }
+if ($result.Count -eq 0) { "" } else { ConvertTo-Json -InputObject @($result) -Compress -Depth 4 }

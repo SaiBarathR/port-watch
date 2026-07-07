@@ -6,7 +6,12 @@ export type ResolvedTheme = "light" | "dark-grey" | "dark-oled";
 const THEME_KEY = "port-watch-theme";
 
 export function getStoredTheme(): ThemeMode {
-  const value = localStorage.getItem(THEME_KEY);
+  let value: string | null = null;
+  try {
+    value = localStorage.getItem(THEME_KEY);
+  } catch {
+    // storage unavailable — fall through to "system"
+  }
   if (value === "dark") {
     return "dark-oled";
   }
@@ -46,10 +51,18 @@ export function initTheme() {
 
 export function useTheme() {
   const [theme, setThemeState] = useState<ThemeMode>(() => getStoredTheme());
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
+    resolveTheme(theme),
+  );
 
   const setTheme = useCallback((mode: ThemeMode) => {
     setThemeState(mode);
-    localStorage.setItem(THEME_KEY, mode);
+    setResolvedTheme(resolveTheme(mode));
+    try {
+      localStorage.setItem(THEME_KEY, mode);
+    } catch {
+      // storage unavailable — theme still applies for this session
+    }
     applyTheme(mode);
   }, []);
 
@@ -61,7 +74,10 @@ export function useTheme() {
     }
 
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyTheme("system");
+    const onChange = () => {
+      applyTheme("system");
+      setResolvedTheme(resolveTheme("system"));
+    };
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
   }, [theme]);
@@ -69,6 +85,6 @@ export function useTheme() {
   return {
     theme,
     setTheme,
-    resolvedTheme: resolveTheme(theme),
+    resolvedTheme,
   };
 }

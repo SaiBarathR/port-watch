@@ -51,17 +51,59 @@ pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn stop_process(pid: u32, force: bool) -> Result<(), String> {
+pub fn stop_process(pid: u32, force: bool, expected_name: Option<&str>) -> Result<(), String> {
+    verify_process_identity(pid, expected_name)?;
+
     if force {
         send_signal(pid, "-KILL")?;
     } else {
         send_signal(pid, "-TERM")?;
         std::thread::sleep(std::time::Duration::from_secs(2));
-        if process_exists(pid) {
+        // Re-verify before escalating: the PID may have been reused by an
+        // unrelated process during the grace window.
+        if still_matches(pid, expected_name) {
             send_signal(pid, "-KILL")?;
         }
     }
     Ok(())
+}
+
+pub fn current_process_name(pid: u32) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn verify_process_identity(pid: u32, expected_name: Option<&str>) -> Result<(), String> {
+    let Some(expected) = expected_name else {
+        return Ok(());
+    };
+
+    match current_process_name(pid) {
+        Some(name) if crate::platform::shared::process_names_match(&name, expected) => Ok(()),
+        Some(name) => Err(format!(
+            "PID {pid} now belongs to \"{name}\", not \"{expected}\" — the process list was stale. Refresh and try again."
+        )),
+        // Already gone: the goal (process stopped) is achieved.
+        None => Ok(()),
+    }
+}
+
+fn still_matches(pid: u32, expected_name: Option<&str>) -> bool {
+    match (current_process_name(pid), expected_name) {
+        (Some(name), Some(expected)) => {
+            crate::platform::shared::process_names_match(&name, expected)
+        }
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
 }
 
 fn send_signal(pid: u32, signal: &str) -> Result<(), String> {
@@ -76,12 +118,4 @@ fn send_signal(pid: u32, signal: &str) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn process_exists(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }

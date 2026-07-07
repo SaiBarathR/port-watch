@@ -29,11 +29,11 @@ fn detect_system_kind(process: &PortProcess) -> SystemKind {
         return SystemKind::System;
     }
 
-    if is_current_user {
-        if is_under_user_home(&process.executable_path) || is_under_applications(&process.executable_path)
-        {
-            return SystemKind::User;
-        }
+    if is_current_user
+        && (is_under_user_home(&process.executable_path)
+            || is_under_applications(&process.executable_path))
+    {
+        return SystemKind::User;
     }
 
     if is_binary_outside_user_home(&process.executable_path) {
@@ -61,7 +61,10 @@ fn is_apple_binary(executable_path: &str, command_line: &str) -> bool {
         return true;
     }
 
-    if command_line.contains("com.apple.") {
+    // Only argv0 counts — an arbitrary argument mentioning "com.apple." (e.g.
+    // a log path) must not mark a user process as Apple's.
+    let argv0 = command_line.split_whitespace().next().unwrap_or("");
+    if argv0.contains("com.apple.") {
         return true;
     }
 
@@ -81,12 +84,15 @@ fn is_binary_outside_user_home(executable_path: &str) -> bool {
         return false;
     }
 
-    let home = user_home();
-    !executable_path.starts_with(home) && !is_under_applications(executable_path)
+    !is_under_user_home(executable_path) && !is_under_applications(executable_path)
 }
 
+// Component-wise so /Users/foobar does not count as under /Users/foo.
 fn is_under_user_home(path: &str) -> bool {
-    !path.is_empty() && path.starts_with(user_home())
+    let home = user_home();
+    !path.is_empty()
+        && !home.is_empty()
+        && std::path::Path::new(path).starts_with(std::path::Path::new(home))
 }
 
 fn is_under_applications(path: &str) -> bool {

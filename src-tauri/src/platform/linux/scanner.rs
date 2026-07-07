@@ -114,7 +114,7 @@ fn parse_ss_output(stdout: &str, protocol: &str) -> Vec<SocketRecord> {
             continue;
         }
 
-        let Some((pid, name, local)) = parse_ss_line(line) else {
+        let Some((owners, local)) = parse_ss_line(line) else {
             continue;
         };
 
@@ -122,17 +122,41 @@ fn parse_ss_output(stdout: &str, protocol: &str) -> Vec<SocketRecord> {
             continue;
         };
 
-        records.push(SocketRecord {
-            pid,
-            name,
-            bindings: vec![binding],
-        });
+        // Pre-forked servers (nginx, gunicorn) share one listening socket
+        // across master and workers; ss lists every owner in one line, and
+        // each deserves its own record so stopping shows all involved pids.
+        for (pid, name) in owners {
+            records.push(SocketRecord {
+                pid,
+                name,
+                bindings: vec![binding.clone()],
+            });
+        }
     }
 
     records
 }
 
-fn parse_ss_line(line: &str) -> Option<(u32, String, &str)> {
+// Every ("name",pid=N,fd=M) owner in a users:(...) field.
+fn parse_ss_owners(users_part: &str) -> Vec<(u32, String)> {
+    let mut owners = Vec::new();
+
+    for segment in users_part.split("(\"").skip(1) {
+        let name = segment.split('"').next().unwrap_or("unknown").to_string();
+        let pid = segment
+            .split("pid=")
+            .nth(1)
+            .and_then(|rest| rest.split([',', ')']).next())
+            .and_then(|value| value.parse().ok());
+        if let Some(pid) = pid {
+            owners.push((pid, name));
+        }
+    }
+
+    owners
+}
+
+fn parse_ss_line(line: &str) -> Option<(Vec<(u32, String)>, &str)> {
     // `ss` only attaches the `users:(...)` process field for sockets the caller
     // owns (or all of them when running as root). Sockets owned by other users
     // appear without it, so the field is optional: keep the listener with an
@@ -142,28 +166,20 @@ fn parse_ss_line(line: &str) -> Option<(u32, String, &str)> {
         None => (line.trim(), None),
     };
 
-    let (pid, name) = match users_part {
+    let owners = match users_part {
         Some(users_part) => {
-            let pid = users_part
-                .split("pid=")
-                .nth(1)?
-                .split([',', ')'])
-                .next()?
-                .parse()
-                .ok()?;
-            let name = users_part
-                .split('"')
-                .nth(1)
-                .unwrap_or("unknown")
-                .to_string();
-            (pid, name)
+            let owners = parse_ss_owners(users_part);
+            if owners.is_empty() {
+                return None;
+            }
+            owners
         }
-        None => (0, "unknown".to_string()),
+        None => vec![(0, "unknown".to_string())],
     };
 
     let parts: Vec<&str> = before_users.split_whitespace().collect();
     let local = *parts.get(parts.len().checked_sub(2)?)?;
-    Some((pid, name, local))
+    Some((owners, local))
 }
 
 fn merge_by_pid(records: Vec<SocketRecord>) -> Vec<SocketRecord> {
@@ -247,17 +263,58 @@ fn read_proc_user(proc_dir: &PathBuf) -> String {
 }
 
 fn resolve_uid(uid: u32) -> Option<String> {
-    let passwd = fs::read_to_string("/etc/passwd").ok()?;
-    for line in passwd.lines() {
-        let mut parts = line.split(':');
-        let name = parts.next()?;
-        let _ = parts.next()?;
-        let file_uid = parts.next()?.parse::<u32>().ok()?;
-        if file_uid == uid {
-            return Some(name.to_string());
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static CACHE: Mutex<Option<HashMap<u32, Option<String>>>> = Mutex::new(None);
+
+    if let Ok(mut guard) = CACHE.lock() {
+        if let Some(cached) = guard.get_or_insert_with(HashMap::new).get(&uid) {
+            return cached.clone();
         }
     }
-    None
+
+    let resolved = resolve_uid_uncached(uid);
+
+    if let Ok(mut guard) = CACHE.lock() {
+        guard
+            .get_or_insert_with(HashMap::new)
+            .insert(uid, resolved.clone());
+    }
+
+    resolved
+}
+
+fn resolve_uid_uncached(uid: u32) -> Option<String> {
+    if let Ok(passwd) = fs::read_to_string("/etc/passwd") {
+        for line in passwd.lines() {
+            let mut parts = line.split(':');
+            let Some(name) = parts.next() else { continue };
+            let Some(_) = parts.next() else { continue };
+            let Some(file_uid) = parts.next().and_then(|v| v.parse::<u32>().ok()) else {
+                continue;
+            };
+            if file_uid == uid {
+                return Some(name.to_string());
+            }
+        }
+    }
+
+    // NSS-managed users (LDAP, SSSD, systemd-homed) aren't in /etc/passwd.
+    let output = std::process::Command::new("getent")
+        .args(["passwd", &uid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let name = stdout.split(':').next()?.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }
 
 fn read_proc_uptime(proc_dir: &PathBuf) -> u64 {
@@ -275,9 +332,13 @@ fn read_proc_uptime(proc_dir: &PathBuf) -> u64 {
     });
 
     let stat = fs::read_to_string(proc_dir.join("stat")).unwrap_or_default();
+    // The comm field (2nd) can contain spaces and parens — e.g. "(tmux: server)"
+    // — so split after its closing paren; starttime is overall field 22, i.e.
+    // the 20th field after state.
     let start_ticks = stat
-        .split_whitespace()
-        .nth(21)
+        .rsplit_once(')')
+        .map(|(_, rest)| rest)
+        .and_then(|rest| rest.split_whitespace().nth(19))
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0);
     let system_uptime = fs::read_to_string("/proc/uptime")
@@ -295,37 +356,46 @@ mod tests {
     #[test]
     fn parse_ss_line_extracts_pid_and_local() {
         let line = "0 4096 127.0.0.1:8080 0.0.0.0:* users:((\"node\",pid=1234,fd=21))";
-        let (pid, name, local) = parse_ss_line(line).unwrap();
-        assert_eq!(pid, 1234);
-        assert_eq!(name, "node");
+        let (owners, local) = parse_ss_line(line).unwrap();
+        assert_eq!(owners, vec![(1234, "node".to_string())]);
         assert_eq!(local, "127.0.0.1:8080");
     }
 
     #[test]
     fn parse_ss_line_with_listen_state() {
         let line = "LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:((\"node\",pid=1234,fd=21))";
-        let (pid, name, local) = parse_ss_line(line).unwrap();
-        assert_eq!(pid, 1234);
-        assert_eq!(name, "node");
+        let (owners, local) = parse_ss_line(line).unwrap();
+        assert_eq!(owners, vec![(1234, "node".to_string())]);
         assert_eq!(local, "127.0.0.1:8080");
     }
 
     #[test]
     fn parse_ss_line_ipv6_local() {
         let line = "0 4096 [::1]:3000 0.0.0.0:* users:((\"node\",pid=5678,fd=3))";
-        let (pid, name, local) = parse_ss_line(line).unwrap();
-        assert_eq!(pid, 5678);
-        assert_eq!(name, "node");
+        let (owners, local) = parse_ss_line(line).unwrap();
+        assert_eq!(owners, vec![(5678, "node".to_string())]);
         assert_eq!(local, "[::1]:3000");
     }
 
     #[test]
     fn parse_ss_line_wildcard_local() {
         let line = "0 4096 0.0.0.0:8080 0.0.0.0:* users:((\"nginx\",pid=999,fd=5))";
-        let (pid, name, local) = parse_ss_line(line).unwrap();
-        assert_eq!(pid, 999);
-        assert_eq!(name, "nginx");
+        let (owners, local) = parse_ss_line(line).unwrap();
+        assert_eq!(owners, vec![(999, "nginx".to_string())]);
         assert_eq!(local, "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn parse_ss_line_multiple_owners() {
+        // Pre-forked servers share one listening socket across master and
+        // workers; every owner must be reported.
+        let line = "LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:((\"nginx\",pid=101,fd=6),(\"nginx\",pid=100,fd=6))";
+        let (owners, local) = parse_ss_line(line).unwrap();
+        assert_eq!(
+            owners,
+            vec![(101, "nginx".to_string()), (100, "nginx".to_string())]
+        );
+        assert_eq!(local, "0.0.0.0:80");
     }
 
     #[test]
@@ -333,9 +403,8 @@ mod tests {
         // Non-root `ss` omits the users:(...) field for sockets owned by other
         // users; the listener must still be parsed with an unknown owner.
         let line = "LISTEN 0 4096 0.0.0.0:443 0.0.0.0:*";
-        let (pid, name, local) = parse_ss_line(line).unwrap();
-        assert_eq!(pid, 0);
-        assert_eq!(name, "unknown");
+        let (owners, local) = parse_ss_line(line).unwrap();
+        assert_eq!(owners, vec![(0, "unknown".to_string())]);
         assert_eq!(local, "0.0.0.0:443");
     }
 

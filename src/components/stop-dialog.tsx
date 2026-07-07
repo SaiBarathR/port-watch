@@ -53,24 +53,25 @@ export function StopDialog({
 
     setBusy(true);
     const failures: string[] = [];
-    let stopped = 0;
+    const stopped: PortProcess[] = [];
 
     for (const process of processes) {
       try {
         await invoke("stop_process", {
           pid: process.pid,
+          expectedName: process.name,
         });
-        stopped += 1;
+        stopped.push(process);
       } catch (err) {
         failures.push(`${process.name} (${process.pid}): ${String(err)}`);
       }
     }
 
-    if (stopped > 0) {
+    if (stopped.length > 0) {
       toast.success(
-        stopped === 1
-          ? `Stopped ${processes[0].name} (PID ${processes[0].pid})`
-          : `Stopped ${stopped} process${stopped === 1 ? "" : "es"}`,
+        stopped.length === 1
+          ? `Stopped ${stopped[0].name} (PID ${stopped[0].pid})`
+          : `Stopped ${stopped.length} processes`,
       );
       handleOpenChange(false);
       onStopped();

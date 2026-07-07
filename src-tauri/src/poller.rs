@@ -50,8 +50,17 @@ impl PortPoller {
         }
     }
 
+    // A panic while holding the lock must not freeze scanning forever (a
+    // poisoned `in_flight = true` would skip every future scan), so recover
+    // the guard instead of propagating poison.
+    fn lock_inner(&self) -> std::sync::MutexGuard<'_, PollerInner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn is_system_service(&self, pid: u32) -> Option<bool> {
-        let inner = self.inner.lock().ok()?;
+        let inner = self.lock_inner();
         inner
             .last_result
             .iter()
@@ -60,7 +69,7 @@ impl PortPoller {
     }
 
     pub fn find_by_pid(&self, pid: u32) -> Option<PortProcess> {
-        let inner = self.inner.lock().ok()?;
+        let inner = self.lock_inner();
         inner
             .last_result
             .iter()
@@ -69,10 +78,8 @@ impl PortPoller {
     }
 
     pub fn snapshot(&self) -> Vec<PortProcess> {
-        self.inner
-            .lock()
-            .map(|inner| inner.last_result.clone())
-            .unwrap_or_default()
+        let snapshot = self.lock_inner().last_result.clone();
+        snapshot
     }
 }
 
@@ -84,10 +91,7 @@ struct CacheSnapshot {
 
 fn read_cache(app: &AppHandle) -> Result<CacheSnapshot, String> {
     let poller = app.state::<PortPoller>();
-    let inner = poller
-        .inner
-        .lock()
-        .map_err(|_| "Port poller lock poisoned".to_string())?;
+    let inner = poller.lock_inner();
 
     let scan_complete = inner.last_scan_at.is_some();
     let in_flight = inner.in_flight;
@@ -148,10 +152,7 @@ pub fn set_scan_settings(
     include_udp: bool,
 ) -> Result<(), String> {
     let poller = app.state::<PortPoller>();
-    let mut inner = poller
-        .inner
-        .lock()
-        .map_err(|_| "Port poller lock poisoned".to_string())?;
+    let mut inner = poller.lock_inner();
 
     let settings_changed = inner.interval_ms != interval_ms || inner.include_udp != include_udp;
 
@@ -172,11 +173,7 @@ pub fn set_scan_settings(
 #[tauri::command]
 pub fn set_refresh_paused(app: AppHandle, paused: bool) -> Result<(), String> {
     let poller = app.state::<PortPoller>();
-    let mut inner = poller
-        .inner
-        .lock()
-        .map_err(|_| "Port poller lock poisoned".to_string())?;
-    inner.refresh_paused = paused;
+    poller.lock_inner().refresh_paused = paused;
     Ok(())
 }
 
@@ -190,8 +187,8 @@ pub fn start_poller(app: AppHandle) {
     spawn_scan(app.clone());
     let generation = {
         let poller = app.state::<PortPoller>();
-        let inner = poller.inner.lock().expect("poller lock");
-        inner.generation
+        let generation = poller.lock_inner().generation;
+        generation
     };
     spawn_poller_loop(app, generation);
 }
@@ -201,7 +198,7 @@ fn spawn_poller_loop(app: AppHandle, generation: u64) {
         loop {
             let (interval_ms, current_generation, paused) = {
                 let poller = app.state::<PortPoller>();
-                let inner = poller.inner.lock().expect("poller lock");
+                let inner = poller.lock_inner();
                 (
                     inner.interval_ms,
                     inner.generation,
@@ -221,11 +218,12 @@ fn spawn_poller_loop(app: AppHandle, generation: u64) {
             let scan_started = Instant::now();
             run_scan(&app).await;
 
-            if {
+            let generation_changed = {
                 let poller = app.state::<PortPoller>();
-                let inner = poller.inner.lock().expect("poller lock");
-                inner.generation != generation
-            } {
+                let current = poller.lock_inner().generation;
+                current != generation
+            };
+            if generation_changed {
                 break;
             }
 
@@ -248,10 +246,7 @@ fn spawn_scan(app: AppHandle) {
 async fn run_scan(app: &AppHandle) {
     let include_udp = {
         let poller = app.state::<PortPoller>();
-        let mut inner = match poller.inner.lock() {
-            Ok(inner) => inner,
-            Err(_) => return,
-        };
+        let mut inner = poller.lock_inner();
 
         if inner.in_flight {
             return;
@@ -269,22 +264,16 @@ async fn run_scan(app: &AppHandle) {
         Ok(Err(err)) => {
             let previous = {
                 let poller = app.state::<PortPoller>();
-                let inner = match poller.inner.lock() {
-                    Ok(inner) => inner,
-                    Err(_) => return,
-                };
-                inner.last_result.clone()
+                let last = poller.lock_inner().last_result.clone();
+                last
             };
             (previous, Some(err))
         }
         Err(err) => {
             let previous = {
                 let poller = app.state::<PortPoller>();
-                let inner = match poller.inner.lock() {
-                    Ok(inner) => inner,
-                    Err(_) => return,
-                };
-                inner.last_result.clone()
+                let last = poller.lock_inner().last_result.clone();
+                last
             };
             (
                 previous,
@@ -295,10 +284,7 @@ async fn run_scan(app: &AppHandle) {
 
     let payload = {
         let poller = app.state::<PortPoller>();
-        let mut inner = match poller.inner.lock() {
-            Ok(inner) => inner,
-            Err(_) => return,
-        };
+        let mut inner = poller.lock_inner();
 
         inner.in_flight = false;
         inner.last_scan_at = Some(Instant::now());

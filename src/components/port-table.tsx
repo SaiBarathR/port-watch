@@ -3,14 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   flexRender,
   getCoreRowModel,
-  getSortedRowModel,
   useReactTable,
   type ColumnDef,
   type ColumnSizingState,
   type Header,
   type Row,
   type RowSelectionState,
-  type SortingState,
 } from "@tanstack/react-table";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -123,7 +121,6 @@ export function PortTable({
   onTogglePinnedPath,
   onUseHttpsForLocalhostChange,
 }: PortTableProps) {
-  const [sorting, setSorting] = useState<SortingState>([{ id: "ports", desc: false }]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(loadColumnSizing);
   const tableRef = useRef<HTMLTableElement>(null);
@@ -168,6 +165,36 @@ export function PortTable({
         isResizingRef.current,
     );
   }, [openMenuPid, stopTargets.length, deleteTarget, historyPort, onRefreshPauseChange]);
+
+  useEffect(() => {
+    setRowSelection((current) => {
+      const selectablePids = new Set(
+        processes
+          .filter(
+            (process) =>
+              !process.is_system_service || settings.allowSystemProcessActions,
+          )
+          .map((process) => String(process.pid)),
+      );
+      const next: RowSelectionState = {};
+      let changed = false;
+      for (const [pid, selected] of Object.entries(current)) {
+        if (selectablePids.has(pid)) {
+          next[pid] = selected;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [processes, settings.allowSystemProcessActions]);
+
+  useEffect(() => {
+    return () => {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+  }, []);
 
   const applyLiveSizing = useCallback((sizing: ColumnSizingState) => {
     for (const [columnId, width] of Object.entries(sizing)) {
@@ -300,8 +327,20 @@ export function PortTable({
       onRefreshPauseChange,
       openMenuPid,
       stopTargets.length,
-      deleteTarget,
     ],
+  );
+
+  const handleResizeReset = useCallback(
+    (columnId: string) => {
+      const nextSizing = {
+        ...columnSizing,
+        [columnId]: DEFAULT_COLUMN_SIZING[columnId],
+      };
+      setColumnSizing(nextSizing);
+      saveColumnSizing(nextSizing);
+      applyLiveSizing(nextSizing);
+    },
+    [applyLiveSizing, columnSizing],
   );
 
   const canStop = useCallback(
@@ -587,8 +626,7 @@ export function PortTable({
   const table = useReactTable({
     data: tableData,
     columns,
-    state: { sorting, columnSizing, rowSelection },
-    onSortingChange: setSorting,
+    state: { columnSizing, rowSelection },
     onColumnSizingChange: setColumnSizing,
     onRowSelectionChange: setRowSelection,
     enableRowSelection: (row) => canStop(row.original),
@@ -596,7 +634,6 @@ export function PortTable({
     columnResizeMode: "onEnd",
     enableColumnResizing: true,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   });
 
   const selectedProcesses = useMemo(
@@ -751,7 +788,7 @@ export function PortTable({
                       {header.column.getCanResize() && (
                         <div
                           onPointerDown={(event) => handleResizePointerDown(event, header)}
-                          onDoubleClick={() => header.column.resetSize()}
+                          onDoubleClick={() => handleResizeReset(header.column.id)}
                           className="group/resize absolute top-0 -right-1 z-40 h-full w-2 cursor-col-resize touch-none select-none"
                         >
                           <div
@@ -819,7 +856,6 @@ export function PortTable({
             setStopTargets([]);
             setStopDialogTitle(undefined);
             setStopDialogDescription(undefined);
-            setRowSelection({});
           }
         }}
         title={stopDialogTitle}
@@ -828,7 +864,10 @@ export function PortTable({
           stopTargets.some((process) => process.is_system_service) &&
           settings.allowSystemProcessActions
         }
-        onStopped={onRefresh}
+        onStopped={() => {
+          setRowSelection({});
+          onRefresh();
+        }}
       />
 
       <DeleteDialog

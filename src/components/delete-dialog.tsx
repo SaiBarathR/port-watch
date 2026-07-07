@@ -63,6 +63,7 @@ export function DeleteDialog({
     try {
       await invoke("stop_process", {
         pid: target.process.pid,
+        expectedName: target.process.name,
       });
 
       if (target.mode === "trash") {

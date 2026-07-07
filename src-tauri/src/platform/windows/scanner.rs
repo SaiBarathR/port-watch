@@ -22,8 +22,10 @@ struct WindowsListener {
     #[serde(rename = "commandLine")]
     command_line: Option<String>,
     protocol: String,
+    // Signed because CreationDate rounding/clock skew can produce a slightly
+    // negative value; clamped when building PortProcess.
     #[serde(rename = "uptimeSeconds")]
-    uptime_seconds: u64,
+    uptime_seconds: i64,
 }
 
 pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, String> {
@@ -78,7 +80,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
                     project_root: project_root.clone(),
                     system_kind: SystemKind::User,
                     is_system_service: false,
-                    uptime_seconds: listener.uptime_seconds,
+                    uptime_seconds: listener.uptime_seconds.max(0) as u64,
                 };
                 classify_process(&mut process);
                 process
@@ -100,6 +102,9 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
 fn normalize_address(address: &str) -> String {
     if address == "0.0.0.0" || address == "::" {
         "*".to_string()
+    } else if address.contains(':') && !address.starts_with('[') {
+        // Bracket IPv6 addresses to match the macOS/Linux scanners.
+        format!("[{address}]")
     } else {
         address.to_string()
     }
@@ -128,7 +133,9 @@ fn query_listeners(protocol: &str) -> Result<Vec<WindowsListener>, String> {
         include_str!("scan_udp.ps1")
     };
 
+    use super::shell::NoWindow;
     let output = std::process::Command::new("powershell")
+        .no_window()
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .output()
         .map_err(|e| format!("Failed to run PowerShell: {e}"))?;

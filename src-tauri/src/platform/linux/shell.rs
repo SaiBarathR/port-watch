@@ -44,22 +44,18 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
 }
 
 pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
+    // spawn() rather than status(): terminals like xterm/konsole stay in the
+    // foreground, so waiting on them would block until the window is closed.
+    // A failed spawn (missing binary, e.g. a stale $TERMINAL) falls through
+    // to the next candidate.
     if let Ok(terminal) = std::env::var("TERMINAL") {
-        if !terminal.is_empty() {
-            let status = std::process::Command::new(&terminal)
+        if !terminal.is_empty()
+            && std::process::Command::new(&terminal)
                 .args(["--working-directory", cwd])
-                .status()
-                .or_else(|_| {
-                    std::process::Command::new(&terminal)
-                        .args(["-e", "bash", "--noprofile", "--norc"])
-                        .current_dir(cwd)
-                        .status()
-                })
-                .map_err(|e| format!("Failed to launch $TERMINAL: {e}"))?;
-
-            if status.success() {
-                return Ok(());
-            }
+                .spawn()
+                .is_ok()
+        {
+            return Ok(());
         }
     }
 
@@ -76,27 +72,64 @@ pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
         if cmd == "xterm" {
             command.current_dir(cwd);
         }
-        if let Ok(status) = command.status() {
-            if status.success() {
-                return Ok(());
-            }
+        if command.spawn().is_ok() {
+            return Ok(());
         }
     }
 
     Err(format!("Could not open a terminal at: {cwd}"))
 }
 
-pub fn stop_process(pid: u32, force: bool) -> Result<(), String> {
+pub fn stop_process(pid: u32, force: bool, expected_name: Option<&str>) -> Result<(), String> {
+    verify_process_identity(pid, expected_name)?;
+
     if force {
         send_signal(pid, "-KILL")?;
     } else {
         send_signal(pid, "-TERM")?;
         std::thread::sleep(std::time::Duration::from_secs(2));
-        if process_exists(pid) {
+        // Re-verify before escalating: the PID may have been reused by an
+        // unrelated process during the grace window.
+        if still_matches(pid, expected_name) {
             send_signal(pid, "-KILL")?;
         }
     }
     Ok(())
+}
+
+pub fn current_process_name(pid: u32) -> Option<String> {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    let name = comm.trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn verify_process_identity(pid: u32, expected_name: Option<&str>) -> Result<(), String> {
+    let Some(expected) = expected_name else {
+        return Ok(());
+    };
+
+    match current_process_name(pid) {
+        Some(name) if crate::platform::shared::process_names_match(&name, expected) => Ok(()),
+        Some(name) => Err(format!(
+            "PID {pid} now belongs to \"{name}\", not \"{expected}\" — the process list was stale. Refresh and try again."
+        )),
+        // Already gone: the goal (process stopped) is achieved.
+        None => Ok(()),
+    }
+}
+
+fn still_matches(pid: u32, expected_name: Option<&str>) -> bool {
+    match (current_process_name(pid), expected_name) {
+        (Some(name), Some(expected)) => {
+            crate::platform::shared::process_names_match(&name, expected)
+        }
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
 }
 
 fn send_signal(pid: u32, signal: &str) -> Result<(), String> {
@@ -111,12 +144,4 @@ fn send_signal(pid: u32, signal: &str) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn process_exists(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }

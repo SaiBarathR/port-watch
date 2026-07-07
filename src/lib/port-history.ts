@@ -58,10 +58,24 @@ function loadRaw(): PortHistoryEvent[] {
 function saveRaw(events: PortHistoryEvent[]) {
   const trimmed = events.slice(-MAX_EVENTS);
   cachedEvents = trimmed;
-  localStorage.setItem(
-    HISTORY_KEY,
-    trimmed.map((event) => JSON.stringify(event)).join("\n"),
-  );
+  try {
+    localStorage.setItem(
+      HISTORY_KEY,
+      trimmed.map((event) => JSON.stringify(event)).join("\n"),
+    );
+  } catch {
+    // quota/storage failure — keep the in-memory cache for this session
+  }
+}
+
+function flushPendingEvents() {
+  flushTimer = null;
+  if (pendingEvents.length === 0) {
+    return;
+  }
+
+  const batch = pendingEvents.splice(0, pendingEvents.length);
+  saveRaw([...loadRaw(), ...batch]);
 }
 
 function scheduleHistoryFlush() {
@@ -69,24 +83,25 @@ function scheduleHistoryFlush() {
     return;
   }
 
-  const flush = () => {
-    flushTimer = null;
-    if (pendingEvents.length === 0) {
-      return;
-    }
-
-    const batch = pendingEvents.splice(0, pendingEvents.length);
-    saveRaw([...loadRaw(), ...batch]);
-  };
-
   if (typeof requestIdleCallback === "function") {
     flushTimer = window.setTimeout(() => {
-      requestIdleCallback(() => flush());
+      requestIdleCallback(() => flushPendingEvents());
     }, FLUSH_DELAY_MS);
     return;
   }
 
-  flushTimer = window.setTimeout(flush, FLUSH_DELAY_MS);
+  flushTimer = window.setTimeout(flushPendingEvents, FLUSH_DELAY_MS);
+}
+
+// Buffered events would otherwise be lost if the app quits within the
+// flush window.
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    if (flushTimer !== null) {
+      window.clearTimeout(flushTimer);
+    }
+    flushPendingEvents();
+  });
 }
 
 export function getPortHistory(): PortHistoryEvent[] {
@@ -100,20 +115,23 @@ export function getPortTimeline(port: number): PortHistoryEvent[] {
 }
 
 export function getPortSummaries(events: PortHistoryEvent[] = loadRaw()): PortSummary[] {
-  const byPort = new Map<number, PortHistoryEvent[]>();
+  // Key by protocol + port so TCP and UDP activity on the same port number
+  // don't merge into one summary.
+  const byPort = new Map<string, PortHistoryEvent[]>();
 
   for (const event of events) {
-    const list = byPort.get(event.port);
+    const key = `${event.protocol}|${event.port}`;
+    const list = byPort.get(key);
     if (list) {
       list.push(event);
     } else {
-      byPort.set(event.port, [event]);
+      byPort.set(key, [event]);
     }
   }
 
   const summaries: PortSummary[] = [];
 
-  for (const [port, portEvents] of byPort) {
+  for (const portEvents of byPort.values()) {
     const sorted = [...portEvents].sort(
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );
@@ -121,7 +139,7 @@ export function getPortSummaries(events: PortHistoryEvent[] = loadRaw()): PortSu
     const last = sorted[sorted.length - 1]!;
 
     summaries.push({
-      port,
+      port: last.port,
       protocol: last.protocol,
       firstSeen: first.timestamp,
       lastSeen: last.timestamp,

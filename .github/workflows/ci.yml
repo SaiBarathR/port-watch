@@ -11,7 +11,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        # ubuntu-22.04 matches the release baseline (see release.yml)
+        os: [macos-latest, ubuntu-22.04, windows-latest]
 
     runs-on: ${{ matrix.os }}
 
@@ -47,5 +48,5 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
-      - name: Build Tauri app
-        run: npm run tauri build
+      - name: Build Tauri app (compile check, no installers)
+        run: npm run tauri -- build --no-bundle

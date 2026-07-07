@@ -12,7 +12,7 @@ import { useTheme } from "@/hooks/use-theme";
 import type { PortProcess } from "@/lib/types";
 
 function App() {
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, resolvedTheme } = useTheme();
   const {
     processes,
     allProcesses,
@@ -49,12 +49,17 @@ function App() {
   const [freePortTargets, setFreePortTargets] = useState<PortProcess[]>([]);
   const [freePortNumber, setFreePortNumber] = useState<number | null>(null);
 
-  const handleFreePort = useCallback((port: number, occupants: PortProcess[]) => {
-    setFreePortNumber(port);
-    setFreePortTargets(occupants);
-  }, []);
+  const handleFreePort = useCallback(
+    (port: number, occupants: PortProcess[]) => {
+      setFreePortNumber(port);
+      setFreePortTargets(occupants);
+      setRefreshPaused(true);
+    },
+    [setRefreshPaused],
+  );
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
 
     void getCurrentWindow()
@@ -64,10 +69,15 @@ function App() {
         }
       })
       .then((fn) => {
+        if (cancelled) {
+          fn();
+          return;
+        }
         unlisten = fn;
       });
 
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, [refresh]);
@@ -136,6 +146,7 @@ function App() {
           if (!open) {
             setFreePortTargets([]);
             setFreePortNumber(null);
+            setRefreshPaused(false);
           }
         }}
         title={
@@ -152,7 +163,10 @@ function App() {
           freePortTargets.some((process) => process.is_system_service) &&
           settings.allowSystemProcessActions
         }
-        onStopped={() => void refresh()}
+        onStopped={() => {
+          setRefreshPaused(false);
+          void refresh();
+        }}
       />
 
       <CliInstallPrompt />
@@ -164,6 +178,7 @@ function App() {
         position="bottom-right"
         duration={8000}
         visibleToasts={5}
+        theme={resolvedTheme === "light" ? "light" : "dark"}
       />
     </div>
   );

@@ -114,11 +114,21 @@ export function PortToolbar({
     searchInputRef.current?.focus();
   }, [onSearchChange]);
 
+  const handleSearchFieldChange = useCallback(
+    (field: SearchField) => {
+      if ((field === "port" || field === "pid") && /\D/.test(search)) {
+        onSearchChange("");
+      }
+      onSearchFieldChange(field);
+    },
+    [onSearchChange, onSearchFieldChange, search],
+  );
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        onSearchFieldChange("port");
+        handleSearchFieldChange("port");
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
       }
@@ -126,7 +136,7 @@ export function PortToolbar({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onSearchFieldChange]);
+  }, [handleSearchFieldChange]);
 
   const copyExport = async (format: "json" | "markdown") => {
     const text =
@@ -173,7 +183,7 @@ export function PortToolbar({
         <div className="flex min-w-[280px] flex-1 items-stretch overflow-hidden rounded-xl border bg-muted/20 shadow-xs transition-[box-shadow,border-color] focus-within:border-ring/60 focus-within:ring-2 focus-within:ring-ring/30">
           <Select
             value={searchField}
-            onValueChange={(value) => onSearchFieldChange(value as SearchField)}
+            onValueChange={(value) => handleSearchFieldChange(value as SearchField)}
           >
             <SelectTrigger
               className="h-9 w-[118px] shrink-0 self-stretch rounded-none border-0 bg-transparent py-0 shadow-none focus-visible:ring-0"

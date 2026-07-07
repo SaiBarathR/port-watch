@@ -157,10 +157,45 @@ function collectWatchedPortChanges(
         pid: was.pid,
         processName: was.name,
       });
+    } else if (was && now && was.pid !== now.pid) {
+      // The port changed hands between scans (e.g. a dev-server restart):
+      // notify about the new occupant even though the port never appeared free.
+      const binding = now.ports.find((item) => item.port === port)!;
+      occupied.push({
+        timestamp,
+        kind: "occupied",
+        port,
+        protocol: binding.protocol,
+        pid: now.pid,
+        processName: now.name,
+      });
     }
   }
 
   return { occupied, freed };
+}
+
+// Diff at binding granularity (pid + protocol + port) rather than whole
+// processes, so a surviving process that gains or drops a port still
+// produces occupied/freed events.
+function collectBindings(
+  processes: PortProcess[],
+): Map<string, { pid: number; name: string; port: number; protocol: string }> {
+  const bindings = new Map<
+    string,
+    { pid: number; name: string; port: number; protocol: string }
+  >();
+  for (const process of processes) {
+    for (const binding of process.ports) {
+      bindings.set(`${process.pid}|${binding.protocol}|${binding.port}`, {
+        pid: process.pid,
+        name: process.name,
+        port: binding.port,
+        protocol: binding.protocol,
+      });
+    }
+  }
+  return bindings;
 }
 
 function collectHistoryEvents(
@@ -169,34 +204,31 @@ function collectHistoryEvents(
 ): PortHistoryEvent[] {
   const events: PortHistoryEvent[] = [];
   const timestamp = new Date().toISOString();
-  const prevByPid = new Map(prev.map((process) => [process.pid, process]));
+  const prevBindings = collectBindings(prev);
+  const nextBindings = collectBindings(next);
 
-  for (const process of next) {
-    const old = prevByPid.get(process.pid);
-    if (!old) {
-      for (const binding of process.ports) {
-        events.push({
-          timestamp,
-          kind: "occupied",
-          port: binding.port,
-          protocol: binding.protocol,
-          pid: process.pid,
-          processName: process.name,
-        });
-      }
+  for (const [key, binding] of nextBindings) {
+    if (!prevBindings.has(key)) {
+      events.push({
+        timestamp,
+        kind: "occupied",
+        port: binding.port,
+        protocol: binding.protocol,
+        pid: binding.pid,
+        processName: binding.name,
+      });
     }
-    prevByPid.delete(process.pid);
   }
 
-  for (const [, gone] of prevByPid) {
-    for (const binding of gone.ports) {
+  for (const [key, binding] of prevBindings) {
+    if (!nextBindings.has(key)) {
       events.push({
         timestamp,
         kind: "freed",
         port: binding.port,
         protocol: binding.protocol,
-        pid: gone.pid,
-        processName: gone.name,
+        pid: binding.pid,
+        processName: binding.name,
       });
     }
   }
@@ -278,6 +310,10 @@ export function usePortScan() {
         !isInitialScanRef.current &&
         processesUnchanged(prev, normalized)
       ) {
+        // Same processes and bindings, but uptime/name/cwd may have moved on:
+        // still publish the fresh data, just skip the diff/toast/history work.
+        previousProcessesRef.current = normalized;
+        setProcesses(normalized);
         setRefreshing(false);
         setLoading(false);
         return;
@@ -384,20 +420,35 @@ export function usePortScan() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
+    // Once a live poller event has been applied, the startup snapshot below is
+    // stale — applying it afterwards would reverse-diff fresh data and produce
+    // phantom freed/occupied toasts and history entries.
+    let receivedLiveEvent = false;
 
     void (async () => {
       try {
-        unlisten = await listen<PortsUpdatedPayload>("ports-updated", (event) => {
-          const payload = parsePortsPayload(event.payload);
-          applyScanResultRef.current(payload.processes, payload.error);
-        });
+        const stop = await listen<PortsUpdatedPayload>(
+          "ports-updated",
+          (event) => {
+            receivedLiveEvent = true;
+            const payload = parsePortsPayload(event.payload);
+            applyScanResultRef.current(payload.processes, payload.error);
+          },
+        );
+
+        if (cancelled) {
+          stop();
+          return;
+        }
+        unlisten = stop;
 
         const payload = parsePortsPayload(
           await invoke<PortsUpdatedPayload>("get_listening_ports"),
         );
 
-        if (payload.scanning) {
+        if (cancelled || receivedLiveEvent || payload.scanning) {
           return;
         }
 
@@ -412,11 +463,17 @@ export function usePortScan() {
               includeUdp: settingsRef.current.includeUdp,
             }),
           );
+          if (cancelled || receivedLiveEvent) {
+            return;
+          }
           applyScanResultRef.current(direct.processes, direct.error);
         } else {
           applyScanResultRef.current(payload.processes, payload.error);
         }
       } catch (err) {
+        if (cancelled) {
+          return;
+        }
         setError(err instanceof Error ? err.message : String(err));
         setLoading(false);
         setRefreshing(false);
@@ -424,6 +481,7 @@ export function usePortScan() {
     })();
 
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, []);
@@ -489,6 +547,7 @@ export function usePortScan() {
   }, [settings.menuBarMode]);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
 
     void listen<boolean>("tray-menu-bar-mode-changed", (event) => {
@@ -503,24 +562,39 @@ export function usePortScan() {
         return next;
       });
     }).then((fn) => {
+      if (cancelled) {
+        fn();
+        return;
+      }
       unlisten = fn;
     });
 
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, []);
 
+  // Hiding both user and system services would blank the table, so enabling
+  // one hide-toggle always releases the other (mirrors loadSettings).
   const setHideSystemServices = useCallback(
     (hide: boolean) => {
-      persistSettings((current) => ({ ...current, hideSystemServices: hide }));
+      persistSettings((current) => ({
+        ...current,
+        hideSystemServices: hide,
+        hideUserServices: hide ? false : current.hideUserServices,
+      }));
     },
     [persistSettings],
   );
 
   const setHideUserServices = useCallback(
     (hide: boolean) => {
-      persistSettings((current) => ({ ...current, hideUserServices: hide }));
+      persistSettings((current) => ({
+        ...current,
+        hideUserServices: hide,
+        hideSystemServices: hide ? false : current.hideSystemServices,
+      }));
     },
     [persistSettings],
   );

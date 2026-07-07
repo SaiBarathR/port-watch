@@ -10,20 +10,11 @@ use crate::app_settings::AppSettings;
 use crate::poller::PortPoller;
 use crate::scanner::PortProcess;
 
+#[derive(Default)]
 pub struct TrayState {
     pub user_listener_count: u32,
     pub menu_bar_mode_enabled: bool,
     pub last_menu_signature: Option<String>,
-}
-
-impl Default for TrayState {
-    fn default() -> Self {
-        Self {
-            user_listener_count: 0,
-            menu_bar_mode_enabled: false,
-            last_menu_signature: None,
-        }
-    }
 }
 
 pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -260,7 +251,6 @@ pub fn rebuild_tray_menu(app: &AppHandle) {
         if guard.last_menu_signature.as_deref() == Some(signature.as_str()) {
             return;
         }
-        guard.last_menu_signature = Some(signature);
         guard.user_listener_count = processes
             .iter()
             .filter(|process| !process.is_system_service)
@@ -284,6 +274,17 @@ pub fn rebuild_tray_menu(app: &AppHandle) {
                         format!("{user_count} listeners")
                     };
                     let _ = tray.set_tooltip(Some(&label));
+
+                    // Commit the signature only after the menu is actually
+                    // applied — a failed build/dispatch must retry on the next
+                    // scan instead of being recorded as "up to date". Serialized
+                    // on the main thread, so the stored signature always matches
+                    // the last applied menu.
+                    if let Some(state) = app_main.try_state::<Mutex<TrayState>>() {
+                        if let Ok(mut guard) = state.lock() {
+                            guard.last_menu_signature = Some(signature);
+                        }
+                    }
                 }
             }
             Err(error) => eprintln!("Failed to build tray menu: {error}"),
@@ -358,20 +359,29 @@ fn run_port_action(
             crate::platform::shell::copy_to_clipboard(&localhost_url(port, use_https))
         }
         "pw-finder" => {
-            crate::commands::filesystem::open_in_finder(require_directory(process)?)
+            crate::commands::filesystem::open_in_finder_blocking(&require_directory(process)?)
         }
         "pw-terminal" => {
-            crate::commands::workflow::open_in_terminal(require_directory(process)?)
+            crate::commands::workflow::open_in_terminal_blocking(&require_directory(process)?)
         }
         "pw-editor" => {
             let editor = app.state::<AppSettings>().preferred_editor();
-            crate::commands::workflow::open_in_editor(require_directory(process)?, editor)
+            crate::commands::workflow::open_in_editor_blocking(
+                &require_directory(process)?,
+                &editor,
+            )
         }
         "pw-stop" => {
             if !confirm_stop(app, process) {
                 return Ok(());
             }
-            crate::commands::process::stop_process(app.clone(), pid, Some(false))
+            let expected_name = process.map(|p| p.name.clone());
+            crate::commands::process::stop_process_blocking(
+                app,
+                pid,
+                false,
+                expected_name.as_deref(),
+            )
         }
         _ => Ok(()),
     }

@@ -1,7 +1,7 @@
 {
   "name": "port-watch",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -21,9 +21,7 @@
     "@radix-ui/react-tooltip": "^1.2.10",
     "@tailwindcss/vite": "^4.3.1",
     "@tanstack/react-table": "^8.21.3",
-    "@tanstack/react-virtual": "^3.14.4",
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-os": "^2.3.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

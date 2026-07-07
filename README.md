@@ -79,9 +79,9 @@ Pre-built installers are published on [GitHub Releases](https://github.com/SaiBa
 
 | Platform | Download |
 | --- | --- |
-| macOS | `.dmg` |
+| macOS | `.dmg` (universal: Apple Silicon + Intel) |
 | Windows | `.msi` or `.exe` setup |
-| Linux | `.deb` or `.AppImage` |
+| Linux | `.deb`, `.rpm`, or `.AppImage` |
 
 Builds are unsigned. macOS may show Gatekeeper warnings (right-click → Open, or allow in System Settings → Privacy & Security). Windows SmartScreen may prompt for “More info” → “Run anyway”.
 

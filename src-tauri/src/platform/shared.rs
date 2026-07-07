@@ -85,13 +85,15 @@ pub fn process_names_match(current: &str, expected: &str) -> bool {
         return true;
     }
 
-    // Kernel-truncated names (15 chars) still match their long form.
+    // Kernel-truncated names still match their long form, but only at the
+    // actual truncation boundaries (15 chars on Linux comm, 16 on macOS
+    // MAXCOMLEN) — a longer shared prefix means genuinely different names.
     let (short, long) = if current.len() < expected.len() {
         (&current, &expected)
     } else {
         (&expected, &current)
     };
-    short.len() >= 15 && long.starts_with(short.as_str())
+    (15..=16).contains(&short.len()) && long.starts_with(short.as_str())
 }
 
 pub fn parse_address_port(value: &str, protocol: &str) -> Option<crate::scanner::PortBinding> {
@@ -202,5 +204,11 @@ mod tests {
         assert!(!process_names_match("nginx", "node"));
         assert!(!process_names_match("node", "nodemon"));
         assert!(!process_names_match("", "node"));
+        // A shared prefix longer than the kernel truncation lengths means two
+        // genuinely different names.
+        assert!(!process_names_match(
+            "com.example.service",
+            "com.example.service-worker"
+        ));
     }
 }

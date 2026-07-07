@@ -49,13 +49,29 @@ pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
     // A failed spawn (missing binary, e.g. a stale $TERMINAL) falls through
     // to the next candidate.
     if let Ok(terminal) = std::env::var("TERMINAL") {
-        if !terminal.is_empty()
-            && std::process::Command::new(&terminal)
+        if !terminal.is_empty() {
+            // Not every terminal supports --working-directory; give it a
+            // moment and if it exited with an error, retry with the cwd
+            // inherited instead. Runs on a worker thread, so the wait is fine.
+            if let Ok(mut child) = std::process::Command::new(&terminal)
                 .args(["--working-directory", cwd])
                 .spawn()
-                .is_ok()
-        {
-            return Ok(());
+            {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                match child.try_wait() {
+                    Ok(Some(status)) if !status.success() => {
+                        if std::process::Command::new(&terminal)
+                            .current_dir(cwd)
+                            .spawn()
+                            .is_ok()
+                        {
+                            return Ok(());
+                        }
+                    }
+                    // Still running (or exited cleanly): the flag was accepted.
+                    _ => return Ok(()),
+                }
+            }
         }
     }
 

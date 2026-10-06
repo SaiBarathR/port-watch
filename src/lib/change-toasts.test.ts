@@ -23,8 +23,12 @@ describe("isChangeToastsMuted", () => {
     }
   });
 
-  it("ignores a deadline further out than the longest mute", () => {
-    expect(isChangeToastsMuted(NOW + LONGEST_MUTE_MS + 1, NOW)).toBe(false);
+  it("keeps the longest mute when the clock steps back a little", () => {
+    expect(isChangeToastsMuted(NOW + LONGEST_MUTE_MS, NOW - 5_000)).toBe(true);
+  });
+
+  it("ignores a deadline well beyond the longest mute", () => {
+    expect(isChangeToastsMuted(NOW + LONGEST_MUTE_MS * 2, NOW)).toBe(false);
     expect(isChangeToastsMuted(Number.POSITIVE_INFINITY, NOW)).toBe(false);
   });
 

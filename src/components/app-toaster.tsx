@@ -47,7 +47,8 @@ export function AppToaster({
           aria-label="Port change toast controls"
           // Above sonner's own z-index: a toast leaving the stack slides down
           // across this spot and would otherwise take the pointer with it.
-          className="fixed right-6 bottom-6 z-[1000000000] flex w-[356px] items-center justify-between rounded-lg border bg-popover px-1 text-xs text-popover-foreground shadow-md"
+          // pointer-events-auto keeps it usable while a modal dialog is open.
+          className="pointer-events-auto fixed right-6 bottom-6 z-[1000000000] flex w-[356px] items-center justify-between rounded-lg border bg-popover px-1 text-xs text-popover-foreground shadow-md"
           style={{ height: CONTROLS_HEIGHT_PX }}
           onPointerEnter={() => setPointerInside(true)}
           onPointerLeave={() => setPointerInside(false)}

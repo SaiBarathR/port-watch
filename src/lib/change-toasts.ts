@@ -7,7 +7,10 @@ export const MUTE_DURATIONS = [
   { ms: 8 * 60 * 60_000, label: "8 hours", shortLabel: "8h" },
 ] as const;
 
-const MAX_MUTE_MS = Math.max(...MUTE_DURATIONS.map((duration) => duration.ms));
+// The minute of slack keeps a small backward clock correction from dropping
+// the longest mute right after it is set.
+const MAX_MUTE_MS =
+  Math.max(...MUTE_DURATIONS.map((duration) => duration.ms)) + 60_000;
 const PORT_CHANGE_TOAST_ID_PREFIX = "port-change-";
 
 let portChangeToastCount = 0;

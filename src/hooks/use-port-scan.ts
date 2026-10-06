@@ -675,7 +675,12 @@ export function usePortScan() {
 
   const setShowChangeToasts = useCallback(
     (showChangeToasts: boolean) => {
-      persistSettings((current) => ({ ...current, showChangeToasts }));
+      // Turning toasts on means on, so a mute never outlives the switch.
+      persistSettings((current) => ({
+        ...current,
+        showChangeToasts,
+        changeToastsMutedUntil: null,
+      }));
       if (!showChangeToasts) {
         dismissPortChangeToasts();
       }

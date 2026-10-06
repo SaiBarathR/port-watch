@@ -144,6 +144,23 @@ describe("showPortChanges", () => {
     expect(isPortChangeToastId(first.id)).toBe(true);
   });
 
+  // sonner restarts a toast's lifetime only when its duration changes;
+  // otherwise an update inherits what a hover left of the previous one.
+  it("gives every update a fresh lifetime", () => {
+    showPortChanges(["a"]);
+    const first = lastCall();
+    showPortChanges(["b"]);
+    const second = lastCall();
+    showPortChanges(["c"]);
+    const third = lastCall();
+
+    expect(second.duration).not.toBe(first.duration);
+    expect(third.duration).not.toBe(second.duration);
+    for (const call of [first, second, third]) {
+      expect(Math.abs(call.duration - 12_000)).toBeLessThanOrEqual(1);
+    }
+  });
+
   // sonner removes a toast by id about 200 ms after it starts to leave. An
   // update under the same id in that window would vanish with it.
   it.each(["onAutoClose", "onDismiss"] as const)(

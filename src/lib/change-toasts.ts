@@ -13,6 +13,7 @@ const MAX_MUTE_MS =
   Math.max(...MUTE_DURATIONS.map((duration) => duration.ms)) + 60_000;
 const PORT_CHANGE_TOAST_ID_PREFIX = "port-change-";
 const PORT_CHANGE_PREVIEW_LINES = 5;
+const PORT_CHANGE_TOAST_MS = 12_000;
 
 /** How many toasts the stack shows at once; older ones wait behind them. */
 export const VISIBLE_TOASTS = 5;
@@ -67,7 +68,11 @@ export interface ShownPortChanges {
 const NO_PORT_CHANGES: ShownPortChanges = { total: 0, latest: [] };
 
 // The port change toast that is on screen and not on its way out.
-let liveToast: { id: string; shown: ShownPortChanges } | null = null;
+let liveToast: {
+  id: string;
+  shown: ShownPortChanges;
+  updates: number;
+} | null = null;
 let portChangeToastCount = 0;
 
 export function addPortChanges(
@@ -118,16 +123,25 @@ export function showPortChanges(messages: string[]) {
   // pushed this one out of view, a new toast takes over its count.
   if (liveToast !== null && isBuried(liveToast.id)) {
     const buried = liveToast;
-    liveToast = { id: nextPortChangeToastId(), shown: buried.shown };
+    liveToast = {
+      id: nextPortChangeToastId(),
+      shown: buried.shown,
+      updates: 0,
+    };
     toast.dismiss(buried.id);
   }
   // A toast that has started to leave gets no more updates either: sonner
   // removes it by id a moment later, and would take the update with it.
   if (liveToast === null) {
-    liveToast = { id: nextPortChangeToastId(), shown: NO_PORT_CHANGES };
+    liveToast = {
+      id: nextPortChangeToastId(),
+      shown: NO_PORT_CHANGES,
+      updates: 0,
+    };
   }
   const current = liveToast;
   current.shown = addPortChanges(current.shown, messages);
+  current.updates += 1;
 
   const retire = () => {
     if (liveToast === current) {
@@ -138,7 +152,10 @@ export function showPortChanges(messages: string[]) {
   toast.info(title, {
     id: current.id,
     description,
-    duration: 12_000,
+    // sonner only restarts a toast's lifetime when its duration changes. An
+    // update with the same duration would inherit whatever was left after a
+    // hover paused it, and could vanish within a second of being shown.
+    duration: PORT_CHANGE_TOAST_MS + (current.updates % 2),
     onDismiss: retire,
     onAutoClose: retire,
   });

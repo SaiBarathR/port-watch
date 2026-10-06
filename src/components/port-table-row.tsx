@@ -4,28 +4,27 @@ import type { RowChangeKind } from "@/lib/types";
 import type { PortProcess } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-function changeRowClass(change: RowChangeKind | undefined): string {
-  switch (change) {
-    case "new":
-      return "bg-emerald-500/10 hover:bg-emerald-500/15";
-    case "changed":
-      return "bg-amber-500/10 hover:bg-amber-500/15";
-    default:
-      return "";
-  }
-}
+// The tints are mixed into the background rather than laid over it: the
+// first and last cells stay put while the others scroll beneath them, so
+// they need the row's colour as an opaque one.
+const ROW_TINT = {
+  new: "[--row:color-mix(in_oklab,var(--color-emerald-500)_10%,var(--background))]",
+  changed:
+    "[--row:color-mix(in_oklab,var(--color-amber-500)_10%,var(--background))]",
+} as const;
+
+const ROW_BACKGROUND =
+  "bg-(--row) [--row:var(--background)] hover:[--row:color-mix(in_oklch,var(--muted)_50%,var(--background))] data-[state=selected]:[--row:var(--accent)]";
 
 // The select and actions columns stay in view while the rest scrolls sideways.
 export function stickyCellClass(
   position: "first" | "last" | "corner-left" | "corner-right",
 ) {
-  const base =
-    "bg-background group-hover:bg-[color-mix(in_oklch,var(--muted)_50%,var(--background))]";
   switch (position) {
     case "first":
-      return cn(base, "sticky left-0 z-10");
+      return "sticky left-0 z-10 bg-(--row)";
     case "last":
-      return cn(base, "sticky right-0 z-10");
+      return "sticky right-0 z-10 bg-(--row)";
     case "corner-left":
       return "sticky top-0 left-0 z-30 bg-background";
     case "corner-right":
@@ -61,9 +60,9 @@ export const PortTableDataRow = memo(function PortTableDataRow({
       data-state={isSelected ? "selected" : undefined}
       data-can-select={canSelect}
       className={cn(
-        "group border-b transition-colors hover:bg-muted/50",
-        "data-[state=selected]:bg-accent",
-        changeRowClass(change),
+        "group border-b transition-colors",
+        ROW_BACKGROUND,
+        change && ROW_TINT[change],
       )}
     >
       {row.getVisibleCells().map((cell: Cell<PortProcess, unknown>, index) => {

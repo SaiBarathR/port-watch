@@ -4,8 +4,8 @@ const COLUMN_SIZING_KEY = "port-watch-column-sizing";
 
 export const DEFAULT_COLUMN_SIZING: ColumnSizingState = {
   select: 40,
-  ports: 120,
-  name: 100,
+  ports: 160,
+  name: 130,
   pid: 72,
   user: 96,
   script: 280,

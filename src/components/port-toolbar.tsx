@@ -1,28 +1,28 @@
 import { useCallback, useEffect, useRef } from "react";
 import {
   BracesIcon,
+  EllipsisIcon,
   FileTextIcon,
-  FilterIcon,
+  HistoryIcon,
   OctagonIcon,
   RefreshCwIcon,
   SearchIcon,
   SettingsIcon,
-  ShareIcon,
   XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { NotificationMenu } from "@/components/notification-menu";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Select,
   SelectContent,
@@ -30,19 +30,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PortHistoryTimeline } from "@/components/port-history-timeline";
 import { useProcessActions } from "@/components/process-actions";
 import { SettingsDialog } from "@/components/settings-dialog";
 import type { ThemeMode } from "@/hooks/use-theme";
 import { processesToJson, processesToMarkdown } from "@/lib/export-snapshot";
 import { isMacOS } from "@/lib/platform";
+import { formatHistorySeen, getPortSummary } from "@/lib/port-history";
 import {
-  setHideSystemServices,
-  setHideUserServices,
+  listenerScope,
+  setListenerScope,
+  type ListenerScope,
 } from "@/lib/settings-actions";
 import { updateSettings } from "@/lib/settings-store";
 import {
   SEARCH_FIELD_OPTIONS,
+  userProcesses,
   type AppSettings,
   type PortProcess,
   type SearchField,
@@ -54,7 +56,8 @@ interface PortToolbarProps {
   portLookupEmpty: boolean;
   exactPortQuery: number | null;
   portLookupOccupants: PortProcess[];
-  exportProcesses: PortProcess[];
+  /** The rows in view: what an export copies and "stop all" stops. */
+  shownProcesses: PortProcess[];
   settings: AppSettings;
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
@@ -64,8 +67,14 @@ interface PortToolbarProps {
   firstScanPending: boolean;
   userCount: number;
   systemCount: number;
-  hiddenSystemCount: number;
-  hiddenUserCount: number;
+}
+
+function Count({ children }: { children: number }) {
+  return (
+    <span className="text-xs font-normal text-muted-foreground tabular-nums">
+      {children}
+    </span>
+  );
 }
 
 export function PortToolbar({
@@ -74,7 +83,7 @@ export function PortToolbar({
   portLookupEmpty,
   exactPortQuery,
   portLookupOccupants,
-  exportProcesses,
+  shownProcesses,
   settings,
   theme,
   onThemeChange,
@@ -83,9 +92,8 @@ export function PortToolbar({
   firstScanPending,
   userCount,
   systemCount,
-  hiddenSystemCount,
-  hiddenUserCount,
 }: PortToolbarProps) {
+  const { canStop, freePort, stop, showHistory } = useProcessActions();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchField = settings.searchField;
   const selectedField =
@@ -123,8 +131,8 @@ export function PortToolbar({
   const copyExport = async (format: "json" | "markdown") => {
     const text =
       format === "json"
-        ? processesToJson(exportProcesses)
-        : processesToMarkdown(exportProcesses);
+        ? processesToJson(shownProcesses)
+        : processesToMarkdown(shownProcesses);
     try {
       await navigator.clipboard.writeText(text);
       toast.success(
@@ -142,25 +150,10 @@ export function PortToolbar({
         ? "Search ports, processes, paths, PID…"
         : `Search by ${selectedField.label.toLowerCase()}…`;
 
-  const listenerSummary = firstScanPending
-    ? "Scanning ports…"
-    : [
-        `${userCount} user listener${userCount === 1 ? "" : "s"}`,
-        hiddenUserCount > 0 ? `${hiddenUserCount} user (hidden)` : null,
-        hiddenSystemCount > 0 ? `${hiddenSystemCount} system (hidden)` : null,
-        !settings.hideSystemServices && systemCount > 0
-          ? `${systemCount} system`
-          : null,
-        settings.includeUdp ? "UDP included" : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-
-  const { canStop, freePort } = useProcessActions();
-  const canFreePort = portLookupOccupants.some(canStop);
+  const shownUserProcesses = userProcesses(shownProcesses).filter(canStop);
 
   return (
-    <div className="flex flex-col gap-3 border-b pb-4">
+    <div className="flex flex-col gap-3 border-b pb-3">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex min-w-[280px] flex-1 items-stretch overflow-hidden rounded-xl border bg-muted/20 shadow-xs transition-[box-shadow,border-color] focus-within:border-ring/60 focus-within:ring-2 focus-within:ring-ring/30">
           <Select
@@ -169,7 +162,10 @@ export function PortToolbar({
               handleSearchFieldChange(value as SearchField)
             }
           >
-            <SelectTrigger className="h-9 w-[118px] shrink-0 self-stretch rounded-none border-0 bg-transparent py-0 shadow-none focus-visible:ring-0">
+            <SelectTrigger
+              aria-label="Search in"
+              className="h-9 w-[118px] shrink-0 self-stretch rounded-none border-0 bg-transparent py-0 shadow-none focus-visible:ring-0"
+            >
               <SelectValue placeholder="Field" />
             </SelectTrigger>
             <SelectContent align="start">
@@ -190,7 +186,8 @@ export function PortToolbar({
             />
             <Input
               ref={searchInputRef}
-              className="h-9 w-full rounded-none border-0 bg-transparent py-0 pl-9 pr-16 shadow-none focus-visible:ring-0"
+              aria-label="Search listeners"
+              className="h-9 w-full rounded-none border-0 bg-transparent py-0 pr-16 pl-9 shadow-none focus-visible:ring-0"
               placeholder={searchPlaceholder}
               inputMode={
                 searchField === "port" || searchField === "pid"
@@ -230,60 +227,6 @@ export function PortToolbar({
           </div>
         </div>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-9 shrink-0"
-              aria-label="Filter listeners"
-            >
-              <FilterIcon />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuLabel>Show listeners</DropdownMenuLabel>
-            <DropdownMenuCheckboxItem
-              checked={!settings.hideUserServices}
-              onCheckedChange={(checked) => setHideUserServices(!checked)}
-              onSelect={(event) => event.preventDefault()}
-            >
-              User services
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={!settings.hideSystemServices}
-              onCheckedChange={(checked) => setHideSystemServices(!checked)}
-              onSelect={(event) => event.preventDefault()}
-            >
-              System services
-            </DropdownMenuCheckboxItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-9 shrink-0"
-              aria-label="Export snapshot"
-            >
-              <ShareIcon />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuLabel>Export filtered view</DropdownMenuLabel>
-            <DropdownMenuItem onClick={() => void copyExport("json")}>
-              <BracesIcon />
-              Copy as JSON
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void copyExport("markdown")}>
-              <FileTextIcon />
-              Copy as Markdown
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
         <Button
           variant="outline"
           size="icon"
@@ -296,6 +239,45 @@ export function PortToolbar({
         </Button>
 
         <NotificationMenu settings={settings} />
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-9 shrink-0"
+              aria-label="More actions"
+            >
+              <EllipsisIcon />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuLabel>Export the rows shown</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => void copyExport("json")}>
+              <BracesIcon />
+              Copy as JSON
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void copyExport("markdown")}>
+              <FileTextIcon />
+              Copy as Markdown
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={shownUserProcesses.length === 0}
+              onClick={() =>
+                stop(
+                  shownUserProcesses,
+                  `Stop all ${shownUserProcesses.length} user processes shown?`,
+                  "This stops every user process in the table as it is filtered now. System services are left alone.",
+                )
+              }
+            >
+              <OctagonIcon />
+              Stop all user processes shown…
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <SettingsDialog
           settings={settings}
@@ -314,55 +296,117 @@ export function PortToolbar({
         />
       </div>
 
-      <p className="text-sm text-muted-foreground">{listenerSummary}</p>
+      {/* One line of fixed height: a port lookup answers here instead of
+          pushing the table down while the port is still being typed. */}
+      <div className="flex h-8 items-center gap-3">
+        <SegmentedControl<ListenerScope>
+          aria-label="Listeners shown"
+          value={listenerScope(settings)}
+          onValueChange={setListenerScope}
+          options={[
+            {
+              value: "user",
+              label: (
+                <>
+                  User <Count>{userCount}</Count>
+                </>
+              ),
+            },
+            {
+              value: "system",
+              label: (
+                <>
+                  System <Count>{systemCount}</Count>
+                </>
+              ),
+            },
+            {
+              value: "all",
+              label: (
+                <>
+                  All <Count>{userCount + systemCount}</Count>
+                </>
+              ),
+            },
+          ]}
+        />
 
-      {portLookupEmpty && exactPortQuery !== null && (
-        <Alert>
-          <AlertTitle>Nothing listening on port {exactPortQuery}</AlertTitle>
-          <AlertDescription className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span>No process is bound to this port right now.</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onRefresh}
-                disabled={loading}
-              >
-                Check again
-              </Button>
-            </div>
-            <PortHistoryTimeline port={exactPortQuery} />
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {exactPortQuery !== null && portLookupOccupants.length > 0 && (
-        <Alert>
-          <AlertTitle>
-            Port {exactPortQuery} in use by {portLookupOccupants.length} process
-            {portLookupOccupants.length === 1 ? "" : "es"}
-          </AlertTitle>
-          <AlertDescription className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span>
+        <div
+          role="status"
+          className="flex min-w-0 flex-1 items-center justify-end gap-2 text-sm text-muted-foreground"
+        >
+          {exactPortQuery !== null && portLookupOccupants.length > 0 ? (
+            <>
+              <span className="truncate">
+                <span className="font-medium text-foreground">
+                  Port {exactPortQuery}
+                </span>{" "}
+                is in use by{" "}
                 {portLookupOccupants
                   .map((process) => `${process.name} (PID ${process.pid})`)
                   .join(", ")}
               </span>
               <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0"
+                onClick={() => showHistory(exactPortQuery)}
+              >
+                <HistoryIcon />
+                History
+              </Button>
+              <Button
                 variant="destructive"
                 size="sm"
-                disabled={!canFreePort}
+                className="h-7 shrink-0"
+                disabled={!portLookupOccupants.some(canStop)}
                 onClick={() => freePort(exactPortQuery)}
               >
                 <OctagonIcon />
                 Free port {exactPortQuery}
               </Button>
-            </div>
-            <PortHistoryTimeline port={exactPortQuery} />
-          </AlertDescription>
-        </Alert>
-      )}
+            </>
+          ) : portLookupEmpty && exactPortQuery !== null ? (
+            <>
+              <span className="truncate">
+                <span className="font-medium text-foreground">
+                  Port {exactPortQuery}
+                </span>{" "}
+                is free
+                <LastHolder port={exactPortQuery} />
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0"
+                onClick={() => showHistory(exactPortQuery)}
+              >
+                <HistoryIcon />
+                History
+              </Button>
+            </>
+          ) : firstScanPending ? (
+            "Scanning ports…"
+          ) : settings.includeUdp ? (
+            "TCP and UDP"
+          ) : null}
+        </div>
+      </div>
     </div>
+  );
+}
+
+// Who last held a free port, from the history kept on this machine.
+function LastHolder({ port }: { port: number }) {
+  const summary = getPortSummary(port);
+  if (!summary) {
+    return null;
+  }
+  return (
+    <>
+      {" "}
+      · last held by {summary.lastProcessName},{" "}
+      {formatHistorySeen(summary.lastSeen)}
+    </>
   );
 }

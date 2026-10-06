@@ -11,6 +11,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import {
   changeToastStatus,
+  dismissChangeToastConfirmation,
   dismissPortChangeToasts,
   isChangeToastsMuted,
   nextPortChangeToastId,
@@ -675,6 +676,7 @@ export function usePortScan() {
 
   const setShowChangeToasts = useCallback(
     (showChangeToasts: boolean) => {
+      dismissChangeToastConfirmation();
       // Turning toasts on means on, so a mute never outlives the switch.
       persistSettings((current) => ({
         ...current,
@@ -690,6 +692,7 @@ export function usePortScan() {
 
   const setChangeToastsMutedUntil = useCallback(
     (changeToastsMutedUntil: number | null) => {
+      dismissChangeToastConfirmation();
       persistSettings((current) => ({ ...current, changeToastsMutedUntil }));
       if (changeToastsMutedUntil !== null) {
         dismissPortChangeToasts();

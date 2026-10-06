@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  ChevronDownIcon,
   MonitorIcon,
   MoonIcon,
   MoonStarIcon,
@@ -17,6 +18,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -356,33 +363,44 @@ export function SettingsDialog({
                   : "Pause port change toasts for a while."
               }
             >
-              {/* One control for both states: swapping it for a button would
-                  drop keyboard focus out of the row. */}
-              <Select
-                value=""
-                disabled={!settings.showChangeToasts}
-                onValueChange={(v) =>
-                  onChangeToastsMutedUntilChange(
-                    v === "unmute" ? null : Date.now() + Number(v),
-                  )
-                }
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full min-w-[8.5rem] sm:w-[8.5rem]"
-                  aria-label="Mute toasts"
-                >
-                  <SelectValue placeholder={toastsMuted ? "Muted" : "Not muted"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {toastsMuted && <SelectItem value="unmute">Unmute</SelectItem>}
+              {/* A menu of actions rather than a Select (whose closed trigger
+                  picks an option on any keypress), kept mounted in both states
+                  so keyboard focus returns to it. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="w-full min-w-[8.5rem] justify-between font-normal sm:w-[8.5rem]"
+                    disabled={!settings.showChangeToasts}
+                    aria-label={`Mute toasts: ${toastsMuted ? "muted" : "not muted"}`}
+                  >
+                    {toastsMuted ? "Muted" : "Not muted"}
+                    <ChevronDownIcon className="opacity-50" />
+                  </Button>
+                </DropdownMenuTrigger>
+                {/* Above the toast stack, which overlaps the dialog in a narrow window. */}
+                <DropdownMenuContent align="end" className="z-[1000000000]">
+                  {toastsMuted && (
+                    <DropdownMenuItem
+                      onClick={() => onChangeToastsMutedUntilChange(null)}
+                    >
+                      Unmute
+                    </DropdownMenuItem>
+                  )}
                   {MUTE_DURATIONS.map((duration) => (
-                    <SelectItem key={duration.ms} value={String(duration.ms)}>
-                      {duration.label}
-                    </SelectItem>
+                    <DropdownMenuItem
+                      key={duration.ms}
+                      onClick={() =>
+                        onChangeToastsMutedUntilChange(Date.now() + duration.ms)
+                      }
+                    >
+                      Mute for {duration.label}
+                    </DropdownMenuItem>
                   ))}
-                </SelectContent>
-              </Select>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </SettingRow>
             <SettingRow
               htmlFor="settings-watched-port-notifications"

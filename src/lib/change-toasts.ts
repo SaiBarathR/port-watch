@@ -14,6 +14,7 @@ const MAX_MUTE_MS =
 const PORT_CHANGE_TOAST_ID_PREFIX = "port-change-";
 
 let portChangeToastCount = 0;
+let confirmationToastId: number | string | null = null;
 
 export type ChangeToastStatus = "on" | "muted" | "off";
 
@@ -74,13 +75,22 @@ export function dismissPortChangeToasts() {
   }
 }
 
+// A confirmation's Unmute / Undo is only right for the state it announced, so
+// any later change to that state takes the confirmation down first.
+export function dismissChangeToastConfirmation() {
+  if (confirmationToastId !== null) {
+    toast.dismiss(confirmationToastId);
+    confirmationToastId = null;
+  }
+}
+
 export function muteChangeToasts(
   durationMs: number,
   onMutedUntilChange: (mutedUntil: number | null) => void,
 ) {
   const mutedUntil = Date.now() + durationMs;
   onMutedUntilChange(mutedUntil);
-  toast("Port change toasts muted", {
+  confirmationToastId = toast("Port change toasts muted", {
     description: `Until ${formatMutedUntil(mutedUntil)}.`,
     action: { label: "Unmute", onClick: () => onMutedUntilChange(null) },
   });
@@ -88,7 +98,7 @@ export function muteChangeToasts(
 
 export function turnOffChangeToasts(onShowChange: (show: boolean) => void) {
   onShowChange(false);
-  toast("Port change toasts turned off", {
+  confirmationToastId = toast("Port change toasts turned off", {
     description: "Turn them back on from the bell menu or Settings.",
     action: { label: "Undo", onClick: () => onShowChange(true) },
   });

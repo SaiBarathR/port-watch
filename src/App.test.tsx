@@ -40,6 +40,35 @@ describe("at launch", () => {
   });
 });
 
+describe("a row's menu", () => {
+  it("counts a port held on two addresses as one port", async () => {
+    const app = await launchApp({
+      processes: [
+        listener(4242, 3000, {
+          ports: [
+            { address: "127.0.0.1", port: 3000, protocol: "TCP" },
+            { address: "::1", port: 3000, protocol: "TCP" },
+          ],
+        }),
+        listener(4343, 8080, {
+          name: "caddy",
+          ports: [
+            { address: "*", port: 8080, protocol: "TCP" },
+            { address: "*", port: 8443, protocol: "TCP" },
+          ],
+        }),
+      ],
+    });
+
+    let menu = await openRowMenu(app.user, "node");
+    expect(menu.getByText("node · port 3000")).toBeTruthy();
+    await app.user.keyboard("{Escape}");
+
+    menu = await openRowMenu(app.user, "caddy");
+    expect(menu.getByText("caddy · ports 8080, 8443")).toBeTruthy();
+  });
+});
+
 describe("stopping", () => {
   it("stops the process the row showed, after one confirmation", async () => {
     const app = await launchApp({ processes: [listener(4242, 3000)] });

@@ -79,6 +79,9 @@ pub struct Snapshot {
     pub error: Option<String>,
     /// False until the first scan has finished.
     pub scanned: bool,
+    /// Goes up by one each time the result changes. A reader that has seen
+    /// revision N can tell a late copy of N-1 from news.
+    pub revision: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -108,6 +111,7 @@ impl PortPoller {
                 processes: Arc::new(Vec::new()),
                 error: None,
                 scanned: false,
+                revision: 0,
             }),
             progress: watch::Sender::new(Progress::default()),
             kick: Notify::new(),
@@ -249,27 +253,22 @@ impl PortPoller {
         after_scan: &impl Fn(&Snapshot, bool),
     ) {
         let previous = self.snapshot.borrow().clone();
-        let next = match result {
-            Ok(processes) => Snapshot {
-                // The same allocation when nothing changed.
-                processes: if *previous.processes == processes {
-                    previous.processes.clone()
-                } else {
-                    Arc::new(processes)
-                },
-                error: None,
-                scanned: true,
-            },
-            Err(error) => Snapshot {
-                processes: previous.processes.clone(),
-                error: Some(error),
-                scanned: true,
-            },
+        let (processes, error) = match result {
+            // The same allocation when nothing changed.
+            Ok(processes) if *previous.processes == processes => (previous.processes.clone(), None),
+            Ok(processes) => (Arc::new(processes), None),
+            Err(error) => (previous.processes.clone(), Some(error)),
         };
 
         let changed = !previous.scanned
-            || next.error != previous.error
-            || !Arc::ptr_eq(&next.processes, &previous.processes);
+            || error != previous.error
+            || !Arc::ptr_eq(&processes, &previous.processes);
+        let next = Snapshot {
+            processes,
+            error,
+            scanned: true,
+            revision: previous.revision + u64::from(changed),
+        };
         if changed {
             self.snapshot.send_replace(next.clone());
         }
@@ -281,6 +280,7 @@ impl PortPoller {
 pub struct PortsUpdatedPayload {
     pub processes: Vec<PortProcess>,
     pub error: Option<String>,
+    pub revision: u64,
 }
 
 // The same shape, borrowed, so an event does not copy the list.
@@ -288,6 +288,7 @@ pub struct PortsUpdatedPayload {
 struct PortsUpdatedEvent<'a> {
     processes: &'a [PortProcess],
     error: Option<&'a str>,
+    revision: u64,
 }
 
 pub fn start_poller(app: AppHandle) {
@@ -312,6 +313,7 @@ pub fn start_poller(app: AppHandle) {
                             PortsUpdatedEvent {
                                 processes: &snapshot.processes,
                                 error: snapshot.error.as_deref(),
+                                revision: snapshot.revision,
                             },
                         );
                     }
@@ -329,6 +331,7 @@ impl From<Snapshot> for PortsUpdatedPayload {
         Self {
             processes: snapshot.processes.to_vec(),
             error: snapshot.error,
+            revision: snapshot.revision,
         }
     }
 }
@@ -361,7 +364,8 @@ pub fn set_refresh_paused(app: AppHandle, paused: bool) -> Result<(), String> {
 
 // Resolves with the result once a scan that started after the call has
 // finished. A scan that found nothing new sends no event, so this is how the
-// caller learns it is done, and that an earlier error is over.
+// caller learns it is done. The revision lets it drop a reply that arrives
+// after a newer event.
 #[tauri::command]
 pub async fn trigger_port_scan(app: AppHandle) -> Result<PortsUpdatedPayload, String> {
     Ok(app.state::<PortPoller>().scan_now().await?.into())
@@ -550,6 +554,7 @@ mod tests {
 
         assert!(running.scans() >= 10, "{} scans", running.scans());
         assert_eq!(running.published(), 1);
+        assert_eq!(running.poller.snapshot.borrow().revision, 1);
         // Every scan is still reported, changed or not: the tray uses that to
         // retry a menu it could not apply.
         assert_eq!(*running.reported.lock().unwrap(), running.scans());
@@ -595,6 +600,8 @@ mod tests {
         advance(30).await;
 
         let published = running.published.lock().unwrap().clone();
+        let revisions: Vec<u64> = published.iter().map(|snapshot| snapshot.revision).collect();
+        assert_eq!(revisions, vec![1, 2, 3]);
         let errors: Vec<Option<&str>> = published
             .iter()
             .map(|snapshot| snapshot.error.as_deref())
@@ -681,6 +688,8 @@ mod tests {
         assert_eq!(running.published(), 1, "nothing new to announce");
         assert_eq!(*snapshot.processes, vec![listener(1, 3000)]);
         assert_eq!(snapshot.error, None);
+        // Still the revision the event carried: nothing has changed since.
+        assert_eq!(snapshot.revision, 1);
     }
 
     #[tokio::test(start_paused = true)]

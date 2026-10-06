@@ -8,6 +8,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import {
   changeToastStatus,
   dismissChangeToastConfirmation,
@@ -36,6 +37,8 @@ const CHANGE_HIGHLIGHT_MS = 10_000;
 interface PortsUpdatedPayload {
   processes: PortProcess[];
   error: string | null;
+  /** Goes up each time the backend's result changes. */
+  revision: number;
 }
 
 function parsePortsPayload(payload: unknown): PortsUpdatedPayload {
@@ -53,10 +56,11 @@ function parsePortsPayload(payload: unknown): PortsUpdatedPayload {
           )
         : [],
       error: typeof error === "string" ? error : null,
+      revision: typeof record.revision === "number" ? record.revision : 0,
     };
   }
 
-  return { processes: [], error: null };
+  return { processes: [], error: null, revision: 0 };
 }
 
 function loadSettings(): AppSettings {
@@ -248,6 +252,18 @@ export function usePortScan() {
     settingsRef.current = settings;
   }, [settings]);
 
+  // Replies to requests and scan events travel separately, so a reply can
+  // arrive after the event that superseded it. Applying it would roll the
+  // table back and log changes that never happened.
+  const lastRevisionRef = useRef(-1);
+  const applyPayload = useCallback((payload: PortsUpdatedPayload) => {
+    if (payload.revision < lastRevisionRef.current) {
+      return;
+    }
+    lastRevisionRef.current = payload.revision;
+    applyScanResultRef.current(payload.processes, payload.error);
+  }, []);
+
   const setRefreshPaused = useCallback((paused: boolean) => {
     void invoke("set_refresh_paused", { paused }).catch(() => {
       // ignore outside Tauri
@@ -376,19 +392,24 @@ export function usePortScan() {
     try {
       // Resolves with the result when a scan that started after this call
       // has finished. An event only follows if that scan found something
-      // new, so applying the result here is what ends the spinner and clears
-      // an error left by an earlier failed refresh.
-      const payload = parsePortsPayload(
-        await invoke<PortsUpdatedPayload>("trigger_port_scan"),
+      // new, so the reply is what ends the spinner.
+      applyPayload(
+        parsePortsPayload(
+          await invoke<PortsUpdatedPayload>("trigger_port_scan"),
+        ),
       );
-      applyScanResultRef.current(payload.processes, payload.error);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // The request failed, which is not the same as a scan failing. The
+      // error banner shows what the backend reports and is cleared by it;
+      // nothing would ever clear this one.
+      toast.error("Refresh failed", {
+        description: err instanceof Error ? err.message : String(err),
+      });
       setLoading(false);
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [applyPayload]);
 
   useEffect(() => {
     let cancelled = false;
@@ -404,8 +425,7 @@ export function usePortScan() {
           "ports-updated",
           (event) => {
             receivedLiveEvent = true;
-            const payload = parsePortsPayload(event.payload);
-            applyScanResultRef.current(payload.processes, payload.error);
+            applyPayload(parsePortsPayload(event.payload));
           },
         );
 
@@ -423,7 +443,7 @@ export function usePortScan() {
           return;
         }
 
-        applyScanResultRef.current(payload.processes, payload.error);
+        applyPayload(payload);
       } catch (err) {
         if (cancelled) {
           return;
@@ -438,7 +458,7 @@ export function usePortScan() {
       cancelled = true;
       unlisten?.();
     };
-  }, []);
+  }, [applyPayload]);
 
   // With the window hidden the backend scans less often, unless a watched
   // port is waiting to raise a desktop alert.

@@ -134,8 +134,9 @@ jobs:
           exit 0
 
       # The built app in its real webview: a listener is started, found in the
-      # table and stopped from its row's menu. macOS has no WebDriver for
-      # WKWebView, so the component tests stand in for this there.
+      # table and stopped from its row's menu. Linux only: macOS has no
+      # WebDriver for WKWebView, and see below for Windows. The component
+      # tests stand in for this on both.
       - name: Install the WebDriver tools (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -148,31 +149,31 @@ jobs:
           E2E_SCREENSHOTS: e2e-screenshots
         run: xvfb-run -a node e2e/smoke.mjs src-tauri/target/release/port-watch
 
-      - name: Install the WebDriver tools (Windows)
+      # The same test cannot run on Windows for now. Edge's WebDriver asks a
+      # WebView2 app for a debugging port through an environment variable,
+      # and WebView2 runtimes from 152 on ignore it when the app passes
+      # browser arguments of its own, as every Tauri app does
+      # (actions/runner-images#14738). Until that changes, at least see the
+      # window's process start, stay up and get its webview: nothing else
+      # runs this platform's launch code.
+      - name: Launch check (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo install tauri-driver --locked
-          # The driver has to match the WebView2 runtime, which is not always
-          # the version of the Edge browser the runner's own driver is for.
-          $runtime = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-          $version = (Get-ItemProperty $runtime).pv
-          Write-Host "WebView2 runtime $version"
-          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile edgedriver.zip
-          Expand-Archive edgedriver.zip -DestinationPath edgedriver
-
-      - name: End-to-end smoke test (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          E2E_SCREENSHOTS: e2e-screenshots
-        run: node e2e/smoke.mjs src-tauri\target\release\port-watch.exe --native-driver "$PWD\edgedriver\msedgedriver.exe"
+          $app = Start-Process -FilePath src-tauri\target\release\port-watch.exe -PassThru
+          Start-Sleep 15
+          if ($app.HasExited) { throw "the app exited with code $($app.ExitCode) within 15 s of starting" }
+          $webview = Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" |
+            Where-Object { $_.CommandLine -like '*--webview-exe-name=port-watch.exe*' }
+          Stop-Process -Id $app.Id -Force
+          if (-not $webview) { throw "the app stayed up but never started its webview" }
+          "the app stayed up and started its webview"
 
       - name: Keep the window's pictures if the smoke test failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-screenshots-${{ runner.os }}
+          name: e2e-screenshots
           path: e2e-screenshots
           if-no-files-found: ignore
 

@@ -4,9 +4,12 @@
 //
 //   node e2e/smoke.mjs <path to the built app> [tauri-driver arguments]
 //
-// It needs `tauri-driver` on the PATH, and the platform's WebDriver server
-// (WebKitWebDriver on Linux, msedgedriver on Windows). macOS has no driver
-// for WKWebView, so this does not run there.
+// It needs `tauri-driver` on the PATH and the platform's WebDriver server,
+// which in practice means Linux (WebKitWebDriver). macOS has no driver for
+// WKWebView. On Windows, msedgedriver cannot attach to a Tauri app while
+// WebView2 runtimes from 152 on ignore the environment variable it asks for
+// a debugging port with (actions/runner-images#14738); the Windows handling
+// below is for when that works again.
 //
 // It talks to the driver over plain HTTP, so it needs no packages. With
 // E2E_SCREENSHOTS set to a folder, it saves a picture of the window there at

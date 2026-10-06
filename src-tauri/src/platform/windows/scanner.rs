@@ -33,6 +33,12 @@ struct WindowsListener {
 const POWERSHELL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, String> {
+    // Taken before PowerShell starts, so anything that was already running
+    // by now is what the snapshot below describes.
+    let scan_began = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
     let listeners = query_listeners(include_udp)?;
 
     let mut by_pid: HashMap<u32, PortProcess> = HashMap::new();
@@ -86,11 +92,11 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
                     project_root: project_root.clone(),
                     system_kind: SystemKind::User,
                     is_system_service: false,
-                    // Read the way a stop reads it, so the two agree to
-                    // the second; PowerShell's own figure passes through a
-                    // local time, which is ambiguous for an hour each year.
-                    started_at: super::shell::process_started_at(listener.pid)
-                        .unwrap_or(listener.started_at.max(0) as u64),
+                    started_at: started_at(
+                        super::shell::process_started_at(listener.pid),
+                        listener.started_at,
+                        scan_began,
+                    ),
                     delete_blocked: delete_blocked.clone(),
                 };
                 classify_process(&mut process);
@@ -99,6 +105,20 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
     }
 
     Ok(by_pid.into_values().collect())
+}
+
+// The kernel's own figure, read the way a stop reads it, when it is sure to
+// be the snapshot's process: one that was running before the scan began. A
+// PID handed to another process after the snapshot was taken shows a start
+// time later than that, and must not lend it to the row the old process left
+// behind. For that case, and for a process that cannot be read, PowerShell's
+// figure stands; it passes through local time, which is ambiguous for an hour
+// each year.
+fn started_at(kernel: Option<u64>, reported: i64, scan_began: u64) -> u64 {
+    match kernel {
+        Some(kernel) if kernel < scan_began => kernel,
+        _ => reported.max(0) as u64,
+    }
 }
 
 fn normalize_address(address: &str) -> String {
@@ -203,6 +223,25 @@ mod tests {
         assert_eq!(listeners[0].pid, 4242);
         assert_eq!(listeners[0].started_at, 1_790_000_000);
         assert_eq!(listeners[1].started_at, 0);
+    }
+
+    #[test]
+    fn the_kernels_start_time_is_used_for_a_process_older_than_the_scan() {
+        assert_eq!(started_at(Some(1_000), 4_600, 2_000), 1_000);
+    }
+
+    // A PID reused after the snapshot was taken belongs to a process that
+    // started once the scan had begun. Its start time is not the row's.
+    #[test]
+    fn a_start_time_from_after_the_scan_began_is_not_trusted() {
+        assert_eq!(started_at(Some(2_000), 1_000, 2_000), 1_000);
+        assert_eq!(started_at(Some(2_005), 1_000, 2_000), 1_000);
+    }
+
+    #[test]
+    fn an_unreadable_process_keeps_the_reported_start_time() {
+        assert_eq!(started_at(None, 1_000, 2_000), 1_000);
+        assert_eq!(started_at(None, -5, 2_000), 0);
     }
 
     #[test]

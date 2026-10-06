@@ -20,15 +20,17 @@ pub fn parse_command_line(reply: &[u8]) -> Option<String> {
         .map(|argument| String::from_utf8_lossy(argument).into_owned())
         .collect();
 
+    // Written out before the trim below, so an argument that ends in a
+    // newline keeps it.
     let mut line = String::new();
-    for character in arguments.join(" ").trim().chars() {
+    for character in arguments.join(" ").chars() {
         if character.is_ascii_control() {
             line.push_str(&format!("\\{:03o}", character as u32));
         } else {
             line.push(character);
         }
     }
-    Some(line)
+    Some(line.trim().to_string())
 }
 
 #[cfg(test)]
@@ -81,6 +83,14 @@ mod tests {
             parse_command_line(&bytes).as_deref(),
             Some("sh -c echo a\\012echo\\011b\\177")
         );
+    }
+
+    #[test]
+    fn a_last_argument_of_control_characters_is_not_trimmed_away() {
+        let bytes = reply(3, "/usr/bin/perl", 1, &["perl", "-e", "\n"]);
+        assert_eq!(parse_command_line(&bytes).as_deref(), Some("perl -e \\012"));
+        let bytes = reply(3, "/usr/bin/perl", 1, &["perl", "x\t", ""]);
+        assert_eq!(parse_command_line(&bytes).as_deref(), Some("perl x\\011"));
     }
 
     #[test]

@@ -18,9 +18,9 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 | --- | --- |
 | ![Row actions menu](docs/screenshots/row-actions-menu.png) | ![Settings dialog](docs/screenshots/settings.png) |
 
-| Port search |
+| Port lookup |
 | --- |
-| ![Port search empty state](docs/screenshots/port-search-empty.png) |
+| ![Port lookup: who holds a port, with a button to free it](docs/screenshots/port-lookup.png) |
 
 ## Features
 
@@ -40,7 +40,7 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 
 | Platform | Scanner backend | CLI PATH install |
 | --- | --- | --- |
-| macOS | `lsof` + `ps` | `/usr/local/bin/port-watch` (symlink; asks for an administrator password) |
+| macOS | `lsof` for sockets; `libproc` for process details, `ps` where that is refused | `/usr/local/bin/port-watch` (symlink; asks for an administrator password) |
 | Linux | `ss` + `/proc` | `~/.local/bin/port-watch` (symlink; ensure `~/.local/bin` is on PATH) |
 | Windows | PowerShell (`Get-NetTCPConnection`) | `%LOCALAPPDATA%\Programs\Port Watch\port-watch.cmd` (shim; user PATH) |
 
@@ -204,7 +204,7 @@ Deleting a project folder (move to trash, delete permanently) is one backend ste
 
 On Windows the folder is inferred rather than read from the process, so delete is offered only when it comes from a script path, never from where the program is installed.
 
-Stop refuses a PID that is not in the latest scan or that the scan knows under a different name. System process stop/delete requires an explicit opt-in in Settings, and "Stop all visible user processes" never includes system services.
+Stop refuses a PID that is not in the latest scan, or whose name or start time no longer match what the scan saw: the PID has passed to another process. System process stop/delete requires an explicit opt-in in Settings, and "Stop all user processes shown" never includes system services.
 
 ## Tech stack
 

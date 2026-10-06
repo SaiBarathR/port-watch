@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 // Periodic scans stop while something on screen should not move under the
@@ -7,6 +7,25 @@ import { invoke } from "@tauri-apps/api/core";
 // and clear one shared flag in turn, so closing a dialog could resume scans
 // under a menu that was still open.
 const reasons = new Set<string>();
+const watchers = new Set<() => void>();
+
+function changed() {
+  for (const watcher of watchers) {
+    watcher();
+  }
+  tellBackend();
+}
+
+/** Whether anything is holding periodic scans paused right now. */
+export function useRefreshPaused(): boolean {
+  return useSyncExternalStore(
+    (watcher) => {
+      watchers.add(watcher);
+      return () => watchers.delete(watcher);
+    },
+    () => reasons.size > 0,
+  );
+}
 
 let told = false;
 let scheduled = false;
@@ -35,11 +54,11 @@ function tellBackend() {
 /** Pauses periodic scans until the function it returns is called. */
 export function holdRefresh(reason: string): () => void {
   reasons.add(reason);
-  tellBackend();
+  changed();
 
   return () => {
     if (reasons.delete(reason)) {
-      tellBackend();
+      changed();
     }
   };
 }

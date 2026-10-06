@@ -8,6 +8,7 @@ export type RowActionId =
   | "open-terminal"
   | "reveal"
   | "copy-path"
+  | "copy-command"
   | "pin"
   | "watch"
   | "history"
@@ -122,6 +123,15 @@ export function rowActions(
       disabledReason: noFolder,
     },
     { id: "copy-path", label: "Copy Folder Path", disabledReason: noFolder },
+    // The row cuts a long command short, and shows it whole only in a
+    // tooltip the keyboard cannot open.
+    {
+      id: "copy-command",
+      label: "Copy Command",
+      disabledReason: process.command_line
+        ? undefined
+        : "This process's command line could not be read.",
+    },
   ];
 
   const track: RowAction[] = [

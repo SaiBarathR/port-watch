@@ -53,6 +53,7 @@ describe("rowActions", () => {
         "Open in Terminal",
         "Reveal in Finder",
         "Copy Folder Path",
+        "Copy Command",
       ],
       ["Pin Project", "Watch Port 3000", "Port 3000 History"],
       ["Stop…"],
@@ -140,6 +141,16 @@ describe("rowActions", () => {
       expect(find(groups, id)?.disabledReason, id).toMatch(/No folder/);
     }
     expect(find(groups, "stop")?.disabledReason).toBeUndefined();
+  });
+
+  it("offers the command line only when there is one", () => {
+    expect(
+      find(rowActions(process(), context()), "copy-command")?.disabledReason,
+    ).toBeUndefined();
+    expect(
+      find(rowActions(process({ command_line: "" }), context()), "copy-command")
+        ?.disabledReason,
+    ).toMatch(/could not be read/);
   });
 
   it("passes on the backend's reason a folder cannot be deleted", () => {

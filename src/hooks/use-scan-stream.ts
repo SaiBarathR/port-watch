@@ -40,6 +40,8 @@ export function useScanStream(
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // When the list on screen was last confirmed by a scan, in ms.
+  const [lastScanAt, setLastScanAt] = useState<number | null>(null);
 
   const processesRef = useRef<PortProcess[]>([]);
   const hasResultRef = useRef(false);
@@ -65,6 +67,7 @@ export function useScanStream(
       return;
     }
     setError(null);
+    setLastScanAt(Date.now());
 
     const prev = processesRef.current;
     const next = shareUnchanged(prev, payload.processes);
@@ -136,5 +139,5 @@ export function useScanStream(
     };
   }, [apply]);
 
-  return { processes, loading, refreshing, error, refresh };
+  return { processes, loading, refreshing, error, refresh, lastScanAt };
 }

@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useProcessActions } from "@/components/process-actions";
+import { RefreshState } from "@/components/refresh-state";
 import { SettingsDialog } from "@/components/settings-dialog";
 import type { ThemeMode } from "@/hooks/use-theme";
 import { processesToJson, processesToMarkdown } from "@/lib/export-snapshot";
@@ -64,8 +65,8 @@ interface PortToolbarProps {
   onThemeChange: (theme: ThemeMode) => void;
   onRefresh: () => void;
   loading: boolean;
-  /** True until the first scan has come back. */
-  firstScanPending: boolean;
+  /** When the list was last confirmed by a scan, in ms; null before the first. */
+  lastScanAt: number | null;
   userCount: number;
   systemCount: number;
 }
@@ -90,7 +91,7 @@ export function PortToolbar({
   onThemeChange,
   onRefresh,
   loading,
-  firstScanPending,
+  lastScanAt,
   userCount,
   systemCount,
 }: PortToolbarProps) {
@@ -280,6 +281,11 @@ export function PortToolbar({
               Copy as Markdown
             </DropdownMenuItem>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => showHistory()}>
+              <HistoryIcon />
+              Port History…
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
               disabled={shownUserProcesses.length === 0}
@@ -403,11 +409,13 @@ export function PortToolbar({
                 History
               </Button>
             </>
-          ) : firstScanPending ? (
-            "Scanning ports…"
-          ) : settings.includeUdp ? (
-            "TCP and UDP"
-          ) : null}
+          ) : (
+            <RefreshState
+              intervalMs={settings.refreshIntervalMs}
+              lastScanAt={lastScanAt}
+              includeUdp={settings.includeUdp}
+            />
+          )}
         </div>
       </div>
     </div>

@@ -59,15 +59,6 @@ impl PortPoller {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    pub fn is_system_service(&self, pid: u32) -> Option<bool> {
-        let inner = self.lock_inner();
-        inner
-            .last_result
-            .iter()
-            .find(|process| process.pid == pid)
-            .map(|process| process.is_system_service)
-    }
-
     pub fn find_by_pid(&self, pid: u32) -> Option<PortProcess> {
         let inner = self.lock_inner();
         inner

@@ -66,6 +66,7 @@ import {
   isPinned,
   processesOnPort,
   systemKindLabel,
+  userProcesses,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -737,10 +738,9 @@ export function PortTable({
     .getSelectedRowModel()
     .rows.map((row) => row.original);
 
-  const stoppableUserProcesses = table
-    .getRowModel()
-    .rows.map((row) => row.original)
-    .filter((process) => canStop(process));
+  const visibleUserProcesses = userProcesses(
+    table.getRowModel().rows.map((row) => row.original),
+  );
 
   const columnCount = columns.length;
   const tableWidth = totalColumnWidth(columnSizing);
@@ -776,11 +776,11 @@ export function PortTable({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem
-                    disabled={stoppableUserProcesses.length === 0}
+                    disabled={visibleUserProcesses.length === 0}
                     onClick={() =>
                       openStopDialog(
-                        stoppableUserProcesses,
-                        `Stop all ${stoppableUserProcesses.length} visible user processes?`,
+                        visibleUserProcesses,
+                        `Stop all ${visibleUserProcesses.length} visible user processes?`,
                         "This stops every visible user process in the current table view.",
                       )
                     }

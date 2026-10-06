@@ -3,7 +3,6 @@ mod classifier;
 pub mod cli;
 pub mod cli_install;
 pub mod commands;
-mod guards;
 mod home;
 mod platform;
 mod poller;
@@ -13,7 +12,7 @@ mod tray;
 
 use app_settings::AppSettings;
 use commands::cli_install::{get_cli_install_status, install_cli_to_path, uninstall_cli_from_path};
-use commands::filesystem::{delete_permanently, move_to_trash, open_in_finder};
+use commands::filesystem::{delete_project, open_in_finder};
 use commands::notifications::send_notification;
 use commands::ports::list_listening_ports;
 use commands::process::stop_process;
@@ -63,8 +62,7 @@ pub fn run() {
             set_preferred_editor,
             stop_process,
             open_in_finder,
-            move_to_trash,
-            delete_permanently,
+            delete_project,
             open_url,
             open_in_terminal,
             open_in_editor,

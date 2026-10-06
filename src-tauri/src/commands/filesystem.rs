@@ -1,8 +1,7 @@
 use tauri::AppHandle;
 
-use crate::guards::{resolve_delete_path, resolve_permanent_delete};
 use crate::platform;
-use crate::process_actions;
+use crate::process_actions::{self, DeleteMode, DeleteRequest};
 
 pub fn open_in_finder_blocking(path: &str) -> Result<(), String> {
     let path = path.trim();
@@ -10,8 +9,10 @@ pub fn open_in_finder_blocking(path: &str) -> Result<(), String> {
         return Err("Path is empty".into());
     }
 
-    if !std::path::Path::new(path).exists() {
-        return Err(format!("Path does not exist: {path}"));
+    // Folders only: handing a file to the platform opener would run or open
+    // it instead of showing it.
+    if !std::path::Path::new(path).is_dir() {
+        return Err(format!("Not a folder: {path}"));
     }
 
     platform::shell::open_in_file_manager(path)
@@ -24,37 +25,30 @@ pub async fn open_in_finder(path: String) -> Result<(), String> {
         .map_err(|e| format!("Open task failed: {e}"))?
 }
 
+// Stops a process and deletes its project folder as one step, so the folder
+// is checked before anything is stopped.
 // Async: trash/delete of a large tree (e.g. node_modules) must not block the
 // main thread.
 #[tauri::command]
-pub async fn move_to_trash(app: AppHandle, path: String, pid: u32) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        process_actions::assert_process_action_allowed(&app, pid)?;
-        let canonical = resolve_delete_path(&path)?;
-
-        trash::delete(&canonical).map_err(|e| format!("Failed to move to Trash: {e}"))
-    })
-    .await
-    .map_err(|e| format!("Trash task failed: {e}"))?
-}
-
-#[tauri::command]
-pub async fn delete_permanently(
+pub async fn delete_project(
     app: AppHandle,
-    path: String,
-    confirmation: String,
     pid: u32,
+    expected_name: String,
+    path: String,
+    mode: DeleteMode,
+    confirmation: Option<String>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        process_actions::assert_process_action_allowed(&app, pid)?;
-        let canonical = resolve_permanent_delete(&path, &confirmation)?;
-
-        if canonical.is_dir() {
-            std::fs::remove_dir_all(&canonical)
-                .map_err(|e| format!("Failed to delete directory: {e}"))
-        } else {
-            std::fs::remove_file(&canonical).map_err(|e| format!("Failed to delete file: {e}"))
-        }
+        process_actions::delete_project(
+            &app,
+            pid,
+            &DeleteRequest {
+                expected_name: &expected_name,
+                path: &path,
+                mode,
+                confirmation: confirmation.as_deref(),
+            },
+        )
     })
     .await
     .map_err(|e| format!("Delete task failed: {e}"))?

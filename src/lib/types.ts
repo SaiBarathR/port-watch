@@ -23,6 +23,8 @@ export interface PortProcess {
   system_kind: SystemKind;
   is_system_service: boolean;
   uptime_seconds: number;
+  /** Why the project folder cannot be deleted from the app, if it cannot. */
+  delete_blocked: string | null;
 }
 
 export type RefreshInterval = 3000 | 10000 | 0;
@@ -177,6 +179,15 @@ export function portSignature(process: PortProcess): string {
     .map((p) => `${p.address}:${p.port}/${p.protocol}`)
     .sort()
     .join(",");
+}
+
+/**
+ * Targets of "Stop all visible user processes". Never a system service, even
+ * when system process actions are allowed: those are stopped one at a time,
+ * behind their own confirmation.
+ */
+export function userProcesses(processes: PortProcess[]): PortProcess[] {
+  return processes.filter((process) => !process.is_system_service);
 }
 
 export function processesOnPort(

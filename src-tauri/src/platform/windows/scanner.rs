@@ -48,6 +48,12 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
 
         let script_path = extract_script_path(&command_line, &listener.name);
         let working_directory = infer_working_directory(&executable_path, &script_path);
+        // Without a script, that folder is just where the program is
+        // installed (per-user VS Code, Cursor, ...), not a project.
+        let delete_blocked = script_path.is_none().then(|| {
+            "The folder was guessed from where the program is installed, so it may not be a project."
+                .to_string()
+        });
         let project_root = infer_project_root(if !working_directory.is_empty() {
             &working_directory
         } else {
@@ -79,6 +85,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
                     system_kind: SystemKind::User,
                     is_system_service: false,
                     uptime_seconds: listener.uptime_seconds.max(0) as u64,
+                    delete_blocked: delete_blocked.clone(),
                 };
                 classify_process(&mut process);
                 process

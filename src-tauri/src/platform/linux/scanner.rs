@@ -49,6 +49,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
             system_kind: SystemKind::User,
             is_system_service: false,
             uptime_seconds: proc_info.uptime_seconds,
+            delete_blocked: None,
         };
 
         classify_process(&mut process);

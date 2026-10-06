@@ -93,16 +93,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
             });
     }
 
-    let mut processes: Vec<PortProcess> = by_pid.into_values().collect();
-    processes.sort_by(|a, b| {
-        a.ports
-            .first()
-            .map(|p| p.port)
-            .unwrap_or(0)
-            .cmp(&b.ports.first().map(|p| p.port).unwrap_or(0))
-    });
-
-    Ok(processes)
+    Ok(by_pid.into_values().collect())
 }
 
 fn normalize_address(address: &str) -> String {

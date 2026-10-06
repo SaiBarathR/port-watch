@@ -91,14 +91,6 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
         processes.push(process);
     }
 
-    processes.sort_by(|a, b| {
-        a.ports
-            .first()
-            .map(|p| p.port)
-            .unwrap_or(0)
-            .cmp(&b.ports.first().map(|p| p.port).unwrap_or(0))
-    });
-
     Ok(processes)
 }
 

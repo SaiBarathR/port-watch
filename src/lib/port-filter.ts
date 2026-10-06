@@ -1,5 +1,15 @@
-import type { PortProcess, SearchField } from "@/lib/types";
-import { processHasPort } from "@/lib/types";
+import type { AppSettings, PortProcess, SearchField } from "@/lib/types";
+import { parsePort, processHasPort } from "@/lib/types";
+
+/** Whether the "show user / system listeners" choice lets a process through. */
+export function isShownByScope(
+  process: PortProcess,
+  scope: Pick<AppSettings, "hideSystemServices" | "hideUserServices">,
+): boolean {
+  return process.is_system_service
+    ? !scope.hideSystemServices
+    : !scope.hideUserServices;
+}
 
 function buildSearchHaystack(process: PortProcess): string {
   return [
@@ -31,14 +41,9 @@ function matchesSearch(
 
   switch (field) {
     case "port": {
-      const portNum = Number.parseInt(query.trim(), 10);
-      if (
-        Number.isInteger(portNum) &&
-        portNum >= 1 &&
-        portNum <= 65535 &&
-        String(portNum) === query.trim()
-      ) {
-        return processHasPort(process, portNum);
+      const port = parsePort(query);
+      if (port !== null) {
+        return processHasPort(process, port);
       }
       return process.ports.some((binding) => String(binding.port).includes(q));
     }
@@ -84,26 +89,9 @@ export function filterPortProcesses(
         )
       : new Map<string, string>();
 
-  return processes.filter((process) => {
-    if (hideSystemServices && process.is_system_service) {
-      return false;
-    }
-
-    if (hideUserServices && !process.is_system_service) {
-      return false;
-    }
-
-    return matchesSearch(process, search, searchField, searchHaystacks);
-  });
-}
-
-export function normalizePortProcess(
-  raw: PortProcess & { isSystemService?: boolean },
-): PortProcess {
-  return {
-    ...raw,
-    ports: Array.isArray(raw.ports) ? raw.ports : [],
-    is_system_service:
-      raw.is_system_service === true || raw.isSystemService === true,
-  };
+  return processes.filter(
+    (process) =>
+      isShownByScope(process, { hideSystemServices, hideUserServices }) &&
+      matchesSearch(process, search, searchField, searchHaystacks),
+  );
 }

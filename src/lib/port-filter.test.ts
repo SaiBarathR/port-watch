@@ -4,6 +4,7 @@ import type { PortProcess } from "./types";
 
 function sampleProcess(overrides: Partial<PortProcess> = {}): PortProcess {
   return {
+    id: `pid-${overrides.pid ?? 1}`,
     pid: 1,
     name: "node",
     user: "dev",
@@ -35,5 +36,28 @@ describe("filterPortProcesses", () => {
     ];
     const filtered = filterPortProcesses(processes, true, false, "", "all");
     expect(filtered.map((process) => process.pid)).toEqual([2]);
+  });
+
+  it("searches listeners that share PID 0 separately", () => {
+    const processes = [
+      sampleProcess({
+        id: "socket-tcp-0.0.0.0-22",
+        pid: 0,
+        name: "unknown",
+        ports: [{ address: "0.0.0.0", port: 22, protocol: "TCP" }],
+      }),
+      sampleProcess({
+        id: "socket-tcp-0.0.0.0-631",
+        pid: 0,
+        name: "unknown",
+        ports: [{ address: "0.0.0.0", port: 631, protocol: "TCP" }],
+      }),
+    ];
+
+    const filtered = filterPortProcesses(processes, false, false, "631", "all");
+
+    expect(filtered.map((process) => process.id)).toEqual([
+      "socket-tcp-0.0.0.0-631",
+    ]);
   });
 });

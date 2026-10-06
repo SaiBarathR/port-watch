@@ -85,9 +85,9 @@ function processesUnchanged(prev: PortProcess[], next: PortProcess[]): boolean {
     return false;
   }
 
-  const prevByPid = new Map(prev.map((process) => [process.pid, process]));
+  const prevById = new Map(prev.map((process) => [process.id, process]));
   for (const process of next) {
-    const old = prevByPid.get(process.pid);
+    const old = prevById.get(process.id);
     if (!old || portSignature(old) !== portSignature(process)) {
       return false;
     }
@@ -237,7 +237,7 @@ export function usePortScan() {
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const [search, setSearch] = useState("");
-  const [rowChanges, setRowChanges] = useState<Map<number, RowChangeKind>>(
+  const [rowChanges, setRowChanges] = useState<Map<string, RowChangeKind>>(
     () => new Map(),
   );
   const previousProcessesRef = useRef<PortProcess[]>([]);

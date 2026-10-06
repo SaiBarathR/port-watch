@@ -10,6 +10,7 @@ function listener(
   overrides: Partial<PortProcess> = {},
 ): PortProcess {
   return {
+    id: `pid-${pid}`,
     pid,
     name,
     user: "dev",
@@ -49,7 +50,7 @@ describe("diffProcesses", () => {
       [],
       [listener(7, "node", [3000, 3001])],
     );
-    expect([...rowChanges]).toEqual([[7, "new"]]);
+    expect([...rowChanges]).toEqual([["pid-7", "new"]]);
     expect(messages).toEqual([
       "Port 3000 is now in use by node (PID 7)",
       "Port 3001 is now in use by node (PID 7)",
@@ -70,7 +71,7 @@ describe("diffProcesses", () => {
       [listener(7, "node", [3000])],
       [listener(7, "node", [3000, 3001])],
     );
-    expect([...rowChanges]).toEqual([[7, "changed"]]);
+    expect([...rowChanges]).toEqual([["pid-7", "changed"]]);
   });
 
   it("treats a port changing hands as one process gone and one new", () => {
@@ -78,10 +79,33 @@ describe("diffProcesses", () => {
       [listener(7, "node", [3000])],
       [listener(8, "node", [3000])],
     );
-    expect([...rowChanges]).toEqual([[8, "new"]]);
+    expect([...rowChanges]).toEqual([["pid-8", "new"]]);
     expect(messages).toEqual([
       "Port 3000 is now in use by node (PID 8)",
       "Port 3000 freed (node, PID 7)",
+    ]);
+  });
+
+  // On Linux without root, every listener whose owner is not visible has
+  // PID 0. Keyed by PID they overwrote one another.
+  it("tells listeners with no visible owner apart", () => {
+    const ssh = listener(0, "unknown", [22], { id: "socket-tcp-0.0.0.0-22" });
+    const cups = listener(0, "unknown", [631], {
+      id: "socket-tcp-127.0.0.1-631",
+    });
+    const proxy = listener(0, "unknown", [8080], {
+      id: "socket-tcp-0.0.0.0-8080",
+    });
+
+    const unchanged = diffProcesses([ssh, cups], [ssh, cups]);
+    expect(unchanged.rowChanges.size).toBe(0);
+    expect(unchanged.messages).toEqual([]);
+
+    const { rowChanges, messages } = diffProcesses([ssh, cups], [ssh, proxy]);
+    expect([...rowChanges]).toEqual([["socket-tcp-0.0.0.0-8080", "new"]]);
+    expect(messages).toEqual([
+      "Port 8080 is now in use by unknown (PID 0)",
+      "Port 631 freed (unknown, PID 0)",
     ]);
   });
 

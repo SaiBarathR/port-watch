@@ -87,6 +87,7 @@ mod tests {
     #[test]
     fn classifies_microsoft_binary() {
         let mut p = PortProcess {
+            id: String::new(),
             pid: 1,
             name: "svchost".into(),
             user: "NT AUTHORITY\\SYSTEM".into(),

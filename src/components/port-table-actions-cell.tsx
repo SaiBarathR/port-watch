@@ -52,19 +52,19 @@ export interface PortTableActionsHandlers {
 }
 
 interface OpenMenuContextValue {
-  openMenuPid: number | null;
-  setOpenMenuPid: (pid: number | null) => void;
+  openMenuId: string | null;
+  setOpenMenuId: (id: string | null) => void;
 }
 
 export const OpenMenuContext = createContext<OpenMenuContextValue | null>(null);
 
 export function OpenMenuProvider({
-  openMenuPid,
-  setOpenMenuPid,
+  openMenuId,
+  setOpenMenuId,
   children,
 }: OpenMenuContextValue & { children: ReactNode }) {
   return (
-    <OpenMenuContext.Provider value={{ openMenuPid, setOpenMenuPid }}>
+    <OpenMenuContext.Provider value={{ openMenuId, setOpenMenuId }}>
       {children}
     </OpenMenuContext.Provider>
   );
@@ -89,8 +89,8 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
     return null;
   }
 
-  const { openMenuPid, setOpenMenuPid } = menu;
-  const isOpen = openMenuPid === process.pid;
+  const { openMenuId, setOpenMenuId } = menu;
+  const isOpen = openMenuId === process.id;
   const folderPath = pinPath(process);
   const canDeleteFolder =
     !!folderPath && handlers.canStop(process) && !process.delete_blocked;
@@ -176,7 +176,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
     <DropdownMenu
       open={isOpen}
       onOpenChange={(open) => {
-        setOpenMenuPid(open ? process.pid : null);
+        setOpenMenuId(open ? process.id : null);
       }}
       modal={false}
     >
@@ -193,7 +193,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               <DropdownMenuItem
                 disabled={!handlers.canStop(process)}
                 onClick={() => {
-                  setOpenMenuPid(null);
+                  setOpenMenuId(null);
                   handlers.openFreePortDialog(process, port);
                 }}
               >
@@ -204,7 +204,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
             <DropdownMenuItem
               disabled={!handlers.canStop(process)}
               onClick={() => {
-                setOpenMenuPid(null);
+                setOpenMenuId(null);
                 handlers.openStopDialog([process]);
               }}
             >
@@ -214,7 +214,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
             {port !== null && (
               <DropdownMenuItem
                 onClick={() => {
-                  setOpenMenuPid(null);
+                  setOpenMenuId(null);
                   handlers.setHistoryPort(port);
                 }}
               >
@@ -285,7 +285,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               variant="destructive"
               disabled={!canDeleteFolder}
               onClick={() => {
-                setOpenMenuPid(null);
+                setOpenMenuId(null);
                 handlers.setDeleteTarget({ process, mode: "trash" });
               }}
             >
@@ -296,7 +296,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               variant="destructive"
               disabled={!canDeleteFolder}
               onClick={() => {
-                setOpenMenuPid(null);
+                setOpenMenuId(null);
                 handlers.setDeleteTarget({ process, mode: "permanent" });
               }}
             >

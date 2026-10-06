@@ -4,6 +4,7 @@ import type { PortProcess } from "./types";
 
 function listener(port: number, directory: string): PortProcess {
   return {
+    id: `pid-${port}`,
     pid: port,
     name: "node",
     user: "dev",

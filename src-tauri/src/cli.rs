@@ -80,6 +80,7 @@ mod tests {
 
     fn process(started_at: u64) -> PortProcess {
         PortProcess {
+            id: String::new(),
             pid: 42,
             name: "node".into(),
             user: "dev".into(),

@@ -93,6 +93,7 @@ mod tests {
     #[test]
     fn classifies_distro_binary() {
         let mut p = PortProcess {
+            id: String::new(),
             pid: 1,
             name: "nginx".into(),
             user: "root".into(),
@@ -125,6 +126,7 @@ mod tests {
         }
 
         let mut p = PortProcess {
+            id: String::new(),
             pid: 2,
             name: "myapp".into(),
             user,

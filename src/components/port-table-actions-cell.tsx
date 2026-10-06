@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { RowMenuItems } from "@/components/row-menu";
 import { useRowActionRunner, useRowMenu } from "@/hooks/use-row-actions";
+import { heldPorts } from "@/lib/ports";
 import { returnFocusToRow } from "@/lib/row-focus";
 import { formatPorts, type PortProcess } from "@/lib/types";
 
@@ -42,7 +43,8 @@ function MenuHeading({ process }: { process: PortProcess }) {
   const udp = process.ports.some((binding) => binding.protocol === "UDP");
   return (
     <p className="max-w-72 truncate px-2 py-1.5 text-xs text-muted-foreground">
-      {process.name} · {process.ports.length === 1 ? "port" : "ports"}{" "}
+      {process.name} ·{" "}
+      {heldPorts(process.ports).length === 1 ? "port" : "ports"}{" "}
       {formatPorts(process.ports, udp)}
     </p>
   );

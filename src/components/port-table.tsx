@@ -129,6 +129,16 @@ export function PortTable({
   // widths are saved when the drag ends, not on every pixel of it.
   const resizing = table.getState().columnSizingInfo.isResizingColumn !== false;
   useRefreshPause("column-resize", resizing);
+  // TanStack ends a touch drag on touchend only. A drag the system takes
+  // over (touchcancel) would otherwise stay "in progress", with scans paused.
+  useEffect(() => {
+    if (!resizing) {
+      return;
+    }
+    const cancel = () => table.resetHeaderSizeInfo(true);
+    document.addEventListener("touchcancel", cancel);
+    return () => document.removeEventListener("touchcancel", cancel);
+  }, [resizing, table]);
   const savedSizingRef = useRef(columnSizing);
   useEffect(() => {
     if (!resizing && savedSizingRef.current !== columnSizing) {

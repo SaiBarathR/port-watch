@@ -7,8 +7,8 @@ import {
   type ColumnDef,
   type ColumnSizingState,
   type Header,
-  type Row,
   type RowSelectionState,
+  type Table,
 } from "@tanstack/react-table";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +53,7 @@ import {
 } from "@/lib/column-sizing";
 import { portHintsLabel } from "@/lib/port-hints";
 import { filterPortProcesses } from "@/lib/port-filter";
+import { sortForTable, withGroupHeaders } from "@/lib/table-rows";
 import type {
   AppSettings,
   PortProcess,
@@ -62,8 +63,6 @@ import type {
 import {
   formatPorts,
   formatUptime,
-  groupDirectory,
-  isPinned,
   processesOnPort,
   systemKindLabel,
   userProcesses,
@@ -72,6 +71,8 @@ import { cn } from "@/lib/utils";
 
 interface PortTableProps {
   processes: PortProcess[];
+  /** True until the first scan has come back. */
+  loading: boolean;
   search: string;
   settings: AppSettings;
   rowChanges: Map<number, RowChangeKind>;
@@ -125,42 +126,226 @@ function stickyCellClass(
   }
 }
 
-type TableRowItem =
-  | { kind: "group"; id: string; label: string }
-  | { kind: "data"; id: string; row: Row<PortProcess> };
-
-function withGroupHeaders(
-  rows: Row<PortProcess>[],
-  settings: Pick<AppSettings, "groupByDirectory" | "pinnedPaths">,
-): TableRowItem[] {
-  const items: TableRowItem[] = [];
-  let lastGroup: string | null = null;
-  let pinnedHeaderShown = false;
-
-  for (const row of rows) {
-    const pinned = isPinned(row.original, settings.pinnedPaths);
-
-    if (pinned && !pinnedHeaderShown) {
-      pinnedHeaderShown = true;
-      items.push({ kind: "group", id: "group-pinned", label: "Pinned" });
-    }
-
-    if (settings.groupByDirectory) {
-      const group = groupDirectory(row.original);
-      if (group !== lastGroup) {
-        lastGroup = group;
-        items.push({ kind: "group", id: `group-${group}`, label: group });
-      }
-    }
-
-    items.push({ kind: "data", id: row.id, row });
-  }
-
-  return items;
+// What the cell renderers need besides their row. It reaches them through the
+// table's `meta` instead of closures, so the column definitions never change.
+// flexRender mounts each cell renderer as a component: a new function would
+// remount the cell, and an open row menu would lose its keyboard focus.
+interface PortTableMeta {
+  includeUdp: boolean;
+  rowChanges: Map<number, RowChangeKind>;
+  canStop: (process: PortProcess) => boolean;
+  actionSettings: Pick<
+    AppSettings,
+    "pinnedPaths" | "preferredEditor" | "useHttpsForLocalhost"
+  >;
+  actionHandlers: PortTableActionsHandlers;
 }
+
+function metaOf(table: Table<PortProcess>): PortTableMeta {
+  return table.options.meta as PortTableMeta;
+}
+
+async function openFolder(path: string) {
+  try {
+    await invoke("open_in_finder", { path });
+  } catch (err) {
+    toast.error(String(err));
+  }
+}
+
+const columns: ColumnDef<PortProcess>[] = [
+  {
+    id: "select",
+    header: ({ table }) => (
+      <input
+        type="checkbox"
+        className="size-4 accent-primary"
+        checked={table.getIsAllPageRowsSelected()}
+        ref={(element) => {
+          if (element) {
+            element.indeterminate =
+              table.getIsSomePageRowsSelected() &&
+              !table.getIsAllPageRowsSelected();
+          }
+        }}
+        onChange={table.getToggleAllPageRowsSelectedHandler()}
+        aria-label="Select all visible processes"
+      />
+    ),
+    size: DEFAULT_COLUMN_SIZING.select,
+    minSize: 40,
+    maxSize: 40,
+    enableResizing: false,
+    cell: ({ row, table }) => (
+      <input
+        type="checkbox"
+        className="size-4 accent-primary"
+        checked={row.getIsSelected()}
+        disabled={!metaOf(table).canStop(row.original)}
+        onChange={row.getToggleSelectedHandler()}
+        aria-label={`Select ${row.original.name}`}
+      />
+    ),
+  },
+  {
+    id: "ports",
+    accessorFn: (row) => row.ports[0]?.port ?? 0,
+    header: "Port(s)",
+    size: DEFAULT_COLUMN_SIZING.ports,
+    minSize: 72,
+    maxSize: 400,
+    cell: ({ row, table }) => {
+      const { includeUdp, rowChanges } = metaOf(table);
+      const hint = portHintsLabel(row.original.ports);
+      const portsText = formatPorts(row.original.ports, includeUdp);
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="flex min-w-0 flex-col truncate font-mono text-sm">
+              <span className="flex items-center truncate">
+                <span className="truncate">{portsText}</span>
+                {changeBadge(rowChanges.get(row.original.pid))}
+              </span>
+              {hint && (
+                <span className="truncate text-[10px] text-muted-foreground">
+                  {hint}
+                </span>
+              )}
+            </span>
+          </TooltipTrigger>
+          {hint && <TooltipContent side="bottom">{hint}</TooltipContent>}
+        </Tooltip>
+      );
+    },
+  },
+  {
+    accessorKey: "name",
+    id: "name",
+    header: "Process",
+    size: DEFAULT_COLUMN_SIZING.name,
+    minSize: 72,
+    maxSize: 240,
+    cell: ({ row }) => (
+      <span className="block truncate font-medium">{row.original.name}</span>
+    ),
+  },
+  {
+    accessorKey: "pid",
+    id: "pid",
+    header: "PID",
+    size: DEFAULT_COLUMN_SIZING.pid,
+    minSize: 56,
+    maxSize: 120,
+    cell: ({ row }) => (
+      <span className="block truncate font-mono">{row.original.pid}</span>
+    ),
+  },
+  {
+    accessorKey: "user",
+    header: "User",
+    size: DEFAULT_COLUMN_SIZING.user,
+    minSize: 72,
+    maxSize: 160,
+    cell: ({ row }) => (
+      <span className="block truncate">{row.original.user}</span>
+    ),
+  },
+  {
+    id: "script",
+    header: "Script / Command",
+    size: DEFAULT_COLUMN_SIZING.script,
+    minSize: 120,
+    maxSize: 600,
+    cell: ({ row }) => {
+      const display =
+        row.original.script_path ||
+        row.original.command_line ||
+        row.original.executable_path;
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="block truncate text-sm">{display}</span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-md">
+            {row.original.command_line || display}
+          </TooltipContent>
+        </Tooltip>
+      );
+    },
+  },
+  {
+    id: "directory",
+    header: "Directory",
+    size: DEFAULT_COLUMN_SIZING.directory,
+    minSize: 120,
+    maxSize: 500,
+    cell: ({ row }) => {
+      const cwd = row.original.working_directory;
+      if (!cwd) return <span className="text-muted-foreground">—</span>;
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="block w-full truncate text-left text-sm text-primary hover:underline"
+              onClick={() => void openFolder(cwd)}
+            >
+              {cwd}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-md">
+            {cwd}
+          </TooltipContent>
+        </Tooltip>
+      );
+    },
+  },
+  {
+    id: "uptime",
+    accessorKey: "uptime_seconds",
+    header: "Uptime",
+    size: DEFAULT_COLUMN_SIZING.uptime,
+    minSize: 72,
+    maxSize: 160,
+    cell: ({ row }) => (
+      <span className="block truncate font-mono text-sm">
+        {formatUptime(row.original.uptime_seconds)}
+      </span>
+    ),
+  },
+  {
+    id: "type",
+    header: "Type",
+    size: DEFAULT_COLUMN_SIZING.type,
+    minSize: 96,
+    maxSize: 180,
+    enableResizing: false,
+    cell: ({ row }) => (
+      <Badge variant={kindBadgeVariant(row.original.system_kind)}>
+        {systemKindLabel(row.original.system_kind)}
+      </Badge>
+    ),
+  },
+  {
+    id: "actions",
+    header: "",
+    size: DEFAULT_COLUMN_SIZING.actions,
+    minSize: 52,
+    maxSize: 52,
+    enableResizing: false,
+    cell: ({ row, table }) => (
+      <PortTableActionsCell
+        process={row.original}
+        settings={metaOf(table).actionSettings}
+        handlers={metaOf(table).actionHandlers}
+      />
+    ),
+  },
+];
 
 export function PortTable({
   processes,
+  loading,
   search,
   settings,
   rowChanges,
@@ -470,14 +655,6 @@ export function PortTable({
     ],
   );
 
-  const openFolder = async (path: string) => {
-    try {
-      await invoke("open_in_finder", { path });
-    } catch (err) {
-      toast.error(String(err));
-    }
-  };
-
   const visibleProcesses = useMemo(
     () =>
       filterPortProcesses(
@@ -496,232 +673,30 @@ export function PortTable({
     ],
   );
 
-  const tableData = useMemo(() => {
-    const sorted = [...visibleProcesses].sort((a, b) => {
-      const aPinned = isPinned(a, settings.pinnedPaths);
-      const bPinned = isPinned(b, settings.pinnedPaths);
-      if (aPinned !== bPinned) {
-        return aPinned ? -1 : 1;
-      }
+  const tableData = useMemo(
+    () =>
+      sortForTable(visibleProcesses, {
+        pinnedPaths: settings.pinnedPaths,
+        groupByDirectory: settings.groupByDirectory,
+      }),
+    [visibleProcesses, settings.groupByDirectory, settings.pinnedPaths],
+  );
 
-      if (settings.groupByDirectory) {
-        const groupCompare = groupDirectory(a).localeCompare(groupDirectory(b));
-        if (groupCompare !== 0) {
-          return groupCompare;
-        }
-      }
-
-      return (a.ports[0]?.port ?? 0) - (b.ports[0]?.port ?? 0);
-    });
-
-    return sorted;
-  }, [visibleProcesses, settings.groupByDirectory, settings.pinnedPaths]);
-
-  const columns = useMemo<ColumnDef<PortProcess>[]>(() => {
-    const includeProtocol = settings.includeUdp;
-    const allColumns: ColumnDef<PortProcess>[] = [
-      {
-        id: "select",
-        header: ({ table }) => (
-          <input
-            type="checkbox"
-            className="size-4 accent-primary"
-            checked={table.getIsAllPageRowsSelected()}
-            ref={(element) => {
-              if (element) {
-                element.indeterminate =
-                  table.getIsSomePageRowsSelected() &&
-                  !table.getIsAllPageRowsSelected();
-              }
-            }}
-            onChange={table.getToggleAllPageRowsSelectedHandler()}
-            aria-label="Select all visible processes"
-          />
-        ),
-        size: DEFAULT_COLUMN_SIZING.select,
-        minSize: 40,
-        maxSize: 40,
-        enableResizing: false,
-        cell: ({ row }) => (
-          <input
-            type="checkbox"
-            className="size-4 accent-primary"
-            checked={row.getIsSelected()}
-            disabled={!canStop(row.original)}
-            onChange={row.getToggleSelectedHandler()}
-            aria-label={`Select ${row.original.name}`}
-          />
-        ),
-      },
-      {
-        id: "ports",
-        accessorFn: (row) => row.ports[0]?.port ?? 0,
-        header: "Port(s)",
-        size: DEFAULT_COLUMN_SIZING.ports,
-        minSize: 72,
-        maxSize: 400,
-        cell: ({ row }) => {
-          const hint = portHintsLabel(row.original.ports);
-          const portsText = formatPorts(row.original.ports, includeProtocol);
-          return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex min-w-0 flex-col truncate font-mono text-sm">
-                  <span className="flex items-center truncate">
-                    <span className="truncate">{portsText}</span>
-                    {changeBadge(rowChanges.get(row.original.pid))}
-                  </span>
-                  {hint && (
-                    <span className="truncate text-[10px] text-muted-foreground">
-                      {hint}
-                    </span>
-                  )}
-                </span>
-              </TooltipTrigger>
-              {hint && <TooltipContent side="bottom">{hint}</TooltipContent>}
-            </Tooltip>
-          );
-        },
-      },
-      {
-        accessorKey: "name",
-        id: "name",
-        header: "Process",
-        size: DEFAULT_COLUMN_SIZING.name,
-        minSize: 72,
-        maxSize: 240,
-        cell: ({ row }) => (
-          <span className="block truncate font-medium">
-            {row.original.name}
-          </span>
-        ),
-      },
-      {
-        accessorKey: "pid",
-        id: "pid",
-        header: "PID",
-        size: DEFAULT_COLUMN_SIZING.pid,
-        minSize: 56,
-        maxSize: 120,
-        cell: ({ row }) => (
-          <span className="block truncate font-mono">{row.original.pid}</span>
-        ),
-      },
-      {
-        accessorKey: "user",
-        header: "User",
-        size: DEFAULT_COLUMN_SIZING.user,
-        minSize: 72,
-        maxSize: 160,
-        cell: ({ row }) => (
-          <span className="block truncate">{row.original.user}</span>
-        ),
-      },
-      {
-        id: "script",
-        header: "Script / Command",
-        size: DEFAULT_COLUMN_SIZING.script,
-        minSize: 120,
-        maxSize: 600,
-        cell: ({ row }) => {
-          const display =
-            row.original.script_path ||
-            row.original.command_line ||
-            row.original.executable_path;
-          return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="block truncate text-sm">{display}</span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-md">
-                {row.original.command_line || display}
-              </TooltipContent>
-            </Tooltip>
-          );
-        },
-      },
-      {
-        id: "directory",
-        header: "Directory",
-        size: DEFAULT_COLUMN_SIZING.directory,
-        minSize: 120,
-        maxSize: 500,
-        cell: ({ row }) => {
-          const cwd = row.original.working_directory;
-          if (!cwd) return <span className="text-muted-foreground">—</span>;
-          return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="block w-full truncate text-left text-sm text-primary hover:underline"
-                  onClick={() => void openFolder(cwd)}
-                >
-                  {cwd}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-md">
-                {cwd}
-              </TooltipContent>
-            </Tooltip>
-          );
-        },
-      },
-      {
-        id: "uptime",
-        accessorKey: "uptime_seconds",
-        header: "Uptime",
-        size: DEFAULT_COLUMN_SIZING.uptime,
-        minSize: 72,
-        maxSize: 160,
-        cell: ({ row }) => (
-          <span className="block truncate font-mono text-sm">
-            {formatUptime(row.original.uptime_seconds)}
-          </span>
-        ),
-      },
-      {
-        id: "type",
-        header: "Type",
-        size: DEFAULT_COLUMN_SIZING.type,
-        minSize: 96,
-        maxSize: 180,
-        enableResizing: false,
-        cell: ({ row }) => (
-          <Badge variant={kindBadgeVariant(row.original.system_kind)}>
-            {systemKindLabel(row.original.system_kind)}
-          </Badge>
-        ),
-      },
-      {
-        id: "actions",
-        header: "",
-        size: DEFAULT_COLUMN_SIZING.actions,
-        minSize: 52,
-        maxSize: 52,
-        enableResizing: false,
-        cell: ({ row }) => (
-          <PortTableActionsCell
-            process={row.original}
-            settings={actionSettings}
-            handlers={actionHandlers}
-          />
-        ),
-      },
-    ];
-
-    return allColumns;
-  }, [
-    actionHandlers,
-    actionSettings,
-    canStop,
-    rowChanges,
-    settings.includeUdp,
-  ]);
+  const meta = useMemo<PortTableMeta>(
+    () => ({
+      includeUdp: settings.includeUdp,
+      rowChanges,
+      canStop,
+      actionSettings,
+      actionHandlers,
+    }),
+    [actionHandlers, actionSettings, canStop, rowChanges, settings.includeUdp],
+  );
 
   const table = useReactTable({
     data: tableData,
     columns,
+    meta,
     state: { columnSizing, rowSelection },
     onColumnSizingChange: setColumnSizing,
     onRowSelectionChange: setRowSelection,
@@ -745,7 +720,11 @@ export function PortTable({
   const columnCount = columns.length;
   const tableWidth = totalColumnWidth(columnSizing);
 
-  const tableRows = withGroupHeaders(table.getRowModel().rows, settings);
+  const tableRows = withGroupHeaders(
+    table.getRowModel().rows,
+    (row) => row.original,
+    settings,
+  );
 
   return (
     <OpenMenuProvider openMenuPid={openMenuPid} setOpenMenuPid={setOpenMenuPid}>
@@ -887,8 +866,9 @@ export function PortTable({
 
                     return (
                       <PortTableDataRow
-                        key={item.id}
+                        key={item.row.id}
                         row={item.row}
+                        meta={meta}
                         isSelected={item.row.getIsSelected()}
                         canSelect={item.row.getCanSelect()}
                         change={rowChanges.get(item.row.original.pid)}
@@ -902,7 +882,11 @@ export function PortTable({
                       colSpan={columnCount}
                       className="h-24 p-2 text-center align-middle"
                     >
-                      {processes.length > 0 ? (
+                      {loading ? (
+                        <span className="text-muted-foreground">
+                          Scanning ports…
+                        </span>
+                      ) : processes.length > 0 ? (
                         <span className="text-muted-foreground">
                           No listeners match your current search or filters.
                         </span>

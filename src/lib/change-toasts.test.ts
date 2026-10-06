@@ -1,10 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const sonner = vi.hoisted(() => ({
+  info: vi.fn(),
+  dismiss: vi.fn(),
+  getToasts: vi.fn((): { id: number | string }[] => []),
+}));
+
+vi.mock("sonner", () => ({ toast: sonner }));
+
 import {
   MUTE_DURATIONS,
+  VISIBLE_TOASTS,
   changeToastStatus,
   isChangeToastsMuted,
+  addPortChanges,
+  dismissPortChangeToasts,
   isPortChangeToastId,
-  nextPortChangeToastId,
+  portChangeToastContent,
+  showPortChanges,
 } from "./change-toasts";
 
 const NOW = Date.UTC(2026, 9, 6, 12, 0, 0);
@@ -71,17 +84,159 @@ describe("changeToastStatus", () => {
   });
 });
 
-describe("port change toast ids", () => {
-  it("are unique and recognisable", () => {
-    const first = nextPortChangeToastId();
-    const second = nextPortChangeToastId();
-    expect(first).not.toBe(second);
-    expect(isPortChangeToastId(first)).toBe(true);
-    expect(isPortChangeToastId(second)).toBe(true);
-  });
-
-  it("does not match sonner's own numeric ids or other toasts", () => {
+describe("the port change toast", () => {
+  it("has ids distinct from sonner's own and from other toasts", () => {
+    expect(isPortChangeToastId("port-change-1")).toBe(true);
     expect(isPortChangeToastId(7)).toBe(false);
     expect(isPortChangeToastId("copied")).toBe(false);
+  });
+
+  it("describes a single change", () => {
+    const shown = addPortChanges({ total: 0, latest: [] }, ["Port 3000 freed"]);
+    expect(portChangeToastContent(shown)).toEqual({
+      title: "Port change detected",
+      description: "Port 3000 freed",
+    });
+  });
+
+  it("adds later changes to what is already shown", () => {
+    let shown = addPortChanges({ total: 0, latest: [] }, ["a", "b"]);
+    shown = addPortChanges(shown, ["c"]);
+    expect(portChangeToastContent(shown)).toEqual({
+      title: "3 port changes detected",
+      description: "a\nb\nc",
+    });
+  });
+
+  it("keeps the latest lines and counts the earlier ones", () => {
+    let shown = addPortChanges({ total: 0, latest: [] }, ["1", "2", "3", "4"]);
+    shown = addPortChanges(shown, ["5", "6", "7"]);
+    expect(shown.latest).toEqual(["3", "4", "5", "6", "7"]);
+    expect(portChangeToastContent(shown)).toEqual({
+      title: "7 port changes detected",
+      description: "+2 earlier\n3\n4\n5\n6\n7",
+    });
+  });
+});
+
+describe("showPortChanges", () => {
+  beforeEach(() => {
+    dismissPortChangeToasts();
+    sonner.info.mockClear();
+    sonner.dismiss.mockClear();
+  });
+
+  const lastCall = () => {
+    const calls = sonner.info.mock.calls;
+    const [title, options] = calls[calls.length - 1];
+    return { title, ...options };
+  };
+
+  it("updates the toast on screen instead of adding another", () => {
+    showPortChanges(["a"]);
+    const first = lastCall();
+    showPortChanges(["b"]);
+    const second = lastCall();
+
+    expect(first.title).toBe("Port change detected");
+    expect(second.title).toBe("2 port changes detected");
+    expect(second.id).toBe(first.id);
+    expect(isPortChangeToastId(first.id)).toBe(true);
+  });
+
+  // sonner restarts a toast's lifetime only when its duration changes;
+  // otherwise an update inherits what a hover left of the previous one.
+  it("gives every update a fresh lifetime", () => {
+    showPortChanges(["a"]);
+    const first = lastCall();
+    showPortChanges(["b"]);
+    const second = lastCall();
+    showPortChanges(["c"]);
+    const third = lastCall();
+
+    expect(second.duration).not.toBe(first.duration);
+    expect(third.duration).not.toBe(second.duration);
+    for (const call of [first, second, third]) {
+      expect(Math.abs(call.duration - 12_000)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  // sonner removes a toast by id about 200 ms after it starts to leave. An
+  // update under the same id in that window would vanish with it.
+  it.each(["onAutoClose", "onDismiss"] as const)(
+    "starts a new toast once the previous one began to leave (%s)",
+    (ending) => {
+      showPortChanges(["a"]);
+      const first = lastCall();
+      first[ending]();
+
+      showPortChanges(["b"]);
+      const second = lastCall();
+
+      expect(second.id).not.toBe(first.id);
+      expect(second.title).toBe("Port change detected");
+      expect(second.description).toBe("b");
+    },
+  );
+
+  it("ignores a late callback from a toast that was already replaced", () => {
+    showPortChanges(["a"]);
+    const first = lastCall();
+    first.onAutoClose();
+    showPortChanges(["b"]);
+    const second = lastCall();
+
+    first.onDismiss();
+    showPortChanges(["c"]);
+
+    expect(lastCall().id).toBe(second.id);
+    expect(lastCall().title).toBe("2 port changes detected");
+  });
+
+  // Updating a toast leaves it where it is in the stack, which shows only
+  // the newest few.
+  it("moves to a new toast, keeping the count, when newer toasts buried it", () => {
+    showPortChanges(["a", "b"]);
+    const first = lastCall();
+    const newer = Array.from({ length: VISIBLE_TOASTS }, (_, n) => ({ id: n }));
+    sonner.getToasts.mockReturnValueOnce([{ id: first.id }, ...newer]);
+
+    showPortChanges(["c"]);
+
+    expect(lastCall().id).not.toBe(first.id);
+    expect(lastCall().title).toBe("3 port changes detected");
+    expect(sonner.dismiss.mock.calls).toEqual([[first.id]]);
+
+    // The buried toast reporting its dismissal does not reset the new one.
+    first.onDismiss();
+    showPortChanges(["d"]);
+    expect(lastCall().title).toBe("4 port changes detected");
+  });
+
+  it("stays in place while it is still among the visible toasts", () => {
+    showPortChanges(["a"]);
+    const first = lastCall();
+    const newer = Array.from({ length: VISIBLE_TOASTS - 1 }, (_, n) => ({
+      id: n,
+    }));
+    sonner.getToasts.mockReturnValueOnce([{ id: first.id }, ...newer]);
+
+    showPortChanges(["b"]);
+
+    expect(lastCall().id).toBe(first.id);
+    expect(sonner.dismiss).not.toHaveBeenCalled();
+  });
+
+  it("starts a new toast after the port change toasts are dismissed", () => {
+    showPortChanges(["a"]);
+    const first = lastCall();
+    sonner.getToasts.mockReturnValueOnce([{ id: first.id }, { id: "copied" }]);
+
+    dismissPortChangeToasts();
+    showPortChanges(["b"]);
+
+    expect(sonner.dismiss.mock.calls).toEqual([[first.id]]);
+    expect(lastCall().id).not.toBe(first.id);
+    expect(lastCall().title).toBe("Port change detected");
   });
 });

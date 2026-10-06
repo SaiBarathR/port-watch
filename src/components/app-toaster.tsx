@@ -3,6 +3,7 @@ import { Toaster, useSonner } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   MUTE_DURATIONS,
+  VISIBLE_TOASTS,
   dismissAllToasts,
   isPortChangeToastId,
   muteChangeToasts,
@@ -98,7 +99,7 @@ export function AppToaster({
         expand
         position="bottom-right"
         duration={8000}
-        visibleToasts={5}
+        visibleToasts={VISIBLE_TOASTS}
         theme={theme}
         offset={{
           bottom: showControls

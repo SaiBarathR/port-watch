@@ -28,6 +28,10 @@ function stickyCellClass(position: "first" | "last") {
 
 interface PortTableDataRowProps {
   row: Row<PortProcess>;
+  // Not read here: the cells take settings from the table's `meta`, and
+  // TanStack keeps `row` when only that changes. Without this prop an open
+  // row menu kept showing the old settings until the next scan.
+  meta: object;
   change: RowChangeKind | undefined;
   columnCount: number;
   // isSelected/canSelect are passed as primitives so this memoized row re-renders

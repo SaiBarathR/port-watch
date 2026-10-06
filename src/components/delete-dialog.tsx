@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangleIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -42,19 +42,21 @@ export function DeleteDialog({
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const path = target ? pinPath(target.process) || target.process.working_directory : "";
+  const path = target
+    ? pinPath(target.process) || target.process.working_directory
+    : "";
   const folderBasename = basename(path);
   const canDelete =
     !!target &&
     !!path &&
     (!target.process.is_system_service || allowSystemProcessActions);
 
-  useEffect(() => {
-    if (!open) {
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
       setConfirmation("");
-      setBusy(false);
     }
-  }, [open]);
+    onOpenChange(next);
+  };
 
   const handleDelete = async () => {
     if (!target || !path || !canDelete) return;
@@ -81,7 +83,7 @@ export function DeleteDialog({
         toast.success("Folder deleted permanently");
       }
 
-      onOpenChange(false);
+      handleOpenChange(false);
       onComplete();
     } catch (err) {
       toast.error(String(err));
@@ -97,7 +99,7 @@ export function DeleteDialog({
     canDelete && (!isPermanent || confirmation === folderBasename);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
@@ -129,8 +131,9 @@ export function DeleteDialog({
         {isPermanent && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="confirm-basename">
-              Type <span className="font-mono font-semibold">{folderBasename}</span> to
-              confirm
+              Type{" "}
+              <span className="font-mono font-semibold">{folderBasename}</span>{" "}
+              to confirm
             </Label>
             <Input
               id="confirm-basename"
@@ -143,7 +146,11 @@ export function DeleteDialog({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+          <Button
+            variant="outline"
+            onClick={() => handleOpenChange(false)}
+            disabled={busy}
+          >
             Cancel
           </Button>
           <Button

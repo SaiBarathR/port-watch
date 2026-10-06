@@ -28,13 +28,7 @@ export interface PortProcess {
 export type RefreshInterval = 3000 | 10000 | 0;
 
 export type SearchField =
-  | "all"
-  | "port"
-  | "pid"
-  | "process"
-  | "user"
-  | "path"
-  | "command";
+  "all" | "port" | "pid" | "process" | "user" | "path" | "command";
 
 export const SEARCH_FIELD_OPTIONS: { value: SearchField; label: string }[] = [
   { value: "all", label: "All fields" },
@@ -143,7 +137,9 @@ export function isVendorSystemKind(kind: SystemKind): boolean {
 }
 
 export function primaryPath(process: PortProcess): string {
-  return process.script_path || process.working_directory || process.executable_path;
+  return (
+    process.script_path || process.working_directory || process.executable_path
+  );
 }
 
 export function groupDirectory(process: PortProcess): string {

@@ -48,13 +48,11 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
 
         let script_path = extract_script_path(&command_line, &listener.name);
         let working_directory = infer_working_directory(&executable_path, &script_path);
-        let project_root = infer_project_root(
-            if !working_directory.is_empty() {
-                &working_directory
-            } else {
-                script_path.as_deref().unwrap_or(&executable_path)
-            },
-        );
+        let project_root = infer_project_root(if !working_directory.is_empty() {
+            &working_directory
+        } else {
+            script_path.as_deref().unwrap_or(&executable_path)
+        });
 
         by_pid
             .entry(listener.pid)
@@ -153,8 +151,7 @@ fn query_listeners(protocol: &str) -> Result<Vec<WindowsListener>, String> {
     }
 
     if stdout.starts_with('[') {
-        serde_json::from_str(&stdout)
-            .map_err(|e| format!("Failed to parse PowerShell JSON: {e}"))
+        serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse PowerShell JSON: {e}"))
     } else {
         let single: WindowsListener = serde_json::from_str(&stdout)
             .map_err(|e| format!("Failed to parse PowerShell JSON: {e}"))?;

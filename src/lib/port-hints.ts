@@ -27,7 +27,9 @@ export function portHint(port: number): string | undefined {
 export function portHintsLabel(ports: { port: number }[]): string | undefined {
   const labels = [
     ...new Set(
-      ports.map((p) => portHint(p.port)).filter((label): label is string => !!label),
+      ports
+        .map((p) => portHint(p.port))
+        .filter((label): label is string => !!label),
     ),
   ];
   return labels.length > 0 ? labels.join(", ") : undefined;

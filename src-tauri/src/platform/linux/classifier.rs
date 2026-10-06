@@ -45,7 +45,14 @@ fn is_distro_binary(executable_path: &str) -> bool {
         return false;
     }
 
-    let distro_prefixes = ["/usr/bin/", "/usr/lib/", "/usr/sbin/", "/bin/", "/sbin/", "/lib/"];
+    let distro_prefixes = [
+        "/usr/bin/",
+        "/usr/lib/",
+        "/usr/sbin/",
+        "/bin/",
+        "/sbin/",
+        "/lib/",
+    ];
     if distro_prefixes
         .iter()
         .any(|prefix| executable_path.starts_with(prefix))

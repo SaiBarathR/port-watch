@@ -29,10 +29,15 @@ pub fn program_data() -> Option<PathBuf> {
 }
 
 pub fn protected_prefixes() -> Vec<PathBuf> {
-    [system_root(), program_files(), program_files_x86(), program_data()]
-        .into_iter()
-        .flatten()
-        .collect()
+    [
+        system_root(),
+        program_files(),
+        program_files_x86(),
+        program_data(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 pub fn canonicalize_if_exists(path: &Path) -> Option<PathBuf> {

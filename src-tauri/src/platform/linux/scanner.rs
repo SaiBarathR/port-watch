@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::classifier::{classify as classify_process, SystemKind};
 use crate::home::infer_project_root;
@@ -30,15 +30,11 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
 
         let proc_info = read_proc_info(record.pid)?;
         let script_path = extract_script_path(&proc_info.command_line, &record.name);
-        let project_root = infer_project_root(
-            if !proc_info.working_directory.is_empty() {
-                &proc_info.working_directory
-            } else {
-                script_path
-                    .as_deref()
-                    .unwrap_or(&proc_info.executable_path)
-            },
-        );
+        let project_root = infer_project_root(if !proc_info.working_directory.is_empty() {
+            &proc_info.working_directory
+        } else {
+            script_path.as_deref().unwrap_or(&proc_info.executable_path)
+        });
 
         let mut process = PortProcess {
             pid: record.pid,
@@ -243,13 +239,13 @@ fn read_proc_info(pid: u32) -> Result<ProcInfo, String> {
     })
 }
 
-fn read_proc_cmdline(proc_dir: &PathBuf) -> String {
+fn read_proc_cmdline(proc_dir: &Path) -> String {
     fs::read_to_string(proc_dir.join("cmdline"))
         .map(|raw| raw.replace('\0', " ").trim().to_string())
         .unwrap_or_default()
 }
 
-fn read_proc_user(proc_dir: &PathBuf) -> String {
+fn read_proc_user(proc_dir: &Path) -> String {
     let status = fs::read_to_string(proc_dir.join("status")).unwrap_or_default();
     for line in status.lines() {
         if let Some(uid) = line.strip_prefix("Uid:") {
@@ -317,7 +313,7 @@ fn resolve_uid_uncached(uid: u32) -> Option<String> {
     }
 }
 
-fn read_proc_uptime(proc_dir: &PathBuf) -> u64 {
+fn read_proc_uptime(proc_dir: &Path) -> u64 {
     use std::sync::OnceLock;
 
     static CLOCK_TICKS: OnceLock<f64> = OnceLock::new();

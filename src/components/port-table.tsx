@@ -38,7 +38,10 @@ import {
   PortTableActionsCell,
   type PortTableActionsHandlers,
 } from "@/components/port-table-actions-cell";
-import { PortTableDataRow, PortTableGroupRow } from "@/components/port-table-row";
+import {
+  PortTableDataRow,
+  PortTableGroupRow,
+} from "@/components/port-table-row";
 import { PortHistoryTimeline } from "@/components/port-history-timeline";
 import { StopDialog } from "@/components/stop-dialog";
 import {
@@ -50,7 +53,12 @@ import {
 } from "@/lib/column-sizing";
 import { portHintsLabel } from "@/lib/port-hints";
 import { filterPortProcesses } from "@/lib/port-filter";
-import type { AppSettings, PortProcess, RowChangeKind, SystemKind } from "@/lib/types";
+import type {
+  AppSettings,
+  PortProcess,
+  RowChangeKind,
+  SystemKind,
+} from "@/lib/types";
 import {
   formatPorts,
   formatUptime,
@@ -82,8 +90,10 @@ function changeBadge(change: RowChangeKind | undefined) {
       variant="outline"
       className={cn(
         "ml-2 text-[10px] uppercase",
-        change === "new" && "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
-        change === "changed" && "border-amber-500/40 text-amber-600 dark:text-amber-400",
+        change === "new" &&
+          "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
+        change === "changed" &&
+          "border-amber-500/40 text-amber-600 dark:text-amber-400",
       )}
     >
       {change}
@@ -97,7 +107,9 @@ function kindBadgeVariant(
   return kind;
 }
 
-function stickyCellClass(position: "first" | "last" | "corner-left" | "corner-right") {
+function stickyCellClass(
+  position: "first" | "last" | "corner-left" | "corner-right",
+) {
   const base =
     "bg-background group-hover:bg-[color-mix(in_oklch,var(--muted)_50%,var(--background))]";
   switch (position) {
@@ -112,6 +124,40 @@ function stickyCellClass(position: "first" | "last" | "corner-left" | "corner-ri
   }
 }
 
+type TableRowItem =
+  | { kind: "group"; id: string; label: string }
+  | { kind: "data"; id: string; row: Row<PortProcess> };
+
+function withGroupHeaders(
+  rows: Row<PortProcess>[],
+  settings: Pick<AppSettings, "groupByDirectory" | "pinnedPaths">,
+): TableRowItem[] {
+  const items: TableRowItem[] = [];
+  let lastGroup: string | null = null;
+  let pinnedHeaderShown = false;
+
+  for (const row of rows) {
+    const pinned = isPinned(row.original, settings.pinnedPaths);
+
+    if (pinned && !pinnedHeaderShown) {
+      pinnedHeaderShown = true;
+      items.push({ kind: "group", id: "group-pinned", label: "Pinned" });
+    }
+
+    if (settings.groupByDirectory) {
+      const group = groupDirectory(row.original);
+      if (group !== lastGroup) {
+        lastGroup = group;
+        items.push({ kind: "group", id: `group-${group}`, label: group });
+      }
+    }
+
+    items.push({ kind: "data", id: row.id, row });
+  }
+
+  return items;
+}
+
 export function PortTable({
   processes,
   search,
@@ -123,7 +169,8 @@ export function PortTable({
   onUseHttpsForLocalhostChange,
 }: PortTableProps) {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(loadColumnSizing);
+  const [columnSizing, setColumnSizing] =
+    useState<ColumnSizingState>(loadColumnSizing);
   const tableRef = useRef<HTMLTableElement>(null);
   const colRefs = useRef<Record<string, HTMLTableColElement | null>>({});
   const isResizingRef = useRef(false);
@@ -165,7 +212,13 @@ export function PortTable({
         historyPort !== null ||
         isResizingRef.current,
     );
-  }, [openMenuPid, stopTargets.length, deleteTarget, historyPort, onRefreshPauseChange]);
+  }, [
+    openMenuPid,
+    stopTargets.length,
+    deleteTarget,
+    historyPort,
+    onRefreshPauseChange,
+  ]);
 
   useEffect(() => {
     setRowSelection((current) => {
@@ -207,7 +260,10 @@ export function PortTable({
   }, []);
 
   const handleResizePointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>, header: Header<PortProcess, unknown>) => {
+    (
+      event: React.PointerEvent<HTMLDivElement>,
+      header: Header<PortProcess, unknown>,
+    ) => {
       if (!header.column.getCanResize()) {
         return;
       }
@@ -221,7 +277,8 @@ export function PortTable({
       const columnId = header.column.id;
       const startWidth = header.getSize();
       const minSize = header.column.columnDef.minSize ?? 20;
-      const maxSize = header.column.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER;
+      const maxSize =
+        header.column.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER;
 
       dragRef.current = {
         columnId,
@@ -280,7 +337,10 @@ export function PortTable({
         document.body.style.userSelect = "";
         document.body.style.cursor = "";
         onRefreshPauseChange(
-          openMenuPid !== null || stopTargets.length > 0 || deleteTarget !== null || historyPort !== null,
+          openMenuPid !== null ||
+            stopTargets.length > 0 ||
+            deleteTarget !== null ||
+            historyPort !== null,
         );
 
         setColumnSizing(nextSizing);
@@ -295,7 +355,8 @@ export function PortTable({
 
         scheduleApply(
           clampColumnWidth(
-            dragRef.current.startWidth + (moveEvent.clientX - dragRef.current.startX),
+            dragRef.current.startWidth +
+              (moveEvent.clientX - dragRef.current.startX),
             dragRef.current.minSize,
             dragRef.current.maxSize,
           ),
@@ -516,9 +577,7 @@ export function PortTable({
                   )}
                 </span>
               </TooltipTrigger>
-              {hint && (
-                <TooltipContent side="bottom">{hint}</TooltipContent>
-              )}
+              {hint && <TooltipContent side="bottom">{hint}</TooltipContent>}
             </Tooltip>
           );
         },
@@ -531,7 +590,9 @@ export function PortTable({
         minSize: 72,
         maxSize: 240,
         cell: ({ row }) => (
-          <span className="block truncate font-medium">{row.original.name}</span>
+          <span className="block truncate font-medium">
+            {row.original.name}
+          </span>
         ),
       },
       {
@@ -670,265 +731,237 @@ export function PortTable({
     getCoreRowModel: getCoreRowModel(),
   });
 
-  const selectedProcesses = useMemo(
-    () => table.getSelectedRowModel().rows.map((row) => row.original),
-    [table, rowSelection, tableData],
-  );
+  // Derived on every render: `table` keeps its identity across state changes,
+  // so it cannot serve as a memo dependency.
+  const selectedProcesses = table
+    .getSelectedRowModel()
+    .rows.map((row) => row.original);
 
-  const stoppableUserProcesses = useMemo(
-    () =>
-      table
-        .getRowModel()
-        .rows.map((row) => row.original)
-        .filter((process) => canStop(process)),
-    [table, tableData, canStop],
-  );
+  const stoppableUserProcesses = table
+    .getRowModel()
+    .rows.map((row) => row.original)
+    .filter((process) => canStop(process));
 
   const columnCount = columns.length;
   const tableWidth = totalColumnWidth(columnSizing);
 
-  type TableRowItem =
-    | { kind: "group"; id: string; label: string }
-    | { kind: "data"; id: string; row: Row<PortProcess> };
-
-  const tableRows = useMemo(() => {
-    const rows = table.getRowModel().rows;
-    if (rows.length === 0) {
-      return [] as TableRowItem[];
-    }
-
-    const items: TableRowItem[] = [];
-    let lastGroup: string | null = null;
-    let pinnedHeaderShown = false;
-
-    for (const row of rows) {
-      const pinned = isPinned(row.original, settings.pinnedPaths);
-
-      if (pinned && !pinnedHeaderShown) {
-        pinnedHeaderShown = true;
-        items.push({ kind: "group", id: "group-pinned", label: "Pinned" });
-      }
-
-      if (settings.groupByDirectory) {
-        const group = groupDirectory(row.original);
-        if (group !== lastGroup) {
-          lastGroup = group;
-          items.push({ kind: "group", id: `group-${group}`, label: group });
-        }
-      }
-
-      items.push({ kind: "data", id: row.id, row });
-    }
-
-    return items;
-  }, [table, tableData, settings.groupByDirectory, settings.pinnedPaths]);
+  const tableRows = withGroupHeaders(table.getRowModel().rows, settings);
 
   return (
     <OpenMenuProvider openMenuPid={openMenuPid} setOpenMenuPid={setOpenMenuPid}>
-    <TooltipProvider>
-      <div className="flex h-full min-h-0 flex-col">
-      {selectedProcesses.length > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
-          <span className="text-sm text-muted-foreground">
-            {selectedProcesses.length} selected
-          </span>
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={() =>
-              openStopDialog(
-                selectedProcesses,
-                `Stop ${selectedProcesses.length} selected processes?`,
-              )
-            }
-          >
-            Stop selected
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline">
-                Batch actions
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem
-                disabled={stoppableUserProcesses.length === 0}
+      <TooltipProvider>
+        <div className="flex h-full min-h-0 flex-col">
+          {selectedProcesses.length > 0 && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
+              <span className="text-sm text-muted-foreground">
+                {selectedProcesses.length} selected
+              </span>
+              <Button
+                size="sm"
+                variant="destructive"
                 onClick={() =>
                   openStopDialog(
-                    stoppableUserProcesses,
-                    `Stop all ${stoppableUserProcesses.length} visible user processes?`,
-                    "This stops every visible user process in the current table view.",
+                    selectedProcesses,
+                    `Stop ${selectedProcesses.length} selected processes?`,
                   )
                 }
               >
-                Stop all visible user processes
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setRowSelection({})}
-          >
-            Clear selection
-          </Button>
-        </div>
-      )}
+                Stop selected
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="outline">
+                    Batch actions
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem
+                    disabled={stoppableUserProcesses.length === 0}
+                    onClick={() =>
+                      openStopDialog(
+                        stoppableUserProcesses,
+                        `Stop all ${stoppableUserProcesses.length} visible user processes?`,
+                        "This stops every visible user process in the current table view.",
+                      )
+                    }
+                  >
+                    Stop all visible user processes
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setRowSelection({})}
+              >
+                Clear selection
+              </Button>
+            </div>
+          )}
 
-      <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-        <table
-          ref={tableRef}
-          className="caption-bottom text-sm"
-          style={{
-            width: tableWidth,
-            minWidth: "100%",
-            tableLayout: "fixed",
-          }}
-        >
-          <colgroup>
-            {table.getAllLeafColumns().map((column) => (
-              <col
-                key={column.id}
-                ref={(element) => {
-                  colRefs.current[column.id] = element;
-                }}
-                style={{ width: column.getSize() }}
-              />
-            ))}
-          </colgroup>
-          <thead className="sticky top-0 z-20 bg-background [&_tr]:border-b">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id} className="border-b">
-                {headerGroup.headers.map((header, index) => {
-                  const isFirst = index === 0;
-                  const isLast = index === columnCount - 1;
-                  const stickyClass = isFirst
-                    ? stickyCellClass("corner-left")
-                    : isLast
-                      ? stickyCellClass("corner-right")
-                      : "sticky top-0 z-20 bg-background";
-
-                  return (
-                    <th
-                      key={header.id}
-                      className={cn(
-                        "relative h-10 border-r px-2 text-left align-middle font-medium whitespace-nowrap text-foreground last:border-r-0",
-                        stickyClass,
-                      )}
-                    >
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                      {header.column.getCanResize() && (
-                        <div
-                          onPointerDown={(event) => handleResizePointerDown(event, header)}
-                          onDoubleClick={() => handleResizeReset(header.column.id)}
-                          className="group/resize absolute top-0 -right-1 z-40 h-full w-2 cursor-col-resize touch-none select-none"
-                        >
-                          <div
-                            className={cn(
-                              "absolute top-0 left-1/2 h-full w-px -translate-x-1/2 bg-border opacity-0 transition-opacity group-hover/resize:opacity-100",
-                              header.column.getIsResizing() && "bg-primary opacity-100",
-                            )}
-                          />
-                        </div>
-                      )}
-                    </th>
-                  );
-                })}
-              </tr>
-            ))}
-          </thead>
-          <tbody className="[&_tr:last-child]:border-0">
-            {tableRows.length ? (
-              tableRows.map((item) => {
-                if (item.kind === "group") {
-                  return (
-                    <PortTableGroupRow
-                      key={item.id}
-                      id={item.id}
-                      label={item.label}
-                      columnCount={columnCount}
-                    />
-                  );
-                }
-
-                return (
-                  <PortTableDataRow
-                    key={item.id}
-                    row={item.row}
-                    isSelected={item.row.getIsSelected()}
-                    canSelect={item.row.getCanSelect()}
-                    change={rowChanges.get(item.row.original.pid)}
-                    columnCount={columnCount}
+          <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+            <table
+              ref={tableRef}
+              className="caption-bottom text-sm"
+              style={{
+                width: tableWidth,
+                minWidth: "100%",
+                tableLayout: "fixed",
+              }}
+            >
+              <colgroup>
+                {table.getAllLeafColumns().map((column) => (
+                  <col
+                    key={column.id}
+                    ref={(element) => {
+                      colRefs.current[column.id] = element;
+                    }}
+                    style={{ width: column.getSize() }}
                   />
-                );
-              })
-            ) : (
-              <tr className="border-b">
-                <td colSpan={columnCount} className="h-24 p-2 text-center align-middle">
-                  {processes.length > 0 ? (
-                    <span className="text-muted-foreground">
-                      No listeners match your current search or filters.
-                    </span>
-                  ) : (
-                    "No listening ports found."
-                  )}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      </div>
+                ))}
+              </colgroup>
+              <thead className="sticky top-0 z-20 bg-background [&_tr]:border-b">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <tr key={headerGroup.id} className="border-b">
+                    {headerGroup.headers.map((header, index) => {
+                      const isFirst = index === 0;
+                      const isLast = index === columnCount - 1;
+                      const stickyClass = isFirst
+                        ? stickyCellClass("corner-left")
+                        : isLast
+                          ? stickyCellClass("corner-right")
+                          : "sticky top-0 z-20 bg-background";
 
-      <StopDialog
-        processes={stopTargets}
-        open={stopTargets.length > 0}
-        onOpenChange={(open) => {
-          if (!open) {
-            setStopTargets([]);
-            setStopDialogTitle(undefined);
-            setStopDialogDescription(undefined);
+                      return (
+                        <th
+                          key={header.id}
+                          className={cn(
+                            "relative h-10 border-r px-2 text-left align-middle font-medium whitespace-nowrap text-foreground last:border-r-0",
+                            stickyClass,
+                          )}
+                        >
+                          {header.isPlaceholder
+                            ? null
+                            : flexRender(
+                                header.column.columnDef.header,
+                                header.getContext(),
+                              )}
+                          {header.column.getCanResize() && (
+                            <div
+                              onPointerDown={(event) =>
+                                handleResizePointerDown(event, header)
+                              }
+                              onDoubleClick={() =>
+                                handleResizeReset(header.column.id)
+                              }
+                              className="group/resize absolute top-0 -right-1 z-40 h-full w-2 cursor-col-resize touch-none select-none"
+                            >
+                              <div
+                                className={cn(
+                                  "absolute top-0 left-1/2 h-full w-px -translate-x-1/2 bg-border opacity-0 transition-opacity group-hover/resize:opacity-100",
+                                  header.column.getIsResizing() &&
+                                    "bg-primary opacity-100",
+                                )}
+                              />
+                            </div>
+                          )}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </thead>
+              <tbody className="[&_tr:last-child]:border-0">
+                {tableRows.length ? (
+                  tableRows.map((item) => {
+                    if (item.kind === "group") {
+                      return (
+                        <PortTableGroupRow
+                          key={item.id}
+                          id={item.id}
+                          label={item.label}
+                          columnCount={columnCount}
+                        />
+                      );
+                    }
+
+                    return (
+                      <PortTableDataRow
+                        key={item.id}
+                        row={item.row}
+                        isSelected={item.row.getIsSelected()}
+                        canSelect={item.row.getCanSelect()}
+                        change={rowChanges.get(item.row.original.pid)}
+                        columnCount={columnCount}
+                      />
+                    );
+                  })
+                ) : (
+                  <tr className="border-b">
+                    <td
+                      colSpan={columnCount}
+                      className="h-24 p-2 text-center align-middle"
+                    >
+                      {processes.length > 0 ? (
+                        <span className="text-muted-foreground">
+                          No listeners match your current search or filters.
+                        </span>
+                      ) : (
+                        "No listening ports found."
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <StopDialog
+          processes={stopTargets}
+          open={stopTargets.length > 0}
+          onOpenChange={(open) => {
+            if (!open) {
+              setStopTargets([]);
+              setStopDialogTitle(undefined);
+              setStopDialogDescription(undefined);
+            }
+          }}
+          title={stopDialogTitle}
+          description={stopDialogDescription}
+          requireDoubleConfirm={
+            stopTargets.some((process) => process.is_system_service) &&
+            settings.allowSystemProcessActions
           }
-        }}
-        title={stopDialogTitle}
-        description={stopDialogDescription}
-        requireDoubleConfirm={
-          stopTargets.some((process) => process.is_system_service) &&
-          settings.allowSystemProcessActions
-        }
-        onStopped={() => {
-          setRowSelection({});
-          onRefresh();
-        }}
-      />
+          onStopped={() => {
+            setRowSelection({});
+            onRefresh();
+          }}
+        />
 
-      <DeleteDialog
-        target={deleteTarget}
-        open={deleteTarget !== null}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        allowSystemProcessActions={settings.allowSystemProcessActions}
-        onComplete={onRefresh}
-      />
+        <DeleteDialog
+          target={deleteTarget}
+          open={deleteTarget !== null}
+          onOpenChange={(open) => !open && setDeleteTarget(null)}
+          allowSystemProcessActions={settings.allowSystemProcessActions}
+          onComplete={onRefresh}
+        />
 
-      <Dialog
-        open={historyPort !== null}
-        onOpenChange={(open) => !open && setHistoryPort(null)}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              Port {historyPort} history
-            </DialogTitle>
-            <DialogDescription>
-              Occupied and freed events recorded during scans.
-            </DialogDescription>
-          </DialogHeader>
-          {historyPort !== null && <PortHistoryTimeline port={historyPort} />}
-        </DialogContent>
-      </Dialog>
-    </TooltipProvider>
+        <Dialog
+          open={historyPort !== null}
+          onOpenChange={(open) => !open && setHistoryPort(null)}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Port {historyPort} history</DialogTitle>
+              <DialogDescription>
+                Occupied and freed events recorded during scans.
+              </DialogDescription>
+            </DialogHeader>
+            {historyPort !== null && <PortHistoryTimeline port={historyPort} />}
+          </DialogContent>
+        </Dialog>
+      </TooltipProvider>
     </OpenMenuProvider>
   );
 }

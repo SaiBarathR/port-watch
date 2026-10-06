@@ -77,7 +77,10 @@ export function filterPortProcesses(
   const searchHaystacks =
     trimmedSearch && searchField === "all"
       ? new Map(
-          processes.map((process) => [process.pid, buildSearchHaystack(process)]),
+          processes.map((process) => [
+            process.pid,
+            buildSearchHaystack(process),
+          ]),
         )
       : new Map<number, string>();
 

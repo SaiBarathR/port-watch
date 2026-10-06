@@ -27,8 +27,8 @@ pub fn resolve_existing_path(path: &str) -> Result<PathBuf, String> {
         return Err(format!("Path does not exist: {trimmed}"));
     }
 
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|err| format!("Failed to inspect path: {err}"))?;
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|err| format!("Failed to inspect path: {err}"))?;
     if metadata.file_type().is_symlink() {
         return Err("Symlinks cannot be deleted".into());
     }
@@ -140,7 +140,6 @@ pub fn assert_system_actions_allowed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::path::Path;
 
     fn not_protected(_: &Path) -> bool {
@@ -171,20 +170,19 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn rejects_symlinks() {
+        use std::fs;
+
         let temp = std::env::temp_dir().join("port-watch-symlink-test");
         let target = temp.join("target");
         let link = temp.join("link");
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&target).unwrap();
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        #[cfg(unix)]
-        {
-            let err = resolve_delete_path(link.to_str().unwrap(), not_protected).unwrap_err();
-            assert!(err.contains("Symlinks"));
-        }
+        let err = resolve_delete_path(link.to_str().unwrap(), not_protected).unwrap_err();
+        assert!(err.contains("Symlinks"));
 
         let _ = fs::remove_dir_all(&temp);
     }

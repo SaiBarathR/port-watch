@@ -199,11 +199,7 @@ fn spawn_poller_loop(app: AppHandle, generation: u64) {
             let (interval_ms, current_generation, paused) = {
                 let poller = app.state::<PortPoller>();
                 let inner = poller.lock_inner();
-                (
-                    inner.interval_ms,
-                    inner.generation,
-                    inner.refresh_paused,
-                )
+                (inner.interval_ms, inner.generation, inner.refresh_paused)
             };
 
             if current_generation != generation {
@@ -275,10 +271,7 @@ async fn run_scan(app: &AppHandle) {
                 let last = poller.lock_inner().last_result.clone();
                 last
             };
-            (
-                previous,
-                Some(format!("Scan task failed: {err}")),
-            )
+            (previous, Some(format!("Scan task failed: {err}")))
         }
     };
 

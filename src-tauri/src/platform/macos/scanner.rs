@@ -65,15 +65,11 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
         let ps = ps_info.get(&pid).cloned().unwrap_or_default();
         let path_info = paths.get(&pid).cloned().unwrap_or_default();
         let script_path = extract_script_path(&ps.command_line, &name);
-        let project_root = infer_project_root(
-            if !path_info.working_directory.is_empty() {
-                &path_info.working_directory
-            } else {
-                script_path
-                    .as_deref()
-                    .unwrap_or(&path_info.executable_path)
-            },
-        );
+        let project_root = infer_project_root(if !path_info.working_directory.is_empty() {
+            &path_info.working_directory
+        } else {
+            script_path.as_deref().unwrap_or(&path_info.executable_path)
+        });
 
         let mut process = PortProcess {
             pid,
@@ -316,9 +312,18 @@ fn parse_etime(value: &str) -> u64 {
     };
 
     let mut parts = clock.split(':').rev();
-    let seconds = parts.next().and_then(|p| p.parse::<u64>().ok()).unwrap_or(0);
-    let minutes = parts.next().and_then(|p| p.parse::<u64>().ok()).unwrap_or(0);
-    let hours = parts.next().and_then(|p| p.parse::<u64>().ok()).unwrap_or(0);
+    let seconds = parts
+        .next()
+        .and_then(|p| p.parse::<u64>().ok())
+        .unwrap_or(0);
+    let minutes = parts
+        .next()
+        .and_then(|p| p.parse::<u64>().ok())
+        .unwrap_or(0);
+    let hours = parts
+        .next()
+        .and_then(|p| p.parse::<u64>().ok())
+        .unwrap_or(0);
 
     days * 86_400 + hours * 3_600 + minutes * 60 + seconds
 }
@@ -426,9 +431,8 @@ mod tests {
 
     #[test]
     fn parse_ps_line_with_padded_columns() {
-        let (pid, info) =
-            parse_ps_line("  501 root      1-02:03:04 node server.js --port 3000")
-                .expect("line should parse");
+        let (pid, info) = parse_ps_line("  501 root      1-02:03:04 node server.js --port 3000")
+            .expect("line should parse");
         assert_eq!(pid, 501);
         assert_eq!(info.user, "root");
         assert_eq!(info.uptime_seconds, 93_784);

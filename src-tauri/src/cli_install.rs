@@ -126,9 +126,8 @@ fn platform_install_cli_to_path() -> Result<(), String> {
 
     if let Some(parent) = link_path.parent() {
         if !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|err| {
-                format!("Failed to create {}: {err}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("Failed to create {}: {err}", parent.display()))?;
         }
     }
 
@@ -281,8 +280,7 @@ fn platform_install_cli_to_path() -> Result<(), String> {
             .map_err(|err| format!("Failed to create {}: {err}", parent.display()))?;
     }
 
-    std::fs::copy(&app_exe, &link_path)
-        .map_err(|err| format!("Failed to copy CLI shim: {err}"))?;
+    std::fs::copy(&app_exe, &link_path).map_err(|err| format!("Failed to copy CLI shim: {err}"))?;
 
     add_windows_cli_to_user_path(link_path.parent().unwrap())
 }
@@ -314,6 +312,7 @@ fn link_entry_exists(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()
 }
 
+#[cfg(unix)]
 fn read_link_target(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     if !metadata.file_type().is_symlink() {
@@ -325,6 +324,7 @@ fn read_link_target(path: &Path) -> Option<String> {
         .map(|target| target.to_string_lossy().into_owned())
 }
 
+#[cfg(unix)]
 fn canonicalize_if_exists(path: &str) -> Option<PathBuf> {
     let path = PathBuf::from(path);
     if path.exists() {
@@ -334,6 +334,7 @@ fn canonicalize_if_exists(path: &str) -> Option<PathBuf> {
     }
 }
 
+#[cfg(unix)]
 fn paths_refer_to_same_file(left: &str, right: &Path) -> bool {
     match (
         canonicalize_if_exists(left),

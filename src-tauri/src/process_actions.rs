@@ -6,9 +6,7 @@ use crate::poller::PortPoller;
 
 pub fn is_system_service_for_pid(app: &AppHandle, pid: u32) -> bool {
     let poller = app.state::<PortPoller>();
-    poller
-        .is_system_service(pid)
-        .unwrap_or(true)
+    poller.is_system_service(pid).unwrap_or(true)
 }
 
 pub fn assert_process_action_allowed(app: &AppHandle, pid: u32) -> Result<(), String> {

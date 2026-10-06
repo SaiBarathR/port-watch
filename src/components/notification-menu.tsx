@@ -35,6 +35,9 @@ export function NotificationMenu({
   onShowChangeToastsChange,
   onChangeToastsMutedUntilChange,
 }: NotificationMenuProps) {
+  // A mute runs out with the clock, not with a state change, so the clock
+  // is read on every render.
+  // eslint-disable-next-line react-hooks/purity
   const status = changeToastStatus(settings, Date.now());
   const statusLabel =
     status === "muted" && settings.changeToastsMutedUntil !== null
@@ -70,7 +73,9 @@ export function NotificationMenu({
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {status === "muted" && (
-          <DropdownMenuItem onClick={() => onChangeToastsMutedUntilChange(null)}>
+          <DropdownMenuItem
+            onClick={() => onChangeToastsMutedUntilChange(null)}
+          >
             <BellRingIcon data-icon="inline-start" />
             Unmute
           </DropdownMenuItem>

@@ -399,7 +399,9 @@ fn confirm_stop(app: &AppHandle, process: Option<&PortProcess>) -> bool {
     let name = process.map(|p| p.name.as_str()).unwrap_or("this process");
     let is_system = process.map(|p| p.is_system_service).unwrap_or(false);
     let message = if is_system {
-        format!("{name} is a system service. Stopping it may affect your system.\n\nStop it anyway?")
+        format!(
+            "{name} is a system service. Stopping it may affect your system.\n\nStop it anyway?"
+        )
     } else {
         format!("Stop {name}? This terminates the process and frees its ports.")
     };

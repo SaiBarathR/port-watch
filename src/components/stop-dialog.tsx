@@ -15,7 +15,11 @@ import {
 import { Button } from "@/components/ui/button";
 import type { PortProcess } from "@/lib/types";
 import { formatPorts } from "@/lib/types";
-import { stopMultipleProcessDescription, stopProcessDescription, systemStopWarning } from "@/lib/platform";
+import {
+  stopMultipleProcessDescription,
+  stopProcessDescription,
+  systemStopWarning,
+} from "@/lib/platform";
 
 interface StopDialogProps {
   processes: PortProcess[];
@@ -111,7 +115,9 @@ export function StopDialog({
   }
 
   const single = processes.length === 1 ? processes[0] : null;
-  const hasSystemService = processes.some((process) => process.is_system_service);
+  const hasSystemService = processes.some(
+    (process) => process.is_system_service,
+  );
   const dialogTitle =
     title ??
     (single
@@ -135,7 +141,8 @@ export function StopDialog({
           <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md border bg-muted/20 p-3 text-sm">
             {processes.map((process) => (
               <li key={process.pid} className="truncate font-mono">
-                {formatPorts(process.ports)} — {process.name} (PID {process.pid})
+                {formatPorts(process.ports)} — {process.name} (PID {process.pid}
+                )
               </li>
             ))}
           </ul>

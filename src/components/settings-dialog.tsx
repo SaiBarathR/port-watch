@@ -49,10 +49,7 @@ import {
   uninstallCliFromPath,
   type CliInstallStatus,
 } from "@/lib/cli-install";
-import {
-  type AppSettings,
-  type RefreshInterval,
-} from "@/lib/types";
+import { type AppSettings, type RefreshInterval } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const THEME_OPTIONS: {
@@ -97,7 +94,9 @@ function SettingRow({
         )}
       </div>
       {children ? (
-        <div className={cn("min-w-0", !stacked && "sm:justify-self-end")}>{children}</div>
+        <div className={cn("min-w-0", !stacked && "sm:justify-self-end")}>
+          {children}
+        </div>
       ) : null}
     </div>
   );
@@ -158,9 +157,14 @@ export function SettingsDialog({
   const [open, setOpen] = useState(false);
   const [watchedPortInput, setWatchedPortInput] = useState("");
   const [historyVersion, setHistoryVersion] = useState(0);
-  const [selectedHistoryPort, setSelectedHistoryPort] = useState<number | null>(null);
+  const [selectedHistoryPort, setSelectedHistoryPort] = useState<number | null>(
+    null,
+  );
   const [cliStatus, setCliStatus] = useState<CliInstallStatus | null>(null);
   const [cliBusy, setCliBusy] = useState(false);
+  // A mute runs out with the clock, not with a state change, so the clock
+  // is read on every render.
+  // eslint-disable-next-line react-hooks/purity
   const toastsMuted = changeToastStatus(settings, Date.now()) === "muted";
 
   useEffect(() => {
@@ -228,7 +232,9 @@ export function SettingsDialog({
       setWatchedPortInput("");
       return;
     }
-    onWatchedPortsChange([...settings.watchedPorts, port].sort((a, b) => a - b));
+    onWatchedPortsChange(
+      [...settings.watchedPorts, port].sort((a, b) => a - b),
+    );
     setWatchedPortInput("");
   };
 
@@ -259,7 +265,10 @@ export function SettingsDialog({
                   onRefreshIntervalChange(Number(v) as RefreshInterval)
                 }
               >
-                <SelectTrigger size="sm" className="w-full min-w-[8.5rem] sm:w-[8.5rem]">
+                <SelectTrigger
+                  size="sm"
+                  className="w-full min-w-[8.5rem] sm:w-[8.5rem]"
+                >
                   <SelectValue placeholder="Auto-refresh" />
                 </SelectTrigger>
                 <SelectContent>
@@ -432,7 +441,12 @@ export function SettingsDialog({
                     }
                   }}
                 />
-                <Button type="button" size="sm" variant="outline" onClick={addWatchedPort}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={addWatchedPort}
+                >
                   Add
                 </Button>
               </div>
@@ -461,8 +475,8 @@ export function SettingsDialog({
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">Per-port timeline</p>
                   <p className="text-xs text-muted-foreground">
-                    First and last seen for each port, grouped by today, yesterday,
-                    and earlier.
+                    First and last seen for each port, grouped by today,
+                    yesterday, and earlier.
                   </p>
                 </div>
                 <Button
@@ -533,9 +547,8 @@ export function SettingsDialog({
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">Install CLI to PATH</p>
                   <p className="text-xs text-muted-foreground">
-                    Run{" "}
-                    <span className="font-mono">port-watch check 3000</span> from
-                    Terminal and CI scripts.
+                    Run <span className="font-mono">port-watch check 3000</span>{" "}
+                    from Terminal and CI scripts.
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {cliStatus?.pointsToApp

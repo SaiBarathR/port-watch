@@ -12,9 +12,7 @@ pub mod scanner;
 mod tray;
 
 use app_settings::AppSettings;
-use commands::cli_install::{
-    get_cli_install_status, install_cli_to_path, uninstall_cli_from_path,
-};
+use commands::cli_install::{get_cli_install_status, install_cli_to_path, uninstall_cli_from_path};
 use commands::filesystem::{delete_permanently, move_to_trash, open_in_finder};
 use commands::notifications::send_notification;
 use commands::ports::list_listening_ports;
@@ -27,9 +25,7 @@ use poller::{
     get_listening_ports, set_refresh_paused, set_scan_settings, start_poller, trigger_port_scan,
     PortPoller,
 };
-use tray::{
-    set_menu_bar_mode, setup_tray, show_full_window_command, update_tray_count,
-};
+use tray::{set_menu_bar_mode, setup_tray, show_full_window_command, update_tray_count};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

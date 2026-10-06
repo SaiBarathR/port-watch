@@ -22,9 +22,7 @@ pub fn extract_script_path(command_line: &str, process_name: &str) -> Option<Str
         if cleaned.starts_with('-') {
             continue;
         }
-        if (cleaned.contains('/') || cleaned.contains('\\'))
-            && !cleaned.starts_with("/dev/")
-        {
+        if (cleaned.contains('/') || cleaned.contains('\\')) && !cleaned.starts_with("/dev/") {
             return Some(cleaned.to_string());
         }
     }
@@ -75,7 +73,9 @@ pub fn process_names_match(current: &str, expected: &str) -> bool {
             .next()
             .unwrap_or(name)
             .to_ascii_lowercase();
-        base.strip_suffix(".exe").map(str::to_string).unwrap_or(base)
+        base.strip_suffix(".exe")
+            .map(str::to_string)
+            .unwrap_or(base)
     }
 
     let current = normalize(current);
@@ -98,6 +98,8 @@ pub fn process_names_match(current: &str, expected: &str) -> bool {
     (15..=16).contains(&short.len()) && long.starts_with(short.as_str())
 }
 
+// Windows gets structured addresses from PowerShell and never parses one.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub fn parse_address_port(value: &str, protocol: &str) -> Option<crate::scanner::PortBinding> {
     let value = value.trim();
     if value.is_empty() {
@@ -190,7 +192,10 @@ mod tests {
 
     #[test]
     fn extract_script_path_ignores_non_interpreters() {
-        assert_eq!(extract_script_path("/usr/sbin/nginx -g daemon", "nginx"), None);
+        assert_eq!(
+            extract_script_path("/usr/sbin/nginx -g daemon", "nginx"),
+            None
+        );
     }
 
     #[test]

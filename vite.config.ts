@@ -17,6 +17,12 @@ export default defineConfig(async () => ({
   test: {
     environment: "node",
   },
+  build: {
+    // The one chunk is about 535 kB (165 kB gzipped). Rollup warns at 500 kB
+    // with the web in mind; the app's webview reads this file from disk, so
+    // splitting it would add requests and save nothing.
+    chunkSizeWarningLimit: 700,
+  },
   clearScreen: false,
   server: {
     port: 1420,

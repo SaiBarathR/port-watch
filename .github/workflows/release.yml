@@ -79,6 +79,9 @@ jobs:
           args: ${{ matrix.args }}
           tagName: v__VERSION__
           releaseName: "Port Watch v__VERSION__"
-          releaseBody: "See assets below to download for your platform."
+          releaseBody: "Downloads for macOS, Windows and Linux are under Assets below."
+          # What changed, from the pull requests merged since the last
+          # release; added after the line above.
+          generateReleaseNotes: true
           releaseDraft: true
           prerelease: false

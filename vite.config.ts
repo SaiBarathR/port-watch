@@ -15,7 +15,21 @@ export default defineConfig(async () => ({
     },
   },
   test: {
+    // Component tests ask for jsdom at the top of their file.
     environment: "node",
+    setupFiles: ["src/test/setup.ts"],
+    testTimeout: 20_000,
+    // Reported by `npm run test:coverage` and in CI, and not enforced.
+    coverage: {
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/**/*.test.{ts,tsx}",
+        "src/**/*.d.ts",
+        "src/test/**",
+        "src/main.tsx",
+      ],
+      reporter: ["text"],
+    },
   },
   build: {
     // The one chunk is about 535 kB (165 kB gzipped). Rollup warns at 500 kB

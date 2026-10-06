@@ -75,6 +75,16 @@ npm run tauri build
 
 Release bundles are written to `src-tauri/target/release/bundle/` (`.app` on macOS, `.deb`/AppImage on Linux, `.msi`/`.exe` on Windows).
 
+## Tests
+
+```bash
+npm test                  # the window: its logic, and the whole app against a stand-in backend
+npm run test:coverage     # the same, with a table of what the tests reach
+cd src-tauri && cargo test
+```
+
+The Rust tests start real processes and run the system's own tools (`lsof`, `ss`, PowerShell), so each platform's code is only tested on that platform. CI runs all three, and writes a coverage table to each run's summary without enforcing a number.
+
 ## Releases
 
 Pre-built installers are published on [GitHub Releases](https://github.com/SaiBarathR/port-watch/releases):

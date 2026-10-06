@@ -132,3 +132,61 @@ jobs:
           if ($withUdp -ne 1) { throw "expected exit code 1 for UDP port $udpPort with --udp, got $withUdp" }
           if ($withoutUdp -ne 0) { throw "expected exit code 0 for UDP port $udpPort without --udp, got $withoutUdp" }
           exit 0
+
+  # What the tests reach, for reading: the tables go to the run's summary
+  # page. No number is enforced, and a failure here does not fail the run.
+  coverage:
+    runs-on: macos-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # An instrumented build shares nothing with the ordinary one.
+          shared-key: coverage
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend coverage
+        shell: bash
+        run: |
+          NO_COLOR=1 npm run test:coverage | tee frontend-coverage.txt
+          {
+            echo "## Frontend coverage"
+            echo '```'
+            sed -n '/^-.*|/,$p' frontend-coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The Tauri crate will not compile without the built frontend.
+      - name: Build frontend
+        run: npm run build
+
+      # Only the code for this platform: the rest is not compiled here.
+      - name: Rust coverage
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          cargo llvm-cov --summary-only | tee ../rust-coverage.txt
+          {
+            echo "## Rust coverage (macOS code)"
+            echo '```'
+            sed -n '/^Filename/,$p' ../rust-coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

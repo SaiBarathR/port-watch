@@ -330,9 +330,11 @@ fn batch_path(exe: &str, env: &[(&str, String)]) -> Option<String> {
     })
 }
 
+// Delayed expansion is inherited from whoever runs the shim (`cmd /V:ON`, a
+// script that enabled it) and would eat a `!` in the path or the arguments.
 #[cfg(any(target_os = "windows", test))]
 fn shim_contents(batch_path: &str) -> String {
-    format!("@echo off\r\n\"{batch_path}\" %*\r\n")
+    format!("@echo off\r\nsetlocal DisableDelayedExpansion\r\n\"{batch_path}\" %*\r\n")
 }
 
 #[cfg(target_os = "windows")]
@@ -368,27 +370,33 @@ pub fn cli_link_path() -> Result<String, String> {
 
 #[cfg(target_os = "windows")]
 pub fn get_cli_install_status() -> Result<CliInstallStatus, String> {
-    let shim = shim_dir().join(SHIM_NAME);
-    let legacy_copy = shim_dir().join(LEGACY_COPY_NAME);
-    let link_path = shim.to_string_lossy().into_owned();
+    Ok(status_in(&shim_dir(), expected_shim().ok().as_deref()))
+}
 
-    if let Ok(contents) = std::fs::read_to_string(&shim) {
-        return Ok(CliInstallStatus {
+// `expected` is the shim this app would write, when it can write one.
+#[cfg(target_os = "windows")]
+fn status_in(dir: &Path, expected: Option<&str>) -> CliInstallStatus {
+    let shim = dir.join(SHIM_NAME);
+    let legacy_copy = dir.join(LEGACY_COPY_NAME);
+    let link_path = shim.to_string_lossy().into_owned();
+    let has_legacy_copy = legacy_copy.exists();
+
+    match std::fs::read_to_string(&shim) {
+        Ok(contents) => CliInstallStatus {
             installed: true,
             target_path: Some(link_path.clone()),
-            points_to_app: expected_shim().is_ok_and(|expected| expected == contents),
+            // A leftover copy still wins: `port-watch` finds the .exe first.
+            points_to_app: !has_legacy_copy && expected == Some(contents.as_str()),
             link_path,
-        });
+        },
+        // Installed by an earlier version: on PATH, but not this app's shim.
+        Err(_) => CliInstallStatus {
+            installed: has_legacy_copy,
+            link_path,
+            target_path: has_legacy_copy.then(|| legacy_copy.to_string_lossy().into_owned()),
+            points_to_app: false,
+        },
     }
-
-    // Installed by an earlier version: on PATH, but not this app's shim.
-    let has_legacy_copy = legacy_copy.exists();
-    Ok(CliInstallStatus {
-        installed: has_legacy_copy,
-        link_path,
-        target_path: has_legacy_copy.then(|| legacy_copy.to_string_lossy().into_owned()),
-        points_to_app: false,
-    })
 }
 
 #[cfg(target_os = "windows")]
@@ -396,30 +404,38 @@ pub fn install_cli_to_path() -> Result<(), String> {
     let contents = expected_shim()?;
     let dir = shim_dir();
 
-    std::fs::create_dir_all(&dir)
+    write_shim_in(&dir, &contents)?;
+    add_windows_cli_to_user_path(&dir)
+}
+
+// The old copy goes first: if it cannot be removed (still running, say) it
+// would shadow the shim, so nothing is changed and the old CLI keeps working.
+#[cfg(target_os = "windows")]
+fn write_shim_in(dir: &Path, contents: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir)
         .map_err(|err| format!("Failed to create {}: {err}", dir.display()))?;
-    std::fs::write(dir.join(SHIM_NAME), contents)
-        .map_err(|err| format!("Failed to write the CLI shim: {err}"))?;
     remove_if_present(&dir.join(LEGACY_COPY_NAME))
         .map_err(|err| format!("Failed to remove the old CLI copy: {err}"))?;
-
-    add_windows_cli_to_user_path(&dir)
+    std::fs::write(dir.join(SHIM_NAME), contents)
+        .map_err(|err| format!("Failed to write the CLI shim: {err}"))
 }
 
 #[cfg(target_os = "windows")]
 pub fn uninstall_cli_from_path() -> Result<(), String> {
     let dir = shim_dir();
-    let shim = dir.join(SHIM_NAME);
-    let legacy_copy = dir.join(LEGACY_COPY_NAME);
-
-    if !shim.exists() && !legacy_copy.exists() {
+    if !dir.join(SHIM_NAME).exists() && !dir.join(LEGACY_COPY_NAME).exists() {
         return Ok(());
     }
 
     let _ = remove_windows_cli_from_user_path(&dir);
+    remove_shim_from(&dir)
+}
 
-    remove_if_present(&shim).map_err(|err| format!("Failed to remove the CLI shim: {err}"))?;
-    remove_if_present(&legacy_copy)
+#[cfg(target_os = "windows")]
+fn remove_shim_from(dir: &Path) -> Result<(), String> {
+    remove_if_present(&dir.join(SHIM_NAME))
+        .map_err(|err| format!("Failed to remove the CLI shim: {err}"))?;
+    remove_if_present(&dir.join(LEGACY_COPY_NAME))
         .map_err(|err| format!("Failed to remove the old CLI copy: {err}"))
 }
 
@@ -542,7 +558,7 @@ mod tests {
     fn shim_runs_the_app_with_every_argument() {
         assert_eq!(
             shim_contents(r"%LOCALAPPDATA%\Port Watch\port-watch.exe"),
-            "@echo off\r\n\"%LOCALAPPDATA%\\Port Watch\\port-watch.exe\" %*\r\n"
+            "@echo off\r\nsetlocal DisableDelayedExpansion\r\n\"%LOCALAPPDATA%\\Port Watch\\port-watch.exe\" %*\r\n"
         );
         assert!(SHIM_NAME.ends_with(".cmd"));
     }
@@ -563,6 +579,117 @@ mod tests {
             .unwrap();
 
         assert_eq!(status.code(), Some(3));
+    }
+
+    // A caller with delayed expansion on must not change what the shim runs.
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn shim_survives_delayed_expansion_in_the_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        let odd = dir.path().join("Port!Watch");
+        std::fs::create_dir(&odd).unwrap();
+        let target = odd.join("exit-code.cmd");
+        std::fs::write(&target, "@exit /b 7\r\n").unwrap();
+        let shim = dir.path().join(SHIM_NAME);
+        std::fs::write(
+            &shim,
+            shim_contents(&batch_path(&target.to_string_lossy(), &[]).unwrap()),
+        )
+        .unwrap();
+
+        let status = std::process::Command::new(std::env::var("ComSpec").unwrap())
+            .args(["/V:ON", "/C"])
+            .arg(&shim)
+            .status()
+            .unwrap();
+
+        assert_eq!(status.code(), Some(7));
+    }
+
+    #[cfg(target_os = "windows")]
+    mod windows_shim {
+        use super::super::{
+            remove_shim_from, status_in, write_shim_in, LEGACY_COPY_NAME, SHIM_NAME,
+        };
+        use std::fs;
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const SHIM: &str = "@echo off\r\n\"C:\\App\\port-watch.exe\" %*\r\n";
+
+        #[test]
+        fn installing_replaces_the_copy_an_earlier_version_left() {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join(LEGACY_COPY_NAME), "old").unwrap();
+            let before = status_in(dir.path(), Some(SHIM));
+            assert!(before.installed && !before.points_to_app);
+
+            write_shim_in(dir.path(), SHIM).unwrap();
+
+            assert!(!dir.path().join(LEGACY_COPY_NAME).exists());
+            assert_eq!(
+                fs::read_to_string(dir.path().join(SHIM_NAME)).unwrap(),
+                SHIM
+            );
+            let after = status_in(dir.path(), Some(SHIM));
+            assert!(after.installed && after.points_to_app);
+        }
+
+        // `port-watch` resolves to the .exe before the .cmd.
+        #[test]
+        fn a_leftover_copy_means_the_shim_is_not_what_runs() {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join(SHIM_NAME), SHIM).unwrap();
+            fs::write(dir.path().join(LEGACY_COPY_NAME), "old").unwrap();
+
+            let status = status_in(dir.path(), Some(SHIM));
+            assert!(status.installed && !status.points_to_app);
+        }
+
+        #[test]
+        fn a_shim_for_another_install_is_not_this_app() {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(
+                dir.path().join(SHIM_NAME),
+                "@echo off\r\n\"D:\\Other\\port-watch.exe\" %*\r\n",
+            )
+            .unwrap();
+
+            let status = status_in(dir.path(), Some(SHIM));
+            assert!(status.installed && !status.points_to_app);
+            assert!(!status_in(dir.path(), None).points_to_app);
+        }
+
+        #[test]
+        fn nothing_changes_when_the_old_copy_cannot_be_removed() {
+            let dir = tempfile::tempdir().unwrap();
+            let legacy = dir.path().join(LEGACY_COPY_NAME);
+            fs::write(&legacy, "old").unwrap();
+            // Held open without delete sharing, as a running program would be.
+            let in_use = fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&legacy)
+                .unwrap();
+
+            let err = write_shim_in(dir.path(), SHIM).unwrap_err();
+            drop(in_use);
+
+            assert!(err.contains("old CLI copy"), "{err}");
+            assert!(legacy.exists());
+            assert!(!dir.path().join(SHIM_NAME).exists());
+        }
+
+        #[test]
+        fn uninstalling_removes_the_shim_and_any_old_copy() {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join(SHIM_NAME), SHIM).unwrap();
+            fs::write(dir.path().join(LEGACY_COPY_NAME), "old").unwrap();
+
+            remove_shim_from(dir.path()).unwrap();
+
+            assert!(!status_in(dir.path(), Some(SHIM)).installed);
+            assert_eq!(remove_shim_from(dir.path()), Ok(()));
+        }
     }
 
     #[cfg(target_os = "macos")]

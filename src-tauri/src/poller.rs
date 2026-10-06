@@ -9,7 +9,6 @@ use crate::scanner::{scan_listening_ports, PortProcess};
 pub struct PortsUpdatedPayload {
     pub processes: Vec<PortProcess>,
     pub error: Option<String>,
-    pub scanning: bool,
 }
 
 #[derive(Debug)]
@@ -91,7 +90,6 @@ fn read_cache(app: &AppHandle) -> Result<CacheSnapshot, String> {
         payload: PortsUpdatedPayload {
             processes: inner.last_result.clone(),
             error: inner.last_error.clone(),
-            scanning: in_flight && !scan_complete,
         },
         scan_complete,
         in_flight,
@@ -108,10 +106,7 @@ pub async fn get_listening_ports(app: AppHandle) -> Result<PortsUpdatedPayload, 
         let snapshot = read_cache(&app)?;
 
         if snapshot.scan_complete {
-            return Ok(PortsUpdatedPayload {
-                scanning: false,
-                ..snapshot.payload
-            });
+            return Ok(snapshot.payload);
         }
 
         if !snapshot.in_flight && !triggered_scan {
@@ -128,7 +123,6 @@ pub async fn get_listening_ports(app: AppHandle) -> Result<PortsUpdatedPayload, 
                         .error
                         .unwrap_or_else(|| "Scan timed out before completing".into()),
                 ),
-                scanning: false,
             });
         }
 
@@ -277,34 +271,10 @@ async fn run_scan(app: &AppHandle) {
         }
         inner.last_error = error.clone();
 
-        PortsUpdatedPayload {
-            processes,
-            error,
-            scanning: false,
-        }
+        PortsUpdatedPayload { processes, error }
     };
 
     let _ = app.emit("ports-updated", &payload);
 
     crate::tray::rebuild_tray_menu(app);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scan_complete_when_last_scan_at_set() {
-        let inner = PollerInner {
-            last_scan_at: Some(Instant::now()),
-            ..PollerInner::default()
-        };
-        assert!(inner.last_scan_at.is_some());
-    }
-
-    #[test]
-    fn scan_incomplete_before_first_scan() {
-        let inner = PollerInner::default();
-        assert!(inner.last_scan_at.is_none());
-    }
 }

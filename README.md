@@ -10,17 +10,17 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 
 ## Screenshots
 
-| Main window (dark) | Tray popover |
+| Main window (dark) | Main window (light) |
 | --- | --- |
-| ![Main window dark](docs/screenshots/main-window-dark.png) | ![Tray popover](docs/screenshots/tray-popover-light.png) |
+| ![Main window dark](docs/screenshots/main-window-dark.png) | ![Main window light](docs/screenshots/main-window-light.png) |
 
 | Row actions | Settings |
 | --- | --- |
 | ![Row actions menu](docs/screenshots/row-actions-menu.png) | ![Settings dialog](docs/screenshots/settings.png) |
 
-| Port search | Main window (light) |
-| --- | --- |
-| ![Port search empty state](docs/screenshots/port-search-empty.png) | ![Main window light](docs/screenshots/main-window-light.png) |
+| Port search |
+| --- |
+| ![Port search empty state](docs/screenshots/port-search-empty.png) |
 
 ## Features
 
@@ -28,7 +28,7 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 - **Process classification** — vendor/system/user listeners (Apple, Microsoft, distro packages), with filters to hide system services
 - **Port lookup** — search by port, PID, process name, path, or command; history timeline and one-click **Free port**
 - **Row actions** — stop process, open in browser, file manager, terminal, editor (Cursor / VS Code), copy path/URL, pin project, move to trash, delete permanently
-- **Compact tray popover** for quick access without opening the full window
+- **Native tray menu** — every listening dev server with open, copy URL, reveal, terminal, editor and stop, without opening the window
 - **Watched-port notifications** — in-app toasts and desktop alerts when specific ports change
 - **Notification controls** — clear all toasts, mute port change toasts for 15 minutes / 1 hour / 8 hours, or turn them off, from the toast stack or the toolbar bell (mute and on/off are also in Settings)
 - **Export snapshot** — copy filtered results as JSON or Markdown
@@ -103,9 +103,9 @@ Builds are unsigned. macOS may show Gatekeeper warnings (right-click → Open, o
 
 The full window shows all listening ports in a sortable, resizable table. Use the toolbar to search, filter user vs system listeners, export results, and open settings.
 
-### Tray popover
+### Tray menu
 
-Click the tray icon for a compact popover with quick stop, browser, and file manager actions. On macOS, enable **menu bar mode** from the tray context menu to hide the dock icon.
+Click the tray icon for a native menu of your listening dev servers. Each one has a submenu to open it in the browser, copy its URL, show its folder, open a terminal or editor there, or stop it (after a confirmation). On macOS, enable **Menu bar mode** from the same menu to hide the Dock icon.
 
 ### Port lookup
 
@@ -144,21 +144,19 @@ port-watch install-cli
 flowchart LR
   subgraph frontend [React Frontend]
     MainWindow[MainWindow]
-    Popover[TrayPopover]
     Settings[SettingsDialog]
   end
   subgraph backend [Tauri Rust Backend]
     Poller[BackgroundPoller]
     Scanner[PlatformScanner]
-    Tray[SystemTray]
+    Tray[NativeTrayMenu]
     Commands[ProcessFilesystemWorkflow]
   end
   Poller --> Scanner
   Poller -->|ports-updated event| MainWindow
-  Poller -->|ports-updated event| Popover
-  Tray --> Popover
+  Poller -->|rebuilds after each scan| Tray
   MainWindow --> Commands
-  Popover --> Commands
+  Tray --> Commands
 ```
 
 ## Safety

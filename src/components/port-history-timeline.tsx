@@ -90,13 +90,11 @@ function TimelineDayGroup({
 
 interface PortHistoryTimelineProps {
   port: number;
-  compact?: boolean;
   className?: string;
 }
 
 export function PortHistoryTimeline({
   port,
-  compact = false,
   className,
 }: PortHistoryTimelineProps) {
   const summary = getPortSummary(port);
@@ -107,17 +105,6 @@ export function PortHistoryTimeline({
       <p className={cn("text-xs text-muted-foreground", className)}>
         No history recorded for port {port} yet.
       </p>
-    );
-  }
-
-  if (compact) {
-    return (
-      <div className={cn("space-y-1", className)}>
-        <PortSummaryBar summary={summary} />
-        <p className="text-xs text-muted-foreground">
-          Last: {summary.lastKind} by {summary.lastProcessName}
-        </p>
-      </div>
     );
   }
 

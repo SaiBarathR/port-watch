@@ -19,6 +19,7 @@ import {
   appendPortHistoryEvents,
   type PortHistoryEvent,
 } from "@/lib/port-history";
+import { filterPortProcesses, normalizePortProcess } from "@/lib/port-filter";
 import { diffProcesses } from "@/lib/scan-diff";
 import type {
   AppSettings,
@@ -35,10 +36,7 @@ const CHANGE_HIGHLIGHT_MS = 10_000;
 interface PortsUpdatedPayload {
   processes: PortProcess[];
   error: string | null;
-  scanning?: boolean;
 }
-
-import { filterPortProcesses, normalizePortProcess } from "@/lib/port-filter";
 
 function parsePortsPayload(payload: unknown): PortsUpdatedPayload {
   if (Array.isArray(payload)) {
@@ -66,7 +64,6 @@ function parsePortsPayload(payload: unknown): PortsUpdatedPayload {
           )
         : [],
       error: typeof error === "string" ? error : null,
-      scanning: record.scanning === true,
     };
   }
 
@@ -250,7 +247,6 @@ export function usePortScan() {
   const [rowChanges, setRowChanges] = useState<Map<number, RowChangeKind>>(
     () => new Map(),
   );
-  const refreshPausedRef = useRef(false);
   const previousProcessesRef = useRef<PortProcess[]>([]);
   const isInitialScanRef = useRef(true);
   const changeClearTimerRef = useRef<number | null>(null);
@@ -264,7 +260,6 @@ export function usePortScan() {
   }, [settings]);
 
   const setRefreshPaused = useCallback((paused: boolean) => {
-    refreshPausedRef.current = paused;
     void invoke("set_refresh_paused", { paused }).catch(() => {
       // ignore outside Tauri
     });
@@ -427,7 +422,7 @@ export function usePortScan() {
           await invoke<PortsUpdatedPayload>("get_listening_ports"),
         );
 
-        if (cancelled || receivedLiveEvent || payload.scanning) {
+        if (cancelled || receivedLiveEvent) {
           return;
         }
 
@@ -510,12 +505,6 @@ export function usePortScan() {
 
   const userCount = processes.filter((p) => !p.is_system_service).length;
   const systemCount = processes.filter((p) => p.is_system_service).length;
-
-  useEffect(() => {
-    void invoke("update_tray_count", { userCount }).catch(() => {
-      // tray may be unavailable outside Tauri
-    });
-  }, [userCount]);
 
   useEffect(() => {
     void invoke("set_menu_bar_mode", { enabled: settings.menuBarMode }).catch(
@@ -676,13 +665,6 @@ export function usePortScan() {
     [persistSettings],
   );
 
-  const setPinnedPaths = useCallback(
-    (pinnedPaths: string[]) => {
-      persistSettings((current) => ({ ...current, pinnedPaths }));
-    },
-    [persistSettings],
-  );
-
   const togglePinnedPath = useCallback(
     (path: string) => {
       persistSettings((current) => {
@@ -795,7 +777,6 @@ export function usePortScan() {
     setGroupByDirectory,
     setShowChangeToasts,
     setChangeToastsMutedUntil,
-    setPinnedPaths,
     togglePinnedPath,
     setWatchedPorts,
     setWatchedPortNotifications,

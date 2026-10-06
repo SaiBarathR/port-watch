@@ -68,7 +68,7 @@ export function NotificationMenu({
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={dismissAllToasts}>
-          <ListXIcon data-icon="inline-start" />
+          <ListXIcon />
           Clear all notifications
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -76,7 +76,7 @@ export function NotificationMenu({
           <DropdownMenuItem
             onClick={() => onChangeToastsMutedUntilChange(null)}
           >
-            <BellRingIcon data-icon="inline-start" />
+            <BellRingIcon />
             Unmute
           </DropdownMenuItem>
         )}
@@ -88,20 +88,20 @@ export function NotificationMenu({
                 muteChangeToasts(duration.ms, onChangeToastsMutedUntilChange)
               }
             >
-              <ClockIcon data-icon="inline-start" />
+              <ClockIcon />
               Mute for {duration.label}
             </DropdownMenuItem>
           ))}
         {status === "off" ? (
           <DropdownMenuItem onClick={() => onShowChangeToastsChange(true)}>
-            <BellIcon data-icon="inline-start" />
+            <BellIcon />
             Turn on
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem
             onClick={() => turnOffChangeToasts(onShowChangeToastsChange)}
           >
-            <BellOffIcon data-icon="inline-start" />
+            <BellOffIcon />
             Turn off
           </DropdownMenuItem>
         )}

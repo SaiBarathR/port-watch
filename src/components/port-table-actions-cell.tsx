@@ -197,7 +197,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
                   handlers.openFreePortDialog(process, port);
                 }}
               >
-                <OctagonIcon data-icon="inline-start" />
+                <OctagonIcon />
                 Free port {port}
               </DropdownMenuItem>
             )}
@@ -208,7 +208,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
                 handlers.openStopDialog([process]);
               }}
             >
-              <OctagonIcon data-icon="inline-start" />
+              <OctagonIcon />
               Stop
             </DropdownMenuItem>
             {port !== null && (
@@ -218,7 +218,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
                   handlers.setHistoryPort(port);
                 }}
               >
-                <HistoryIcon data-icon="inline-start" />
+                <HistoryIcon />
                 Port {port} history
               </DropdownMenuItem>
             )}
@@ -226,7 +226,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               disabled={!folderPath}
               onClick={() => void openFolder(folderPath)}
             >
-              <FolderOpenIcon data-icon="inline-start" />
+              <FolderOpenIcon />
               Reveal in file manager
             </DropdownMenuItem>
             {port !== null && (
@@ -239,42 +239,38 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
                   Use HTTPS
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuItem onClick={() => void openInBrowser()}>
-                  <ExternalLinkIcon data-icon="inline-start" />
+                  <ExternalLinkIcon />
                   Open in Browser
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => void copyUrl()}>
-                  <LinkIcon data-icon="inline-start" />
+                  <LinkIcon />
                   Copy URL
                 </DropdownMenuItem>
               </>
             )}
             <DropdownMenuItem onClick={() => void copyPath()}>
-              <CopyIcon data-icon="inline-start" />
+              <CopyIcon />
               Copy Path
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={!editorPath}
               onClick={() => void openInTerminal(editorPath)}
             >
-              <TerminalIcon data-icon="inline-start" />
+              <TerminalIcon />
               Open in Terminal
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={!editorPath}
               onClick={() => void openInEditor(editorPath)}
             >
-              <CodeIcon data-icon="inline-start" />
+              <CodeIcon />
               Open in Editor
             </DropdownMenuItem>
             {pinnedPath && (
               <DropdownMenuItem
                 onClick={() => handlers.onTogglePinnedPath(pinnedPath)}
               >
-                {pinned ? (
-                  <PinOffIcon data-icon="inline-start" />
-                ) : (
-                  <PinIcon data-icon="inline-start" />
-                )}
+                {pinned ? <PinOffIcon /> : <PinIcon />}
                 {pinned ? "Unpin project" : "Pin project"}
               </DropdownMenuItem>
             )}
@@ -289,7 +285,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
                 handlers.setDeleteTarget({ process, mode: "trash" });
               }}
             >
-              <TrashIcon data-icon="inline-start" />
+              <TrashIcon />
               Move to Trash
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -300,7 +296,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
                 handlers.setDeleteTarget({ process, mode: "permanent" });
               }}
             >
-              <Trash2Icon data-icon="inline-start" />
+              <Trash2Icon />
               Delete Permanently
             </DropdownMenuItem>
             {process.delete_blocked && (

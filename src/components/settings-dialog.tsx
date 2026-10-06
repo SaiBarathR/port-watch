@@ -490,7 +490,7 @@ export function SettingsDialog({
                     setHistoryVersion((value) => value + 1);
                   }}
                 >
-                  <Trash2Icon data-icon="inline-start" />
+                  <Trash2Icon />
                   Clear
                 </Button>
               </div>
@@ -570,7 +570,7 @@ export function SettingsDialog({
                       disabled={cliBusy}
                       onClick={() => void handleInstallCli()}
                     >
-                      <TerminalIcon data-icon="inline-start" />
+                      <TerminalIcon />
                       {cliBusy ? "Working…" : "Install"}
                     </Button>
                   )}

@@ -300,11 +300,11 @@ export function PortToolbar({
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuLabel>Export filtered view</DropdownMenuLabel>
             <DropdownMenuItem onClick={() => void copyExport("json")}>
-              <BracesIcon data-icon="inline-start" />
+              <BracesIcon />
               Copy as JSON
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => void copyExport("markdown")}>
-              <FileTextIcon data-icon="inline-start" />
+              <FileTextIcon />
               Copy as Markdown
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -395,7 +395,7 @@ export function PortToolbar({
                 disabled={stoppableOccupants.length === 0}
                 onClick={() => onFreePort(exactPortQuery, stoppableOccupants)}
               >
-                <OctagonIcon data-icon="inline-start" />
+                <OctagonIcon />
                 Free port {exactPortQuery}
               </Button>
             </div>

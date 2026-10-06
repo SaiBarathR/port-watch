@@ -15,6 +15,7 @@ import { portHintsLabel } from "@/lib/port-hints";
 import {
   folderLabel,
   heldPorts,
+  portsThatFit,
   protocolTag,
   reachLabel,
   type HeldPort,
@@ -33,6 +34,8 @@ import { cn } from "@/lib/utils";
 // flexRender mounts each cell renderer as a component: a new function would
 // remount the cell, and an open row menu would lose its keyboard focus.
 export interface PortTableMeta {
+  /** How wide the port column is, in px. */
+  portsColumnWidth: number;
   rowChanges: Map<string, RowChangeKind>;
   canStop: (process: PortProcess) => boolean;
   actionSettings: Pick<
@@ -65,9 +68,6 @@ function changeBadge(change: RowChangeKind | undefined) {
     </Badge>
   );
 }
-
-// How many ports a row spells out before it counts the rest.
-const PORTS_IN_ROW = 2;
 
 const REACH_ICON = {
   everyone: GlobeIcon,
@@ -116,15 +116,32 @@ function PortNumber({ held }: { held: HeldPort }) {
   );
 }
 
+// What is in a port cell beside the ports: its padding, and the badge of a
+// row that just changed.
+const CELL_PADDING = 16;
+const CHANGE_BADGE = 72;
+
+function portText(held: HeldPort): string {
+  const protocol = protocolTag(held);
+  return protocol ? `${held.port}/${protocol}` : String(held.port);
+}
+
 function PortsCell({
   process,
   change,
+  width,
 }: {
   process: PortProcess;
   change: RowChangeKind | undefined;
+  /** The column's width: as many ports are spelled out as fit in it. */
+  width: number;
 }) {
   const ports = heldPorts(process.ports);
-  const rest = ports.slice(PORTS_IN_ROW);
+  const shown = portsThatFit(
+    ports,
+    width - CELL_PADDING - (change ? CHANGE_BADGE : 0),
+  );
+  const rest = ports.slice(shown);
   // The labels are guesses from the port number alone ("5000: Flask"), good
   // enough for a dev server and wrong for what the system runs there.
   const hint = process.is_system_service
@@ -133,24 +150,23 @@ function PortsCell({
 
   return (
     <span className="flex min-w-0 flex-col">
-      <span className="flex min-w-0 items-center gap-2 overflow-hidden">
-        {ports.slice(0, PORTS_IN_ROW).map((held) => (
+      <span className="flex min-w-0 items-center gap-2">
+        {ports.slice(0, shown).map((held) => (
           <PortNumber key={held.port} held={held} />
         ))}
         {rest.length > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="shrink-0 text-xs text-muted-foreground">
+              <button
+                type="button"
+                className="shrink-0 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={`${rest.length} more port${rest.length === 1 ? "" : "s"}: ${rest.map(portText).join(", ")}`}
+              >
                 +{rest.length}
-              </span>
+              </button>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="font-mono">
-              {rest
-                .map((held) => {
-                  const protocol = protocolTag(held);
-                  return protocol ? `${held.port}/${protocol}` : held.port;
-                })
-                .join(", ")}
+              {rest.map(portText).join(", ")}
             </TooltipContent>
           </Tooltip>
         )}
@@ -248,6 +264,7 @@ export const columns: ColumnDef<PortProcess>[] = [
       <PortsCell
         process={row.original}
         change={metaOf(table).rowChanges.get(row.original.id)}
+        width={metaOf(table).portsColumnWidth}
       />
     ),
   },

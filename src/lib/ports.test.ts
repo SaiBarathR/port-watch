@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   folderLabel,
   heldPorts,
+  portsThatFit,
   protocolTag,
   reachLabel,
   reachOf,
@@ -25,6 +26,15 @@ describe("reachOf", () => {
     for (const address of ["127.0.0.1", "127.0.0.53", "[::1]", "::1"]) {
       expect(reachOf(address), address).toBe("this-machine");
     }
+  });
+
+  // An IPv4 address held through an IPv6 socket, and an address with a zone.
+  it("reads IPv4 written the IPv6 way, and ignores a zone", () => {
+    expect(reachOf("[::ffff:127.0.0.1]")).toBe("this-machine");
+    expect(reachOf("::FFFF:127.0.0.1")).toBe("this-machine");
+    expect(reachOf("[::ffff:0.0.0.0]")).toBe("everyone");
+    expect(reachOf("[::ffff:192.168.1.20]")).toBe("one-address");
+    expect(reachOf("[::1%lo0]")).toBe("this-machine");
   });
 
   it("treats any other address as one network", () => {
@@ -79,6 +89,36 @@ describe("heldPorts", () => {
 
     expect(ports.map((held) => held.port)).toEqual([53, 5353, 80]);
     expect(ports.map(protocolTag)).toEqual(["tcp+udp", "udp", null]);
+  });
+});
+
+describe("portsThatFit", () => {
+  const ports = (...numbers: number[]) =>
+    heldPorts(numbers.map((port) => binding("*", port)));
+
+  it("shows every port when there is room", () => {
+    expect(portsThatFit(ports(3000, 9229), 144)).toBe(2);
+    expect(portsThatFit(ports(80), 56)).toBe(1);
+  });
+
+  it("keeps room to say how many are left out", () => {
+    // Two fit side by side, but not with "+1" after them.
+    expect(portsThatFit(ports(3000, 9229, 9230), 120)).toBe(1);
+    expect(portsThatFit(ports(3000, 9229, 9230), 150)).toBe(2);
+    expect(portsThatFit(ports(3000, 9229, 9230), 400)).toBe(3);
+  });
+
+  it("counts the protocol tag", () => {
+    const tagged = heldPorts([
+      binding("*", 49152, "UDP"),
+      binding("*", 49153, "UDP"),
+    ]);
+    expect(portsThatFit(tagged, 144)).toBe(1);
+    expect(portsThatFit(tagged, 200)).toBe(2);
+  });
+
+  it("always shows the first port, however narrow the column", () => {
+    expect(portsThatFit(ports(49152, 49153), 10)).toBe(1);
   });
 });
 

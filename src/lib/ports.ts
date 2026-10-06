@@ -10,15 +10,17 @@ export type PortReach = "everyone" | "this-machine" | "one-address";
 const EVERY_INTERFACE = new Set(["*", "0.0.0.0", "::", "[::]"]);
 
 export function reachOf(address: string): PortReach {
-  if (EVERY_INTERFACE.has(address)) {
+  // Without the brackets and zone of an IPv6 address ("[fe80::1%en0]"), and
+  // as IPv4 when it is one written the IPv6 way ("::ffff:127.0.0.1").
+  const plain = address
+    .replace(/^\[|\]$/g, "")
+    .replace(/%.*$/, "")
+    .replace(/^::ffff:(?=\d+\.)/i, "");
+
+  if (EVERY_INTERFACE.has(address) || EVERY_INTERFACE.has(plain)) {
     return "everyone";
   }
-  if (
-    address.startsWith("127.") ||
-    address === "::1" ||
-    address === "[::1]" ||
-    address === "localhost"
-  ) {
+  if (plain.startsWith("127.") || plain === "::1" || plain === "localhost") {
     return "this-machine";
   }
   return "one-address";
@@ -74,6 +76,40 @@ export function heldPorts(bindings: PortBinding[]): HeldPort[] {
     }
   }
   return [...held.values()];
+}
+
+// Rough widths of what a port takes in a row, in px. The number is set in
+// 15px monospace, where a digit is a little over 9px wide in every font the
+// app falls back to; the tag is 10px text.
+const DIGIT = 9.25;
+const TAG_LETTER = 6.5;
+const GLYPH = 16;
+const GAP = 8;
+
+/**
+ * How many of a process's ports fit in `width` px, leaving room to say how
+ * many do not. At least one: a row is about its port.
+ */
+export function portsThatFit(
+  ports: HeldPort[],
+  width: number,
+  moreIndicator = 28,
+): number {
+  let used = 0;
+  for (const [index, held] of ports.entries()) {
+    const tag = protocolTag(held);
+    const label =
+      String(held.port).length * DIGIT +
+      (tag ? tag.length * TAG_LETTER + 4 : 0) +
+      GLYPH;
+    const left = ports.length - index - 1;
+    const needed = used + label + (left > 0 ? GAP + moreIndicator : 0);
+    if (index > 0 && needed > width) {
+      return index;
+    }
+    used += label + GAP;
+  }
+  return ports.length;
 }
 
 /** "udp" or "tcp+udp"; nothing for plain TCP, which is what a port usually is. */

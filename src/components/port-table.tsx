@@ -16,7 +16,11 @@ import {
   stickyCellClass,
 } from "@/components/port-table-row";
 import { useProcessActions } from "@/components/process-actions";
-import { loadColumnSizing, saveColumnSizing } from "@/lib/column-sizing";
+import {
+  DEFAULT_COLUMN_SIZING,
+  loadColumnSizing,
+  saveColumnSizing,
+} from "@/lib/column-sizing";
 import { useRefreshPause } from "@/lib/refresh-pause";
 import { sortForTable, withGroupHeaders } from "@/lib/table-rows";
 import type { AppSettings, PortProcess, RowChangeKind } from "@/lib/types";
@@ -90,9 +94,10 @@ export function PortTable({
     [shownProcesses, settings.groupByDirectory, settings.pinnedPaths],
   );
 
+  const portsColumnWidth = columnSizing.ports ?? DEFAULT_COLUMN_SIZING.ports;
   const meta = useMemo<PortTableMeta>(
-    () => ({ rowChanges, canStop, actionSettings }),
-    [actionSettings, canStop, rowChanges],
+    () => ({ portsColumnWidth, rowChanges, canStop, actionSettings }),
+    [actionSettings, canStop, portsColumnWidth, rowChanges],
   );
 
   // With system services hidden every row is the current user's own

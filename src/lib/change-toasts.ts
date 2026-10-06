@@ -11,7 +11,7 @@ export const MUTE_DURATIONS = [
 // the longest mute right after it is set.
 const MAX_MUTE_MS =
   Math.max(...MUTE_DURATIONS.map((duration) => duration.ms)) + 60_000;
-const PORT_CHANGE_TOAST_ID = "port-changes";
+const PORT_CHANGE_TOAST_ID_PREFIX = "port-change-";
 const PORT_CHANGE_PREVIEW_LINES = 5;
 
 let confirmationToastId: number | string | null = null;
@@ -51,7 +51,7 @@ export function formatMutedUntil(mutedUntil: number): string {
 }
 
 export function isPortChangeToastId(id: number | string): boolean {
-  return id === PORT_CHANGE_TOAST_ID;
+  return typeof id === "string" && id.startsWith(PORT_CHANGE_TOAST_ID_PREFIX);
 }
 
 /** The changes the port change toast on screen stands for. */
@@ -63,7 +63,9 @@ export interface ShownPortChanges {
 
 const NO_PORT_CHANGES: ShownPortChanges = { total: 0, latest: [] };
 
-let shownPortChanges = NO_PORT_CHANGES;
+// The port change toast that is on screen and not on its way out.
+let liveToast: { id: string; shown: ShownPortChanges } | null = null;
+let portChangeToastCount = 0;
 
 export function addPortChanges(
   shown: ShownPortChanges,
@@ -97,29 +99,46 @@ export function portChangeToastContent(shown: ShownPortChanges): {
  * later changes are added to it, instead of every scan stacking a new one.
  */
 export function showPortChanges(messages: string[]) {
-  shownPortChanges = addPortChanges(shownPortChanges, messages);
-  const forget = () => {
-    shownPortChanges = NO_PORT_CHANGES;
+  // A toast that has started to leave gets no more updates: sonner removes
+  // it by id a moment later, and would take the update with it. The next
+  // change starts a new toast under a new id.
+  if (liveToast === null) {
+    portChangeToastCount += 1;
+    liveToast = {
+      id: `${PORT_CHANGE_TOAST_ID_PREFIX}${portChangeToastCount}`,
+      shown: NO_PORT_CHANGES,
+    };
+  }
+  const current = liveToast;
+  current.shown = addPortChanges(current.shown, messages);
+
+  const retire = () => {
+    if (liveToast === current) {
+      liveToast = null;
+    }
   };
-  const { title, description } = portChangeToastContent(shownPortChanges);
+  const { title, description } = portChangeToastContent(current.shown);
   toast.info(title, {
-    id: PORT_CHANGE_TOAST_ID,
+    id: current.id,
     description,
     duration: 12_000,
-    onDismiss: forget,
-    onAutoClose: forget,
+    onDismiss: retire,
+    onAutoClose: retire,
   });
 }
 
 // Dismisses by id: sonner's no-argument dismiss() walks its whole history and
 // leaves getToasts() reporting the dismissed toasts as still active.
 export function dismissAllToasts() {
+  liveToast = null;
   for (const item of toast.getToasts()) {
     toast.dismiss(item.id);
   }
 }
 
 export function dismissPortChangeToasts() {
+  // sonner reports the dismissal a frame later; do not wait for it.
+  liveToast = null;
   for (const item of toast.getToasts()) {
     if (isPortChangeToastId(item.id)) {
       toast.dismiss(item.id);

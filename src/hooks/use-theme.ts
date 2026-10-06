@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow, type Theme } from "@tauri-apps/api/window";
+import { getPlatform } from "@/lib/platform";
 
 export type ThemeMode = "light" | "dark-grey" | "dark-oled" | "system";
 export type ResolvedTheme = "light" | "dark-grey" | "dark-oled";
@@ -41,7 +42,14 @@ let windowTheme: Theme | null | undefined;
 // The title bar is the system's to draw, so it is told which theme was
 // picked. In "system" mode it is handed back to the OS: a window pinned to
 // one theme reports that theme as prefers-color-scheme, whatever the OS says.
+//
+// Not on Linux. There, handing the window back means "light" rather than
+// "whatever the desktop uses", so "system" on a dark desktop would turn the
+// app light. The desktop keeps drawing the title bar its own way.
 function syncWindowTheme(mode: ThemeMode) {
+  if (getPlatform() === "linux") {
+    return;
+  }
   const theme = mode === "system" ? null : mode === "light" ? "light" : "dark";
   if (theme === windowTheme) {
     return;

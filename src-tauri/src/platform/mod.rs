@@ -4,6 +4,8 @@ mod linux;
 mod macos;
 pub mod path_validation;
 pub mod shared;
+#[cfg(unix)]
+pub mod unix;
 #[cfg(target_os = "windows")]
 mod windows;
 

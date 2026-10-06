@@ -9,9 +9,9 @@ use tauri::{AppHandle, Manager};
 
 use crate::app_settings::AppSettings;
 use crate::platform;
-use crate::platform::path_validation::DeleteRules;
+use crate::platform::path_validation::{folder_identity, DeleteRules, FolderIdentity};
 use crate::poller::PortPoller;
-use crate::scanner::PortProcess;
+use crate::scanner::{PortProcess, ProcessIdentity};
 
 fn not_listed(pid: u32) -> String {
     format!("PID {pid} is not in the latest scan. Refresh and try again.")
@@ -30,22 +30,46 @@ fn assert_system_actions_allowed(
     Ok(())
 }
 
-// The caller acted on a row it was shown. If the scan now has a different
-// program under that PID, the row was stale.
-fn assert_same_process(process: &PortProcess, expected_name: Option<&str>) -> Result<(), String> {
-    match expected_name {
-        Some(expected) if expected != process.name => Err(format!(
-            "PID {} now belongs to \"{}\", not \"{expected}\" — the process list was stale. Refresh and try again.",
-            process.pid, process.name
-        )),
-        _ => Ok(()),
+/// What was on the row the caller acted on.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SeenProcess<'a> {
+    pub name: Option<&'a str>,
+    /// Unix seconds; None or 0 when the caller does not know.
+    pub started_at: Option<u64>,
+}
+
+// If the scan now has a different process under that PID, the row was stale.
+// A different name shows it, and so does a different start time: the same
+// program can be handed a PID its earlier run once had.
+fn assert_same_process(process: &PortProcess, seen: SeenProcess) -> Result<(), String> {
+    let stale = |now: String, was: &str| {
+        Err(format!(
+            "PID {} now belongs to {now}, not {was} — the process list was stale. Refresh and try again.",
+            process.pid
+        ))
+    };
+
+    if let Some(name) = seen.name {
+        if name != process.name {
+            return stale(format!("\"{}\"", process.name), &format!("\"{name}\""));
+        }
     }
+    if let Some(started_at) = seen.started_at.filter(|started_at| *started_at != 0) {
+        if process.started_at != 0 && process.started_at != started_at {
+            return stale(
+                format!("a newer \"{}\"", process.name),
+                "the one that was listed",
+            );
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, PartialEq)]
 pub enum StopTarget {
-    /// In the latest scan under this name; the live process must still have it.
-    Listed { name: String },
+    /// In the latest scan; the live process must still be this one.
+    Listed { identity: ProcessIdentity },
     /// Not in the latest scan and no longer running: nothing left to stop.
     AlreadyGone,
 }
@@ -53,7 +77,7 @@ pub enum StopTarget {
 pub fn plan_stop(
     pid: u32,
     listed: Option<&PortProcess>,
-    expected_name: Option<&str>,
+    seen: SeenProcess,
     allow_system_actions: bool,
     is_running: impl FnOnce() -> bool,
 ) -> Result<StopTarget, String> {
@@ -67,10 +91,10 @@ pub fn plan_stop(
         };
     };
 
-    assert_same_process(process, expected_name)?;
+    assert_same_process(process, seen)?;
     assert_system_actions_allowed(process, allow_system_actions)?;
     Ok(StopTarget::Listed {
-        name: process.name.clone(),
+        identity: process.identity(),
     })
 }
 
@@ -78,7 +102,7 @@ pub fn stop_process(
     app: &AppHandle,
     pid: u32,
     force: bool,
-    expected_name: Option<&str>,
+    seen: SeenProcess,
 ) -> Result<(), String> {
     if pid == 0 {
         return Err("Invalid PID".into());
@@ -86,17 +110,15 @@ pub fn stop_process(
 
     let listed = app.state::<PortPoller>().find_by_pid(pid);
     let allow_system_actions = app.state::<AppSettings>().allow_system_process_actions();
-    let target = plan_stop(
-        pid,
-        listed.as_ref(),
-        expected_name,
-        allow_system_actions,
-        || platform::shell::current_process_name(pid).is_some(),
-    )?;
+    let target = plan_stop(pid, listed.as_ref(), seen, allow_system_actions, || {
+        platform::shell::is_running(pid)
+    })?;
 
     match target {
         StopTarget::AlreadyGone => Ok(()),
-        StopTarget::Listed { name } => platform::shell::stop_process(pid, force, Some(&name)),
+        StopTarget::Listed { identity } => {
+            platform::shell::stop_process(pid, force, Some(&identity))
+        }
     }
 }
 
@@ -109,11 +131,19 @@ pub enum DeleteMode {
 
 pub struct DeleteRequest<'a> {
     pub expected_name: &'a str,
+    pub expected_started_at: Option<u64>,
     /// The folder the user was shown.
     pub path: &'a str,
     pub mode: DeleteMode,
     /// The folder name typed to confirm a permanent delete.
     pub confirmation: Option<&'a str>,
+}
+
+/// A folder that passed every check, and what it was at that moment.
+#[derive(Debug, PartialEq)]
+struct DeleteTarget {
+    folder: PathBuf,
+    identity: FolderIdentity,
 }
 
 /// Everything that must hold before a process is stopped and its project
@@ -124,9 +154,15 @@ fn plan_delete(
     request: &DeleteRequest,
     allow_system_actions: bool,
     rules: &DeleteRules,
-) -> Result<PathBuf, String> {
+) -> Result<DeleteTarget, String> {
     let process = listed.ok_or_else(|| not_listed(pid))?;
-    assert_same_process(process, Some(request.expected_name))?;
+    assert_same_process(
+        process,
+        SeenProcess {
+            name: Some(request.expected_name),
+            started_at: request.expected_started_at,
+        },
+    )?;
     assert_system_actions_allowed(process, allow_system_actions)?;
 
     if let Some(reason) = &process.delete_blocked {
@@ -151,29 +187,37 @@ fn plan_delete(
         ));
     }
 
-    Ok(folder)
+    let identity =
+        folder_identity(&folder).map_err(|err| format!("Failed to inspect the folder: {err}"))?;
+    Ok(DeleteTarget { folder, identity })
 }
 
-/// Stops the process, then removes `folder`. Nothing is removed unless the
-/// stop succeeded.
+/// Stops the process, then removes the folder. Nothing is removed unless the
+/// stop succeeded and the folder is still the one that was checked.
 fn run_delete(
     rules: &DeleteRules,
-    folder: &Path,
+    target: &DeleteTarget,
     stop: impl FnOnce() -> Result<(), String>,
     remove: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<(), String> {
     stop().map_err(|err| format!("Nothing was deleted: {err}"))?;
 
-    // The stop can take seconds. Make sure the folder is still the one that
-    // was checked before it.
+    // The stop can take seconds. The path must still pass, and must still
+    // lead to the same directory: another one moved into its place is not
+    // what the user confirmed.
     let still_there = rules
-        .resolve(folder)
+        .resolve(&target.folder)
         .map_err(|err| format!("The process was stopped, but its folder was not deleted: {err}"))?;
-    if still_there != folder {
-        return Err("The process was stopped, but its folder changed and was not deleted.".into());
+    if still_there != target.folder
+        || folder_identity(&still_there).ok().as_ref() != Some(&target.identity)
+    {
+        return Err(
+            "The process was stopped, but its folder was replaced meanwhile and was not deleted."
+                .into(),
+        );
     }
 
-    remove(folder).map_err(|err| {
+    remove(&target.folder).map_err(|err| {
         format!("The process was stopped, but its folder could not be deleted: {err}")
     })
 }
@@ -192,11 +236,12 @@ fn delete_with(
     request: &DeleteRequest,
     allow_system_actions: bool,
     rules: &DeleteRules,
-    stop: impl FnOnce() -> Result<(), String>,
+    stop: impl FnOnce(&ProcessIdentity) -> Result<(), String>,
     remove: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<(), String> {
-    let folder = plan_delete(pid, listed, request, allow_system_actions, rules)?;
-    run_delete(rules, &folder, stop, remove)
+    let target = plan_delete(pid, listed, request, allow_system_actions, rules)?;
+    let identity = listed.ok_or_else(|| not_listed(pid))?.identity();
+    run_delete(rules, &target, || stop(&identity), remove)
 }
 
 pub fn delete_project(app: &AppHandle, pid: u32, request: &DeleteRequest) -> Result<(), String> {
@@ -214,7 +259,7 @@ pub fn delete_project(app: &AppHandle, pid: u32, request: &DeleteRequest) -> Res
         request,
         allow_system_actions,
         &rules,
-        || platform::shell::stop_process(pid, false, Some(request.expected_name)),
+        |identity| platform::shell::stop_process(pid, false, Some(identity)),
         |folder| remove_folder(folder, request.mode),
     )
 }
@@ -277,9 +322,18 @@ mod tests {
             }
         }
 
+        // The project folder as a delete that passed its checks would hold it.
+        fn target(&self) -> DeleteTarget {
+            DeleteTarget {
+                folder: self.project.clone(),
+                identity: folder_identity(&self.project).unwrap(),
+            }
+        }
+
         fn request<'a>(&self, path: &'a str, mode: DeleteMode) -> DeleteRequest<'a> {
             DeleteRequest {
                 expected_name: "node",
+                expected_started_at: None,
                 path,
                 mode,
                 confirmation: None,
@@ -293,8 +347,24 @@ mod tests {
         process
     }
 
+    #[cfg(unix)]
+    fn live_started_at(pid: u32) -> u64 {
+        use crate::platform::unix::LiveProcess;
+        match (platform::shell::probe().live)(pid) {
+            LiveProcess::Running { started_at, .. } => started_at,
+            LiveProcess::Gone => panic!("PID {pid} should be running"),
+        }
+    }
+
     fn must_not_probe() -> bool {
         panic!("a listed process must not be probed");
+    }
+
+    fn seen(name: &str) -> SeenProcess<'_> {
+        SeenProcess {
+            name: Some(name),
+            started_at: None,
+        }
     }
 
     // --- stop ---------------------------------------------------------------
@@ -303,11 +373,14 @@ mod tests {
     fn stop_targets_a_listed_user_process_by_its_scanned_name() {
         let fixture = Fixture::new();
         let process = fixture.process(42, "node");
-        for expected in [Some("node"), None] {
+        for seen in [seen("node"), SeenProcess::default()] {
             assert_eq!(
-                plan_stop(42, Some(&process), expected, false, must_not_probe),
+                plan_stop(42, Some(&process), seen, false, must_not_probe),
                 Ok(StopTarget::Listed {
-                    name: "node".into()
+                    identity: ProcessIdentity {
+                        name: "node".into(),
+                        started_at: 1_790_000_000,
+                    }
                 })
             );
         }
@@ -316,7 +389,7 @@ mod tests {
     #[test]
     fn stop_treats_an_unlisted_dead_pid_as_already_gone() {
         assert_eq!(
-            plan_stop(42, None, Some("node"), false, || false),
+            plan_stop(42, None, seen("node"), false, || false),
             Ok(StopTarget::AlreadyGone)
         );
     }
@@ -325,7 +398,7 @@ mod tests {
     fn stop_refuses_an_unlisted_pid_that_is_still_running() {
         // Even with system actions allowed: nothing identifies this process.
         for allow in [false, true] {
-            let err = plan_stop(42, None, Some("node"), allow, || true).unwrap_err();
+            let err = plan_stop(42, None, seen("node"), allow, || true).unwrap_err();
             assert!(err.contains("not in the latest scan"), "{err}");
         }
     }
@@ -334,7 +407,7 @@ mod tests {
     fn stop_refuses_a_pid_the_scan_knows_under_another_name() {
         let fixture = Fixture::new();
         let process = fixture.process(42, "postgres");
-        let err = plan_stop(42, Some(&process), Some("node"), true, must_not_probe).unwrap_err();
+        let err = plan_stop(42, Some(&process), seen("node"), true, must_not_probe).unwrap_err();
         assert!(err.contains("now belongs to \"postgres\""), "{err}");
     }
 
@@ -342,9 +415,35 @@ mod tests {
     fn stop_needs_the_opt_in_for_system_services() {
         let fixture = Fixture::new();
         let process = system(fixture.process(42, "node"));
-        let err = plan_stop(42, Some(&process), Some("node"), false, must_not_probe).unwrap_err();
+        let err = plan_stop(42, Some(&process), seen("node"), false, must_not_probe).unwrap_err();
         assert!(err.contains("System process actions are disabled"), "{err}");
-        assert!(plan_stop(42, Some(&process), Some("node"), true, must_not_probe).is_ok());
+        assert!(plan_stop(42, Some(&process), seen("node"), true, must_not_probe).is_ok());
+    }
+
+    // The same program under the same PID, started at another time: the row
+    // the caller saw was a different process.
+    #[test]
+    fn stop_refuses_a_row_for_an_earlier_process_with_that_pid_and_name() {
+        let fixture = Fixture::new();
+        let process = fixture.process(42, "node");
+        let earlier = SeenProcess {
+            name: Some("node"),
+            started_at: Some(process.started_at - 60),
+        };
+        let err = plan_stop(42, Some(&process), earlier, true, must_not_probe).unwrap_err();
+        assert!(err.contains("a newer \"node\""), "{err}");
+
+        // The same start time, or none on either side, is not a mismatch.
+        for started_at in [Some(process.started_at), Some(0), None] {
+            let same = SeenProcess {
+                name: Some("node"),
+                started_at,
+            };
+            assert!(plan_stop(42, Some(&process), same, true, must_not_probe).is_ok());
+        }
+        let mut unknown = fixture.process(42, "node");
+        unknown.started_at = 0;
+        assert!(plan_stop(42, Some(&unknown), earlier, true, must_not_probe).is_ok());
     }
 
     // --- delete -------------------------------------------------------------
@@ -362,7 +461,7 @@ mod tests {
                 false,
                 &fixture.rules
             ),
-            Ok(fixture.project.clone())
+            Ok(fixture.target())
         );
     }
 
@@ -513,7 +612,7 @@ mod tests {
         let removed = Cell::new(false);
         let err = run_delete(
             &fixture.rules,
-            &fixture.project,
+            &fixture.target(),
             || Err("PID 42 is still running after SIGKILL".into()),
             |_| {
                 removed.set(true);
@@ -533,7 +632,7 @@ mod tests {
         let removed = Cell::new(false);
         let err = run_delete(
             &fixture.rules,
-            &fixture.project,
+            &fixture.target(),
             || {
                 fs::remove_dir_all(&fixture.project).unwrap();
                 Ok(())
@@ -549,12 +648,56 @@ mod tests {
         assert!(!removed.get());
     }
 
+    // The path is the same and still passes every rule, but it is a different
+    // directory from the one the user confirmed.
+    #[test]
+    fn nothing_is_removed_when_another_folder_took_its_place_during_the_stop() {
+        let fixture = Fixture::new();
+        let moved_away = fixture.home.join("Dev/moved-away");
+        let removed = Cell::new(false);
+        let err = run_delete(
+            &fixture.rules,
+            &fixture.target(),
+            || {
+                // Long enough for a new creation time where that is the identity.
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                fs::rename(&fixture.project, &moved_away).unwrap();
+                fs::create_dir(&fixture.project).unwrap();
+                fs::write(fixture.project.join("notes.txt"), "keep").unwrap();
+                Ok(())
+            },
+            |_| {
+                removed.set(true);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.contains("was replaced meanwhile"), "{err}");
+        assert!(!removed.get());
+        assert!(fixture.project.join("notes.txt").exists());
+        assert!(moved_away.join("package.json").exists());
+    }
+
+    #[test]
+    fn delete_refuses_a_row_for_an_earlier_process_with_that_pid_and_name() {
+        let fixture = Fixture::new();
+        let process = fixture.process(42, "node");
+        let path = fixture.project.to_string_lossy();
+        let request = DeleteRequest {
+            expected_started_at: Some(process.started_at - 60),
+            ..fixture.request(&path, DeleteMode::Trash)
+        };
+        let err = plan_delete(42, Some(&process), &request, false, &fixture.rules).unwrap_err();
+        assert!(err.contains("a newer \"node\""), "{err}");
+    }
+
     #[test]
     fn a_failed_removal_says_the_process_was_stopped() {
         let fixture = Fixture::new();
         let err = run_delete(
             &fixture.rules,
-            &fixture.project,
+            &fixture.target(),
             || Ok(()),
             |_| Err("permission denied".into()),
         )
@@ -567,13 +710,10 @@ mod tests {
     #[cfg(unix)]
     fn deletes_a_running_process_and_its_folder() {
         let fixture = Fixture::new();
-        let mut child = std::process::Command::new("sleep")
-            .arg("60")
-            .current_dir(&fixture.project)
-            .spawn()
-            .expect("spawn sleep");
+        let mut child = crate::platform::unix::testing::spawn_sleep(Some(&fixture.project));
         let pid = child.id();
-        let process = fixture.process(pid, "sleep");
+        let mut process = fixture.process(pid, "sleep");
+        process.started_at = live_started_at(pid);
         let path = fixture.project.to_string_lossy();
         let request = DeleteRequest {
             expected_name: "sleep",
@@ -587,7 +727,7 @@ mod tests {
             &request,
             false,
             &fixture.rules,
-            || platform::shell::stop_process(pid, false, Some("sleep")),
+            |identity| platform::shell::stop_process(pid, false, Some(identity)),
             |folder| remove_folder(folder, DeleteMode::Permanent),
         );
         let exited = child.wait().is_ok();
@@ -605,13 +745,10 @@ mod tests {
         let fixture = Fixture::new();
         let outside = fixture.home.parent().unwrap().join("srv");
         fs::create_dir_all(&outside).unwrap();
-        let mut child = std::process::Command::new("sleep")
-            .arg("60")
-            .current_dir(&outside)
-            .spawn()
-            .expect("spawn sleep");
+        let mut child = crate::platform::unix::testing::spawn_sleep(Some(&outside));
         let pid = child.id();
         let mut process = fixture.process(pid, "sleep");
+        process.started_at = live_started_at(pid);
         process.project_root = String::new();
         process.working_directory = outside.to_string_lossy().into_owned();
 
@@ -626,7 +763,7 @@ mod tests {
             &request,
             false,
             &fixture.rules,
-            || platform::shell::stop_process(pid, false, Some("sleep")),
+            |identity| platform::shell::stop_process(pid, false, Some(identity)),
             |folder| remove_folder(folder, DeleteMode::Permanent),
         );
         let still_running = child.try_wait().expect("try_wait").is_none();

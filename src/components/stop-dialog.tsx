@@ -66,6 +66,7 @@ export function StopDialog({
         await invoke("stop_process", {
           pid: process.pid,
           expectedName: process.name,
+          expectedStartedAt: process.started_at,
         });
         stopped.push(process);
       } catch (err) {

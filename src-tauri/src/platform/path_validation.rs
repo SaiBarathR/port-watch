@@ -113,6 +113,31 @@ impl DeleteRules {
     }
 }
 
+/// Tells a directory from a different one that later takes over its path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderIdentity(FolderKey);
+
+// Device and inode.
+#[cfg(unix)]
+type FolderKey = (u64, u64);
+// Windows exposes no stable file id through std; a directory moved into
+// place keeps its own creation time, which serves the same purpose.
+#[cfg(not(unix))]
+type FolderKey = Option<std::time::SystemTime>;
+
+pub fn folder_identity(folder: &Path) -> std::io::Result<FolderIdentity> {
+    let metadata = std::fs::symlink_metadata(folder)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(FolderIdentity((metadata.dev(), metadata.ino())))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(FolderIdentity(metadata.created().ok()))
+    }
+}
+
 fn matches_any(name: &str, candidates: &[&str]) -> bool {
     candidates
         .iter()
@@ -361,6 +386,25 @@ mod tests {
         assert_eq!(
             home.rules.resolve_permanent(&project, "my-project"),
             Ok(project)
+        );
+    }
+
+    #[test]
+    fn folder_identity_tells_a_replacement_from_the_original() {
+        let home = Home::new();
+        let project = home.mkdir("Dev/my-project");
+        let original = folder_identity(&project).unwrap();
+        assert_eq!(folder_identity(&project).unwrap(), original);
+
+        // Long enough for a new creation time where that is the identity.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::rename(&project, home.path.join("Dev/moved-away")).unwrap();
+        fs::create_dir(&project).unwrap();
+
+        assert_ne!(folder_identity(&project).unwrap(), original);
+        assert_eq!(
+            folder_identity(&home.path.join("Dev/moved-away")).unwrap(),
+            original
         );
     }
 

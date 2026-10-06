@@ -67,6 +67,7 @@ export function DeleteDialog({
       await invoke("delete_project", {
         pid: target.process.pid,
         expectedName: target.process.name,
+        expectedStartedAt: target.process.started_at,
         path,
         mode: target.mode,
         confirmation: target.mode === "permanent" ? confirmation : null,

@@ -34,7 +34,22 @@ pub struct PortProcess {
     pub delete_blocked: Option<String>,
 }
 
+/// What tells a process from a later one that was handed the same PID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessIdentity {
+    pub name: String,
+    /// Unix seconds; 0 when the scan could not tell.
+    pub started_at: u64,
+}
+
 impl PortProcess {
+    pub fn identity(&self) -> ProcessIdentity {
+        ProcessIdentity {
+            name: self.name.clone(),
+            started_at: self.started_at,
+        }
+    }
+
     /// The folder the reveal, terminal, editor and delete actions work on:
     /// the project root when one was found, else the working directory.
     pub fn project_dir(&self) -> &str {

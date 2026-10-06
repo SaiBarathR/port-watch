@@ -73,8 +73,6 @@ interface PortTableProps {
   rowChanges: Map<string, RowChangeKind>;
   onRefresh: () => void;
   onRefreshPauseChange: (paused: boolean) => void;
-  onTogglePinnedPath: (path: string) => void;
-  onUseHttpsForLocalhostChange: (useHttps: boolean) => void;
 }
 
 function changeBadge(change: RowChangeKind | undefined) {
@@ -340,8 +338,6 @@ export function PortTable({
   rowChanges,
   onRefresh,
   onRefreshPauseChange,
-  onTogglePinnedPath,
-  onUseHttpsForLocalhostChange,
 }: PortTableProps) {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [columnSizing, setColumnSizing] =
@@ -620,18 +616,10 @@ export function PortTable({
       canStop,
       openStopDialog,
       openFreePortDialog,
-      onTogglePinnedPath,
-      onUseHttpsForLocalhostChange,
       setHistoryPort,
       setDeleteTarget,
     }),
-    [
-      canStop,
-      openStopDialog,
-      openFreePortDialog,
-      onTogglePinnedPath,
-      onUseHttpsForLocalhostChange,
-    ],
+    [canStop, openStopDialog, openFreePortDialog],
   );
 
   const actionSettings = useMemo(

@@ -22,24 +22,10 @@ function App() {
     refresh,
     search,
     setSearch,
-    setSearchField,
     portLookupEmpty,
     exactPortQuery,
     portLookupOccupants,
     settings,
-    setHideSystemServices,
-    setHideUserServices,
-    setAllowSystemProcessActions,
-    setRefreshInterval,
-    setPreferredEditor,
-    setGroupByDirectory,
-    setShowChangeToasts,
-    setChangeToastsMutedUntil,
-    togglePinnedPath,
-    setWatchedPorts,
-    setWatchedPortNotifications,
-    setIncludeUdp,
-    setUseHttpsForLocalhost,
     setRefreshPaused,
     rowChanges,
     userCount,
@@ -90,8 +76,6 @@ function App() {
         <PortToolbar
           search={search}
           onSearchChange={setSearch}
-          searchField={settings.searchField}
-          onSearchFieldChange={setSearchField}
           portLookupEmpty={portLookupEmpty}
           exactPortQuery={exactPortQuery}
           portLookupOccupants={portLookupOccupants}
@@ -99,18 +83,6 @@ function App() {
           settings={settings}
           theme={theme}
           onThemeChange={setTheme}
-          onHideSystemChange={setHideSystemServices}
-          onHideUserChange={setHideUserServices}
-          onAllowSystemActionsChange={setAllowSystemProcessActions}
-          onRefreshIntervalChange={setRefreshInterval}
-          onPreferredEditorChange={setPreferredEditor}
-          onGroupByDirectoryChange={setGroupByDirectory}
-          onShowChangeToastsChange={setShowChangeToasts}
-          onChangeToastsMutedUntilChange={setChangeToastsMutedUntil}
-          onWatchedPortNotificationsChange={setWatchedPortNotifications}
-          onWatchedPortsChange={setWatchedPorts}
-          onIncludeUdpChange={setIncludeUdp}
-          onUseHttpsForLocalhostChange={setUseHttpsForLocalhost}
           onFreePort={handleFreePort}
           onRefresh={() => void refresh()}
           loading={refreshing}
@@ -138,8 +110,6 @@ function App() {
             rowChanges={rowChanges}
             onRefresh={() => void refresh()}
             onRefreshPauseChange={setRefreshPaused}
-            onTogglePinnedPath={togglePinnedPath}
-            onUseHttpsForLocalhostChange={setUseHttpsForLocalhost}
           />
         </div>
       </main>
@@ -174,11 +144,7 @@ function App() {
 
       <CliInstallPrompt />
 
-      <AppToaster
-        theme={resolvedTheme === "light" ? "light" : "dark"}
-        onShowChangeToastsChange={setShowChangeToasts}
-        onChangeToastsMutedUntilChange={setChangeToastsMutedUntil}
-      />
+      <AppToaster theme={resolvedTheme === "light" ? "light" : "dark"} />
     </div>
   );
 }

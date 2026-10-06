@@ -1,23 +1,28 @@
+use serde::Serialize;
+use serde_json::{Map, Value};
 use tauri::{AppHandle, Manager};
 
-use crate::app_settings::AppSettings;
+use crate::settings::{Settings, SettingsStore};
 
-#[tauri::command]
-pub fn set_allow_system_process_actions(app: AppHandle, allow: bool) -> Result<(), String> {
-    let settings = app.state::<AppSettings>();
-    settings.set_allow_system_process_actions(allow);
-    Ok(())
+#[derive(Serialize)]
+pub struct SettingsReply {
+    settings: Settings,
+    /// False until settings have been saved once: the window may then still
+    /// hold the ones it kept itself in earlier versions, and hands them over.
+    stored: bool,
 }
 
 #[tauri::command]
-pub fn set_use_https_for_localhost(app: AppHandle, use_https: bool) -> Result<(), String> {
-    app.state::<AppSettings>()
-        .set_use_https_for_localhost(use_https);
-    Ok(())
+pub fn get_settings(app: AppHandle) -> SettingsReply {
+    let store = app.state::<SettingsStore>();
+    SettingsReply {
+        settings: store.get(),
+        stored: store.is_stored(),
+    }
 }
 
+/// Replaces the settings named in `patch` and returns all of them.
 #[tauri::command]
-pub fn set_preferred_editor(app: AppHandle, editor: String) -> Result<(), String> {
-    app.state::<AppSettings>().set_preferred_editor(editor);
-    Ok(())
+pub fn update_settings(app: AppHandle, patch: Map<String, Value>) -> Result<Settings, String> {
+    crate::settings::update(&app, patch)
 }

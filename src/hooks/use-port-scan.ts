@@ -11,8 +11,6 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import {
   changeToastStatus,
-  dismissChangeToastConfirmation,
-  dismissPortChangeToasts,
   isChangeToastsMuted,
   showPortChanges,
 } from "@/lib/change-toasts";
@@ -22,16 +20,10 @@ import {
 } from "@/lib/port-history";
 import { filterPortProcesses, normalizePortProcess } from "@/lib/port-filter";
 import { diffProcesses } from "@/lib/scan-diff";
-import type {
-  AppSettings,
-  PortProcess,
-  RefreshInterval,
-  RowChangeKind,
-  SearchField,
-} from "@/lib/types";
-import { DEFAULT_SETTINGS, portSignature, processHasPort } from "@/lib/types";
+import { updateSettings, useSettings } from "@/lib/settings-store";
+import type { PortProcess, RowChangeKind } from "@/lib/types";
+import { parsePort, portSignature, processHasPort } from "@/lib/types";
 
-const SETTINGS_KEY = "port-watch-settings";
 const CHANGE_HIGHLIGHT_MS = 10_000;
 
 interface PortsUpdatedPayload {
@@ -61,23 +53,6 @@ function parsePortsPayload(payload: unknown): PortsUpdatedPayload {
   }
 
   return { processes: [], error: null, revision: 0 };
-}
-
-function loadSettings(): AppSettings {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) {
-      const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } as AppSettings;
-      if (merged.hideUserServices && merged.hideSystemServices) {
-        merged.hideUserServices = false;
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
-      }
-      return merged;
-    }
-  } catch {
-    // ignore
-  }
-  return DEFAULT_SETTINGS;
 }
 
 function processesUnchanged(prev: PortProcess[], next: PortProcess[]): boolean {
@@ -235,7 +210,7 @@ export function usePortScan() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  const settings = useSettings();
   const [search, setSearch] = useState("");
   const [rowChanges, setRowChanges] = useState<Map<string, RowChangeKind>>(
     () => new Map(),
@@ -269,17 +244,6 @@ export function usePortScan() {
       // ignore outside Tauri
     });
   }, []);
-
-  const persistSettings = useCallback(
-    (updater: AppSettings | ((current: AppSettings) => AppSettings)) => {
-      setSettings((current) => {
-        const next = typeof updater === "function" ? updater(current) : updater;
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
-        return next;
-      });
-    },
-    [],
-  );
 
   const scheduleChangeClear = useCallback(() => {
     if (changeClearTimerRef.current !== null) {
@@ -460,47 +424,6 @@ export function usePortScan() {
     };
   }, [applyPayload]);
 
-  // With the window hidden the backend scans less often, unless a watched
-  // port is waiting to raise a desktop alert.
-  const watchWhileHidden =
-    settings.watchedPortNotifications && settings.watchedPorts.length > 0;
-
-  useEffect(() => {
-    void invoke("set_scan_settings", {
-      intervalMs: settings.refreshIntervalMs,
-      includeUdp: settings.includeUdp,
-      watchWhileHidden,
-    }).catch(() => {
-      // ignore outside Tauri
-    });
-  }, [settings.refreshIntervalMs, settings.includeUdp, watchWhileHidden]);
-
-  useEffect(() => {
-    void invoke("set_allow_system_process_actions", {
-      allow: settings.allowSystemProcessActions,
-    }).catch(() => {
-      // ignore outside Tauri
-    });
-  }, [settings.allowSystemProcessActions]);
-
-  // Keep the native tray menu's open/copy actions in sync with the URL scheme.
-  useEffect(() => {
-    void invoke("set_use_https_for_localhost", {
-      useHttps: settings.useHttpsForLocalhost,
-    }).catch(() => {
-      // ignore outside Tauri
-    });
-  }, [settings.useHttpsForLocalhost]);
-
-  // Keep the native tray menu's "Open in Editor" action in sync with the choice.
-  useEffect(() => {
-    void invoke("set_preferred_editor", {
-      editor: settings.preferredEditor,
-    }).catch(() => {
-      // ignore outside Tauri
-    });
-  }, [settings.preferredEditor]);
-
   useEffect(() => {
     return () => {
       if (changeClearTimerRef.current !== null) {
@@ -511,43 +434,6 @@ export function usePortScan() {
 
   const userCount = processes.filter((p) => !p.is_system_service).length;
   const systemCount = processes.filter((p) => p.is_system_service).length;
-
-  useEffect(() => {
-    void invoke("set_menu_bar_mode", { enabled: settings.menuBarMode }).catch(
-      () => {
-        // ignore outside Tauri
-      },
-    );
-  }, [settings.menuBarMode]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-
-    void listen<boolean>("tray-menu-bar-mode-changed", (event) => {
-      const enabled = event.payload;
-      setSettings((current) => {
-        if (current.menuBarMode === enabled) {
-          return current;
-        }
-
-        const next = { ...current, menuBarMode: enabled };
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
-        return next;
-      });
-    }).then((fn) => {
-      if (cancelled) {
-        fn();
-        return;
-      }
-      unlisten = fn;
-    });
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
 
   // Drop an expired mute so the UI stops showing it; the toast gate itself
   // checks the clock on every scan.
@@ -565,10 +451,10 @@ export function usePortScan() {
         timer = window.setTimeout(check, mutedUntil - now);
         return;
       }
-      persistSettings((current) =>
+      updateSettings((current) =>
         current.changeToastsMutedUntil === mutedUntil
-          ? { ...current, changeToastsMutedUntil: null }
-          : current,
+          ? { changeToastsMutedUntil: null }
+          : {},
       );
     };
 
@@ -580,136 +466,7 @@ export function usePortScan() {
       window.clearTimeout(timer);
       window.removeEventListener("focus", check);
     };
-  }, [mutedUntil, persistSettings]);
-
-  // Hiding both user and system services would blank the table, so enabling
-  // one hide-toggle always releases the other (mirrors loadSettings).
-  const setHideSystemServices = useCallback(
-    (hide: boolean) => {
-      persistSettings((current) => ({
-        ...current,
-        hideSystemServices: hide,
-        hideUserServices: hide ? false : current.hideUserServices,
-      }));
-    },
-    [persistSettings],
-  );
-
-  const setHideUserServices = useCallback(
-    (hide: boolean) => {
-      persistSettings((current) => ({
-        ...current,
-        hideUserServices: hide,
-        hideSystemServices: hide ? false : current.hideSystemServices,
-      }));
-    },
-    [persistSettings],
-  );
-
-  const setAllowSystemProcessActions = useCallback(
-    (allow: boolean) => {
-      persistSettings((current) => ({
-        ...current,
-        allowSystemProcessActions: allow,
-      }));
-    },
-    [persistSettings],
-  );
-
-  const setRefreshInterval = useCallback(
-    (refreshIntervalMs: RefreshInterval) => {
-      persistSettings((current) => ({ ...current, refreshIntervalMs }));
-    },
-    [persistSettings],
-  );
-
-  const setPreferredEditor = useCallback(
-    (preferredEditor: AppSettings["preferredEditor"]) => {
-      persistSettings((current) => ({ ...current, preferredEditor }));
-    },
-    [persistSettings],
-  );
-
-  const setGroupByDirectory = useCallback(
-    (groupByDirectory: boolean) => {
-      persistSettings((current) => ({ ...current, groupByDirectory }));
-    },
-    [persistSettings],
-  );
-
-  const setShowChangeToasts = useCallback(
-    (showChangeToasts: boolean) => {
-      dismissChangeToastConfirmation();
-      // Turning toasts on means on, so a mute never outlives the switch.
-      persistSettings((current) => ({
-        ...current,
-        showChangeToasts,
-        changeToastsMutedUntil: null,
-      }));
-      if (!showChangeToasts) {
-        dismissPortChangeToasts();
-      }
-    },
-    [persistSettings],
-  );
-
-  const setChangeToastsMutedUntil = useCallback(
-    (changeToastsMutedUntil: number | null) => {
-      dismissChangeToastConfirmation();
-      persistSettings((current) => ({ ...current, changeToastsMutedUntil }));
-      if (changeToastsMutedUntil !== null) {
-        dismissPortChangeToasts();
-      }
-    },
-    [persistSettings],
-  );
-
-  const setSearchField = useCallback(
-    (searchField: SearchField) => {
-      persistSettings((current) => ({ ...current, searchField }));
-    },
-    [persistSettings],
-  );
-
-  const togglePinnedPath = useCallback(
-    (path: string) => {
-      persistSettings((current) => {
-        const pinnedPaths = current.pinnedPaths.includes(path)
-          ? current.pinnedPaths.filter((item) => item !== path)
-          : [...current.pinnedPaths, path];
-        return { ...current, pinnedPaths };
-      });
-    },
-    [persistSettings],
-  );
-
-  const setWatchedPorts = useCallback(
-    (watchedPorts: number[]) => {
-      persistSettings((current) => ({ ...current, watchedPorts }));
-    },
-    [persistSettings],
-  );
-
-  const setWatchedPortNotifications = useCallback(
-    (watchedPortNotifications: boolean) => {
-      persistSettings((current) => ({ ...current, watchedPortNotifications }));
-    },
-    [persistSettings],
-  );
-
-  const setIncludeUdp = useCallback(
-    (includeUdp: boolean) => {
-      persistSettings((current) => ({ ...current, includeUdp }));
-    },
-    [persistSettings],
-  );
-
-  const setUseHttpsForLocalhost = useCallback(
-    (useHttpsForLocalhost: boolean) => {
-      persistSettings((current) => ({ ...current, useHttpsForLocalhost }));
-    },
-    [persistSettings],
-  );
+  }, [mutedUntil]);
 
   const deferredSearch = useDeferredValue(search);
   const filtered = useMemo(
@@ -734,17 +491,7 @@ export function usePortScan() {
     if (settings.searchField !== "port") {
       return null;
     }
-    const trimmed = search.trim();
-    const port = Number.parseInt(trimmed, 10);
-    if (
-      !Number.isInteger(port) ||
-      port < 1 ||
-      port > 65535 ||
-      String(port) !== trimmed
-    ) {
-      return null;
-    }
-    return port;
+    return parsePort(search);
   }, [search, settings.searchField]);
 
   const portLookupEmpty =
@@ -770,24 +517,10 @@ export function usePortScan() {
     refresh,
     search,
     setSearch,
-    setSearchField,
     portLookupEmpty,
     exactPortQuery,
     portLookupOccupants,
     settings,
-    setHideSystemServices,
-    setHideUserServices,
-    setAllowSystemProcessActions,
-    setRefreshInterval,
-    setPreferredEditor,
-    setGroupByDirectory,
-    setShowChangeToasts,
-    setChangeToastsMutedUntil,
-    togglePinnedPath,
-    setWatchedPorts,
-    setWatchedPortNotifications,
-    setIncludeUdp,
-    setUseHttpsForLocalhost,
     setRefreshPaused,
     rowChanges,
     userCount,

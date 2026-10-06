@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatUptime,
   oldestFirst,
+  parsePort,
   uptimeSeconds,
   userProcesses,
   type PortProcess,
@@ -49,6 +50,32 @@ describe("userProcesses", () => {
     ];
 
     expect(userProcesses(processes)).toEqual([]);
+  });
+});
+
+describe("parsePort", () => {
+  it("reads a port number", () => {
+    expect(parsePort("3000")).toBe(3000);
+    expect(parsePort("  8080 ")).toBe(8080);
+    expect(parsePort("1")).toBe(1);
+    expect(parsePort("65535")).toBe(65535);
+  });
+
+  it("refuses anything that is not only a port number", () => {
+    for (const text of [
+      "",
+      "3000abc",
+      "3000.5",
+      "-1",
+      "0",
+      "65536",
+      "999999",
+      "1e3",
+      "0x50",
+      "30 00",
+    ]) {
+      expect(parsePort(text), text).toBeNull();
+    }
   });
 });
 

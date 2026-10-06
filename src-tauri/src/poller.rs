@@ -342,21 +342,6 @@ pub async fn get_listening_ports(app: AppHandle) -> Result<PortsUpdatedPayload, 
 }
 
 #[tauri::command]
-pub fn set_scan_settings(
-    app: AppHandle,
-    interval_ms: u64,
-    include_udp: bool,
-    watch_while_hidden: Option<bool>,
-) -> Result<(), String> {
-    app.state::<PortPoller>().set_scan_settings(
-        interval_ms,
-        include_udp,
-        watch_while_hidden.unwrap_or(false),
-    );
-    Ok(())
-}
-
-#[tauri::command]
 pub fn set_refresh_paused(app: AppHandle, paused: bool) -> Result<(), String> {
     app.state::<PortPoller>().set_paused(paused);
     Ok(())

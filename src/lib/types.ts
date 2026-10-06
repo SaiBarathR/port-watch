@@ -177,6 +177,19 @@ export function primaryPort(process: PortProcess): number | null {
   return process.ports[0]?.port ?? null;
 }
 
+/**
+ * A port number typed by the user, or null. Digits only: "3000abc" and
+ * "3000.5" are not ports, though parseInt would read 3000 from either.
+ */
+export function parsePort(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^\d{1,5}$/.test(trimmed)) {
+    return null;
+  }
+  const port = Number(trimmed);
+  return port >= 1 && port <= 65535 ? port : null;
+}
+
 export function processHasPort(process: PortProcess, port: number): boolean {
   return process.ports.some((binding) => binding.port === port);
 }

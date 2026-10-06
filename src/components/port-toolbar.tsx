@@ -36,18 +36,20 @@ import type { ThemeMode } from "@/hooks/use-theme";
 import { processesToJson, processesToMarkdown } from "@/lib/export-snapshot";
 import { isMacOS } from "@/lib/platform";
 import {
+  setHideSystemServices,
+  setHideUserServices,
+} from "@/lib/settings-actions";
+import { updateSettings } from "@/lib/settings-store";
+import {
   SEARCH_FIELD_OPTIONS,
   type AppSettings,
   type PortProcess,
-  type RefreshInterval,
   type SearchField,
 } from "@/lib/types";
 
 interface PortToolbarProps {
   search: string;
   onSearchChange: (value: string) => void;
-  searchField: SearchField;
-  onSearchFieldChange: (field: SearchField) => void;
   portLookupEmpty: boolean;
   exactPortQuery: number | null;
   portLookupOccupants: PortProcess[];
@@ -55,18 +57,6 @@ interface PortToolbarProps {
   settings: AppSettings;
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
-  onHideSystemChange: (hide: boolean) => void;
-  onHideUserChange: (hide: boolean) => void;
-  onAllowSystemActionsChange: (allow: boolean) => void;
-  onRefreshIntervalChange: (interval: RefreshInterval) => void;
-  onPreferredEditorChange: (editor: AppSettings["preferredEditor"]) => void;
-  onGroupByDirectoryChange: (group: boolean) => void;
-  onShowChangeToastsChange: (show: boolean) => void;
-  onChangeToastsMutedUntilChange: (mutedUntil: number | null) => void;
-  onWatchedPortNotificationsChange: (enabled: boolean) => void;
-  onWatchedPortsChange: (ports: number[]) => void;
-  onIncludeUdpChange: (include: boolean) => void;
-  onUseHttpsForLocalhostChange: (useHttps: boolean) => void;
   onFreePort: (port: number, occupants: PortProcess[]) => void;
   onRefresh: () => void;
   loading: boolean;
@@ -81,8 +71,6 @@ interface PortToolbarProps {
 export function PortToolbar({
   search,
   onSearchChange,
-  searchField,
-  onSearchFieldChange,
   portLookupEmpty,
   exactPortQuery,
   portLookupOccupants,
@@ -90,18 +78,6 @@ export function PortToolbar({
   settings,
   theme,
   onThemeChange,
-  onHideSystemChange,
-  onHideUserChange,
-  onAllowSystemActionsChange,
-  onRefreshIntervalChange,
-  onPreferredEditorChange,
-  onGroupByDirectoryChange,
-  onShowChangeToastsChange,
-  onChangeToastsMutedUntilChange,
-  onWatchedPortNotificationsChange,
-  onWatchedPortsChange,
-  onIncludeUdpChange,
-  onUseHttpsForLocalhostChange,
   onFreePort,
   onRefresh,
   loading,
@@ -112,6 +88,7 @@ export function PortToolbar({
   hiddenUserCount,
 }: PortToolbarProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchField = settings.searchField;
   const selectedField =
     SEARCH_FIELD_OPTIONS.find((option) => option.value === searchField) ??
     SEARCH_FIELD_OPTIONS[0];
@@ -126,9 +103,9 @@ export function PortToolbar({
       if ((field === "port" || field === "pid") && /\D/.test(search)) {
         onSearchChange("");
       }
-      onSearchFieldChange(field);
+      updateSettings({ searchField: field });
     },
-    [onSearchChange, onSearchFieldChange, search],
+    [onSearchChange, search],
   );
 
   useEffect(() => {
@@ -271,14 +248,14 @@ export function PortToolbar({
             <DropdownMenuLabel>Show listeners</DropdownMenuLabel>
             <DropdownMenuCheckboxItem
               checked={!settings.hideUserServices}
-              onCheckedChange={(checked) => onHideUserChange(!checked)}
+              onCheckedChange={(checked) => setHideUserServices(!checked)}
               onSelect={(event) => event.preventDefault()}
             >
               User services
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={!settings.hideSystemServices}
-              onCheckedChange={(checked) => onHideSystemChange(!checked)}
+              onCheckedChange={(checked) => setHideSystemServices(!checked)}
               onSelect={(event) => event.preventDefault()}
             >
               System services
@@ -321,26 +298,12 @@ export function PortToolbar({
           <RefreshCwIcon className={loading ? "animate-spin" : ""} />
         </Button>
 
-        <NotificationMenu
-          settings={settings}
-          onShowChangeToastsChange={onShowChangeToastsChange}
-          onChangeToastsMutedUntilChange={onChangeToastsMutedUntilChange}
-        />
+        <NotificationMenu settings={settings} />
 
         <SettingsDialog
           settings={settings}
           theme={theme}
           onThemeChange={onThemeChange}
-          onAllowSystemActionsChange={onAllowSystemActionsChange}
-          onRefreshIntervalChange={onRefreshIntervalChange}
-          onPreferredEditorChange={onPreferredEditorChange}
-          onGroupByDirectoryChange={onGroupByDirectoryChange}
-          onShowChangeToastsChange={onShowChangeToastsChange}
-          onChangeToastsMutedUntilChange={onChangeToastsMutedUntilChange}
-          onWatchedPortNotificationsChange={onWatchedPortNotificationsChange}
-          onWatchedPortsChange={onWatchedPortsChange}
-          onIncludeUdpChange={onIncludeUdpChange}
-          onUseHttpsForLocalhostChange={onUseHttpsForLocalhostChange}
           trigger={
             <Button
               variant="outline"

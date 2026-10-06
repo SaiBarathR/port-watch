@@ -407,4 +407,148 @@ mod tests {
     fn the_real_home_resolves() {
         assert!(canonical_home().is_ok());
     }
+
+    // The tests above each pick a path by hand. This one spells paths at
+    // random through a small tree, with `..`, `.`, symlinks and other
+    // capitalisations in them, and holds the answer against a list: of every
+    // folder in the tree, only these four may ever come back.
+    mod any_spelling {
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::sample::select;
+        use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
+        use std::cell::Cell;
+
+        const DELETABLE: &[&str] = &["Dev", "Dev/project", "Dev/project/src", "Documents/notes"];
+
+        const LINKS: &[&str] = &["link-out", "link-settings", "link-project"];
+
+        fn under_system(path: &Path) -> bool {
+            path.components().any(|part| part.as_os_str() == "system")
+        }
+
+        fn tree() -> Home {
+            let mut home = Home::new();
+            home.rules = DeleteRules::new(home.path.clone(), under_system);
+            for folder in [
+                "Dev/project/src",
+                "Documents/notes",
+                "Library/Caches",
+                ".config/nvim",
+                "system/app",
+            ] {
+                home.mkdir(folder);
+            }
+            let outside = home.outside("elsewhere/project");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::symlink;
+                symlink(outside.parent().unwrap(), home.path.join("Dev/link-out")).unwrap();
+                symlink(
+                    home.path.join(".config"),
+                    home.path.join("Dev/link-settings"),
+                )
+                .unwrap();
+                symlink(
+                    home.path.join("Dev/project"),
+                    home.path.join("link-project"),
+                )
+                .unwrap();
+            }
+            let _ = outside;
+            home
+        }
+
+        // Names of the tree, some more than once so that walks through it
+        // are common, and a few that lead out of it.
+        fn spelling() -> impl Strategy<Value = (Vec<&'static str>, &'static str)> {
+            let mut names = vec![
+                "Dev",
+                "Dev",
+                "Dev",
+                "project",
+                "project",
+                "src",
+                "Documents",
+                "Documents",
+                "notes",
+                "Library",
+                "Caches",
+                ".config",
+                "nvim",
+                "system",
+                "app",
+                "..",
+                "..",
+                "..",
+                ".",
+                "elsewhere",
+                "home",
+                "LIBRARY",
+                "documents",
+                "dev",
+            ];
+            let mut endings = vec![""];
+            if cfg!(unix) {
+                names.extend(LINKS);
+                names.extend(LINKS);
+                // With these, lstat follows a final symlink.
+                endings.extend(["/", "/."]);
+            }
+            (
+                proptest::collection::vec(select(names), 1..8),
+                select(endings),
+            )
+        }
+
+        #[test]
+        fn only_a_project_folder_ever_resolves() {
+            let home = tree();
+            let deletable: Vec<PathBuf> = DELETABLE
+                .iter()
+                .map(|folder| fs::canonicalize(home.path.join(folder)).unwrap())
+                .collect();
+            let resolved = Cell::new(0);
+
+            // The same paths on every run: a failure here is one the change
+            // under test caused.
+            let mut runner = TestRunner::new_with_rng(
+                Config {
+                    cases: 4000,
+                    failure_persistence: None,
+                    ..Config::default()
+                },
+                TestRng::deterministic_rng(RngAlgorithm::ChaCha),
+            );
+            runner
+                .run(&spelling(), |(segments, ending)| {
+                    let mut path = home.path.clone();
+                    path.extend(&segments);
+                    let path = PathBuf::from(format!("{}{ending}", path.display()));
+
+                    let named = segments.iter().rev().find(|segment| **segment != ".");
+                    let is_link = named.is_some_and(|name| LINKS.contains(name));
+                    let real = fs::canonicalize(&path).ok();
+                    let is_project = real.as_ref().is_some_and(|real| deletable.contains(real));
+
+                    match home.rules.resolve(&path) {
+                        Ok(found) => {
+                            resolved.set(resolved.get() + 1);
+                            prop_assert!(is_project, "{} resolved", found.display());
+                            prop_assert!(!is_link, "a symlink resolved");
+                            prop_assert_eq!(Some(found), real);
+                        }
+                        // Nothing that may be deleted is turned away either,
+                        // however it is spelled.
+                        Err(err) => prop_assert!(!is_project || is_link, "{err}"),
+                    }
+                    Ok(())
+                })
+                .unwrap();
+
+            // Enough of the walks ended on a project folder for the list to
+            // have been put to use.
+            assert!(resolved.get() >= 10, "only {} resolved", resolved.get());
+        }
+    }
 }

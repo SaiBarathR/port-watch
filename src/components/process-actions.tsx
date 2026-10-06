@@ -55,7 +55,7 @@ interface StopRequest {
 interface ProcessActionsProviderProps {
   /** Every listener, shown or not: freeing a port reaches past the filter. */
   processes: PortProcess[];
-  /** Called after something was stopped or removed. */
+  /** Called after a stop or a removal was tried, whether or not it worked. */
   onChanged: () => void;
   children: ReactNode;
 }
@@ -183,7 +183,7 @@ export function ProcessActionsProvider({
           (stopRequest?.targets.some((process) => process.is_system_service) ??
             false)
         }
-        onStopped={onChanged}
+        onComplete={onChanged}
       />
 
       <DeleteDialog

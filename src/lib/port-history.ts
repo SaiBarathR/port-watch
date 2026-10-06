@@ -35,24 +35,48 @@ let cachedEvents: PortHistoryEvent[] | null = null;
 const pendingEvents: PortHistoryEvent[] = [];
 let flushTimer: number | null = null;
 
+function isHistoryEvent(value: unknown): value is PortHistoryEvent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const event = value as Record<string, unknown>;
+  return (
+    typeof event.timestamp === "string" &&
+    (event.kind === "occupied" || event.kind === "freed") &&
+    typeof event.port === "number" &&
+    typeof event.protocol === "string" &&
+    typeof event.pid === "number" &&
+    typeof event.processName === "string"
+  );
+}
+
+// One line per event, so that a line that cannot be read costs that event
+// and not the history around it.
+function readLine(line: string): PortHistoryEvent | null {
+  try {
+    const event: unknown = JSON.parse(line);
+    return isHistoryEvent(event) ? event : null;
+  } catch {
+    return null;
+  }
+}
+
 function loadRaw(): PortHistoryEvent[] {
   if (cachedEvents !== null) {
     return cachedEvents;
   }
 
+  let raw: string | null = null;
   try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    if (!raw) {
-      cachedEvents = [];
-      return cachedEvents;
-    }
-    const lines = raw.trim().split("\n").filter(Boolean);
-    cachedEvents = lines.map((line) => JSON.parse(line) as PortHistoryEvent);
-    return cachedEvents;
+    raw = localStorage.getItem(HISTORY_KEY);
   } catch {
-    cachedEvents = [];
-    return cachedEvents;
+    // storage is unavailable: history lasts for the session
   }
+  cachedEvents = (raw ?? "")
+    .split("\n")
+    .map(readLine)
+    .filter((event) => event !== null);
+  return cachedEvents;
 }
 
 function saveRaw(events: PortHistoryEvent[]) {
@@ -212,7 +236,11 @@ export function clearPortHistory() {
     flushTimer = null;
   }
   cachedEvents = [];
-  localStorage.removeItem(HISTORY_KEY);
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+  } catch {
+    // nothing was stored there to begin with
+  }
 }
 
 export function formatHistoryTime(timestamp: string): string {

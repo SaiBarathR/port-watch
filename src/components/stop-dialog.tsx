@@ -26,7 +26,8 @@ interface StopDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   requireDoubleConfirm: boolean;
-  onStopped: () => void;
+  /** Called once the stops have been tried, whether or not they worked. */
+  onComplete: () => void;
   title?: string;
   description?: string;
 }
@@ -36,7 +37,7 @@ export function StopDialog({
   open,
   onOpenChange,
   requireDoubleConfirm,
-  onStopped,
+  onComplete,
   title,
   description,
 }: StopDialogProps) {
@@ -81,7 +82,6 @@ export function StopDialog({
           : `Stopped ${stopped.length} processes`,
       );
       handleOpenChange(false);
-      onStopped();
     }
 
     if (failures.length > 0) {
@@ -97,6 +97,10 @@ export function StopDialog({
     }
 
     setBusy(false);
+    // Also when nothing could be stopped: a refusal usually means the row was
+    // out of date (the process had gone, or its PID had passed to another),
+    // and the list should show what is there now.
+    onComplete();
   };
 
   const handleConfirm = () => {

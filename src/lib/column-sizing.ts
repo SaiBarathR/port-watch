@@ -18,9 +18,17 @@ export const DEFAULT_COLUMN_SIZING: ColumnSizingState = {
 
 export function loadColumnSizing(): ColumnSizingState {
   try {
-    const raw = localStorage.getItem(COLUMN_SIZING_KEY);
-    if (raw) {
-      return { ...DEFAULT_COLUMN_SIZING, ...JSON.parse(raw) };
+    const stored: unknown = JSON.parse(
+      localStorage.getItem(COLUMN_SIZING_KEY) ?? "null",
+    );
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      // Only widths a column can have: anything else would reach the table
+      // as a width and leave the column unusable.
+      const widths = Object.entries(stored).filter(
+        ([, width]) =>
+          typeof width === "number" && Number.isFinite(width) && width > 0,
+      );
+      return { ...DEFAULT_COLUMN_SIZING, ...Object.fromEntries(widths) };
     }
   } catch {
     // ignore
@@ -29,5 +37,9 @@ export function loadColumnSizing(): ColumnSizingState {
 }
 
 export function saveColumnSizing(sizing: ColumnSizingState) {
-  localStorage.setItem(COLUMN_SIZING_KEY, JSON.stringify(sizing));
+  try {
+    localStorage.setItem(COLUMN_SIZING_KEY, JSON.stringify(sizing));
+  } catch {
+    // Storage is full or unavailable: the widths last for the session.
+  }
 }

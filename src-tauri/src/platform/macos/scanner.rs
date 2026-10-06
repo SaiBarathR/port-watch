@@ -61,6 +61,10 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
         if record.bindings.is_empty() {
             continue;
         }
+        // Prefer the kernel's own name, which is what the stop path checks a
+        // PID against: lsof escapes backslashes, and non-ASCII bytes too when
+        // the app runs without a locale (launched from Finder or the Dock).
+        let name = super::shell::current_process_name(pid).unwrap_or(name);
 
         let ps = ps_info.get(&pid).cloned().unwrap_or_default();
         let path_info = paths.get(&pid).cloned().unwrap_or_default();

@@ -2566,6 +2566,7 @@ name = "port-watch"
 version = "0.3.0"
 dependencies = [
  "dirs",
+ "libc",
  "serde",
  "serde_json",
  "tauri",

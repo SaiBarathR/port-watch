@@ -14,11 +14,21 @@ import {
 /** Where the window kept settings itself, before the backend did. */
 const LEGACY_KEY = "port-watch-settings";
 
+/** The backend's settings as of one change. */
+interface Snapshot {
+  settings: unknown;
+  /** Goes up with every change the backend makes. */
+  revision: number;
+}
+
 let current: AppSettings = DEFAULT_SETTINGS;
 let connected = false;
-// Updates sent and not yet answered. A reply or an event describes the
-// settings as of one update, and applying it while a later one is on its way
-// would briefly undo that later one on screen.
+// The newest snapshot the backend has sent, by revision: replies and events
+// can arrive in any order.
+let newest: { revision: number; settings: AppSettings } | null = null;
+// Updates sent and not yet answered. A snapshot describes the settings as of
+// one change, and showing it while a later change is on its way would undo
+// that later one on screen for a moment.
 let unanswered = 0;
 const listeners = new Set<() => void>();
 
@@ -26,6 +36,22 @@ function publish(next: AppSettings) {
   current = next;
   for (const listener of listeners) {
     listener();
+  }
+}
+
+function receive(snapshot: Snapshot) {
+  if (newest === null || snapshot.revision >= newest.revision) {
+    newest = {
+      revision: snapshot.revision,
+      settings: readSettings(snapshot.settings),
+    };
+  }
+  showNewest();
+}
+
+function showNewest() {
+  if (unanswered === 0 && newest !== null) {
+    publish(newest.settings);
   }
 }
 
@@ -131,29 +157,25 @@ function readLegacySettings(): AppSettings | null {
  */
 export async function initSettings(): Promise<void> {
   try {
-    const reply = await invoke<{ settings: unknown; stored: boolean }>(
-      "get_settings",
-    );
+    const reply = await invoke<Snapshot & { adopted: boolean }>("get_settings");
     connected = true;
-    let settings = readSettings(reply.settings);
+    receive(reply);
 
     // The first launch of a version whose backend keeps the settings: hand
     // over what the window had been keeping. The window's copy is left where
     // it is, which is what an older version of the app would read.
-    const legacy = reply.stored ? null : readLegacySettings();
-    if (legacy) {
-      settings = readSettings(
-        await invoke("update_settings", { patch: legacy }),
+    if (!reply.adopted) {
+      receive(
+        await invoke<Snapshot>("adopt_window_settings", {
+          legacy: readLegacySettings() ?? {},
+        }),
       );
     }
-    publish(settings);
 
     // The tray changes settings too.
-    void listen("settings-changed", (event) => {
-      if (unanswered === 0) {
-        publish(readSettings(event.payload));
-      }
-    });
+    void listen<Snapshot>("settings-changed", (event) =>
+      receive(event.payload),
+    );
   } catch {
     // not inside the app
   }
@@ -176,28 +198,16 @@ export function updateSettings(change: Change): void {
   }
 
   unanswered += 1;
-  invoke("update_settings", { patch }).then(
-    (saved) => {
+  invoke<Snapshot>("update_settings", { patch }).then(
+    (snapshot) => {
       unanswered -= 1;
-      if (unanswered === 0) {
-        publish(readSettings(saved));
-      }
+      receive(snapshot);
     },
-    async (error: unknown) => {
+    (error: unknown) => {
       unanswered -= 1;
       toast.error("Could not save settings", { description: String(error) });
-      if (unanswered > 0) {
-        return;
-      }
-      // Show what the backend actually holds.
-      try {
-        const reply = await invoke<{ settings: unknown }>("get_settings");
-        if (unanswered === 0) {
-          publish(readSettings(reply.settings));
-        }
-      } catch {
-        // keep what is on screen
-      }
+      // Back to what the backend last said it holds.
+      showNewest();
     },
   );
 }

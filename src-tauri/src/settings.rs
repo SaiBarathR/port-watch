@@ -2,6 +2,7 @@
 //! read at launch. The tray and the poller start with what the user chose,
 //! instead of running on defaults until the window has loaded and told them.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -63,19 +64,6 @@ impl Settings {
         merged.extend(patch);
         serde_json::from_value(Value::Object(merged)).map_err(|e| format!("Invalid settings: {e}"))
     }
-
-    // Key by key, so that one value this version cannot read does not cost
-    // the user the rest of their settings.
-    fn from_stored(json: &str) -> Option<Settings> {
-        let stored: Map<String, Value> = serde_json::from_str(json).ok()?;
-        let mut settings = Settings::default();
-        for (key, value) in stored {
-            if let Ok(next) = settings.with(Map::from_iter([(key, value)])) {
-                settings = next;
-            }
-        }
-        Some(settings)
-    }
 }
 
 pub struct SettingsStore {
@@ -87,23 +75,44 @@ pub struct SettingsStore {
 
 struct State {
     settings: Settings,
-    /// Whether settings have ever been saved. Until they have, the window
-    /// may still hold the ones it kept itself in earlier versions.
-    stored: bool,
+    /// Goes up with every change, so the window can tell a newer snapshot
+    /// from an older one that reaches it late.
+    revision: u64,
+    /// Whether the window has handed over the settings it kept itself
+    /// before this file existed.
+    adopted: bool,
+    /// What has been changed since launch. If the tray changes a setting
+    /// before the window hands its old ones over, the newer choice stands.
+    touched: HashSet<String>,
+}
+
+/// The settings as of one revision.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Snapshot {
+    pub settings: Settings,
+    pub revision: u64,
+}
+
+pub struct Change {
+    pub before: Settings,
+    pub after: Snapshot,
 }
 
 impl SettingsStore {
     pub fn load(file: Option<PathBuf>) -> Self {
-        let stored = file
+        let (settings, adopted) = file
             .as_deref()
             .and_then(|file| std::fs::read_to_string(file).ok())
-            .and_then(|json| Settings::from_stored(&json));
+            .and_then(|json| read_stored(&json))
+            .unwrap_or_default();
 
         Self {
             file,
             state: Mutex::new(State {
-                stored: stored.is_some(),
-                settings: stored.unwrap_or_default(),
+                settings,
+                revision: 0,
+                adopted,
+                touched: HashSet::new(),
             }),
         }
     }
@@ -112,26 +121,63 @@ impl SettingsStore {
         self.lock().settings.clone()
     }
 
-    pub fn is_stored(&self) -> bool {
-        self.lock().stored
+    pub fn snapshot(&self) -> Snapshot {
+        let state = self.lock();
+        Snapshot {
+            settings: state.settings.clone(),
+            revision: state.revision,
+        }
     }
 
-    /// Replaces the keys of `patch` and saves. Returns the settings before
-    /// and after. Nothing changes when the patch is refused.
-    pub fn update(&self, patch: Map<String, Value>) -> Result<(Settings, Settings), String> {
-        let mut state = self.lock();
-        let before = state.settings.clone();
-        let after = before.with(patch)?;
+    pub fn is_adopted(&self) -> bool {
+        self.lock().adopted
+    }
 
+    /// Replaces the keys of `patch` and saves. Nothing changes when the
+    /// patch is refused.
+    pub fn update(&self, patch: Map<String, Value>) -> Result<Change, String> {
+        let mut state = self.lock();
+        let after = state.settings.with(patch.clone())?;
+        state.touched.extend(patch.into_iter().map(|(key, _)| key));
+        Ok(self.commit(&mut state, after))
+    }
+
+    /// Takes over the settings the window kept itself in earlier versions.
+    /// Each is used unless it has been changed since launch, or cannot be
+    /// read. Done once: later calls change nothing.
+    pub fn adopt(&self, legacy: Map<String, Value>) -> Change {
+        let mut state = self.lock();
+        let mut after = state.settings.clone();
+        if !state.adopted {
+            for (key, value) in legacy {
+                if state.touched.contains(&key) {
+                    continue;
+                }
+                if let Ok(next) = after.with(Map::from_iter([(key, value)])) {
+                    after = next;
+                }
+            }
+        }
+        state.adopted = true;
+        self.commit(&mut state, after)
+    }
+
+    fn commit(&self, state: &mut State, after: Settings) -> Change {
+        let before = std::mem::replace(&mut state.settings, after);
+        state.revision += 1;
         // Kept for the session even when the file cannot be written.
-        state.settings = after.clone();
-        state.stored = true;
         if let Some(file) = &self.file {
-            if let Err(error) = save(file, &after) {
+            if let Err(error) = save(file, &state.settings, state.adopted) {
                 eprintln!("Failed to save settings: {error}");
             }
         }
-        Ok((before, after))
+        Change {
+            before,
+            after: Snapshot {
+                settings: state.settings.clone(),
+                revision: state.revision,
+            },
+        }
     }
 
     // A panic while the lock was held leaves the settings as they were
@@ -143,13 +189,36 @@ impl SettingsStore {
     }
 }
 
+const ADOPTED_KEY: &str = "windowSettingsAdopted";
+const SETTINGS_KEY: &str = "settings";
+
+// The settings and whether the window's own have been adopted. None for a
+// file that is not this app's.
+fn read_stored(json: &str) -> Option<(Settings, bool)> {
+    let stored: Map<String, Value> = serde_json::from_str(json).ok()?;
+    let adopted = stored.get(ADOPTED_KEY) == Some(&Value::Bool(true));
+
+    // Key by key, so that one value this version cannot read does not cost
+    // the user the rest of their settings.
+    let mut settings = Settings::default();
+    if let Some(Value::Object(values)) = stored.get(SETTINGS_KEY) {
+        for (key, value) in values {
+            if let Ok(next) = settings.with(Map::from_iter([(key.clone(), value.clone())])) {
+                settings = next;
+            }
+        }
+    }
+    Some((settings, adopted))
+}
+
 // Written beside the file and moved over it, so a crash part-way leaves the
 // old settings and not half of the new ones.
-fn save(file: &std::path::Path, settings: &Settings) -> std::io::Result<()> {
+fn save(file: &std::path::Path, settings: &Settings, adopted: bool) -> std::io::Result<()> {
     if let Some(folder) = file.parent() {
         std::fs::create_dir_all(folder)?;
     }
-    let json = serde_json::to_vec_pretty(settings).map_err(std::io::Error::other)?;
+    let stored = serde_json::json!({ ADOPTED_KEY: adopted, SETTINGS_KEY: settings });
+    let json = serde_json::to_vec_pretty(&stored).map_err(std::io::Error::other)?;
     let partial = file.with_extension("json.partial");
     std::fs::write(&partial, json)?;
     std::fs::rename(&partial, file)
@@ -157,17 +226,29 @@ fn save(file: &std::path::Path, settings: &Settings) -> std::io::Result<()> {
 
 /// Changes settings on behalf of the window or the tray: saves them, makes
 /// the poller and the tray follow, and tells the window what they now are.
-pub fn update(app: &AppHandle, patch: Map<String, Value>) -> Result<Settings, String> {
-    let (before, after) = app.state::<SettingsStore>().update(patch)?;
+pub fn update(app: &AppHandle, patch: Map<String, Value>) -> Result<Snapshot, String> {
+    let change = app.state::<SettingsStore>().update(patch)?;
+    Ok(follow(app, change))
+}
 
-    apply_to_poller(app, &after);
-    if before.menu_bar_mode != after.menu_bar_mode {
-        if let Err(error) = crate::tray::apply_menu_bar_mode(app, after.menu_bar_mode) {
+/// Takes over what the window kept in earlier versions; see
+/// `SettingsStore::adopt`.
+pub fn adopt(app: &AppHandle, legacy: Map<String, Value>) -> Snapshot {
+    let change = app.state::<SettingsStore>().adopt(legacy);
+    follow(app, change)
+}
+
+fn follow(app: &AppHandle, change: Change) -> Snapshot {
+    let Change { before, after } = change;
+
+    apply_to_poller(app, &after.settings);
+    if before.menu_bar_mode != after.settings.menu_bar_mode {
+        if let Err(error) = crate::tray::apply_menu_bar_mode(app, after.settings.menu_bar_mode) {
             eprintln!("Failed to apply menu bar mode: {error}");
         }
     }
     let _ = app.emit("settings-changed", &after);
-    Ok(after)
+    after
 }
 
 pub fn apply_to_poller(app: &AppHandle, settings: &Settings) {
@@ -190,23 +271,28 @@ mod tests {
         }
     }
 
+    fn file_in(dir: &tempfile::TempDir) -> PathBuf {
+        dir.path().join("config").join("settings.json")
+    }
+
     fn store_in(dir: &tempfile::TempDir) -> SettingsStore {
-        SettingsStore::load(Some(dir.path().join("config").join("settings.json")))
+        SettingsStore::load(Some(file_in(dir)))
     }
 
     #[test]
-    fn a_first_launch_has_defaults_and_nothing_stored() {
+    fn a_first_launch_has_defaults_and_nothing_adopted() {
         let dir = tempfile::tempdir().unwrap();
         let store = store_in(&dir);
 
         assert_eq!(store.get(), Settings::default());
-        assert!(!store.is_stored());
+        assert!(!store.is_adopted());
+        assert_eq!(store.snapshot().revision, 0);
     }
 
     #[test]
     fn an_update_is_there_at_the_next_launch() {
         let dir = tempfile::tempdir().unwrap();
-        let (before, after) = store_in(&dir)
+        let change = store_in(&dir)
             .update(patch(json!({
                 "menuBarMode": true,
                 "refreshIntervalMs": 10000,
@@ -215,11 +301,10 @@ mod tests {
                 "changeToastsMutedUntil": null,
             })))
             .unwrap();
-        assert_eq!(before, Settings::default());
+        assert_eq!(change.before, Settings::default());
+        let after = change.after.settings;
 
-        let relaunched = store_in(&dir);
-        assert!(relaunched.is_stored());
-        assert_eq!(relaunched.get(), after);
+        assert_eq!(store_in(&dir).get(), after);
         assert!(after.menu_bar_mode);
         assert_eq!(after.refresh_interval_ms, 10_000);
         assert_eq!(after.watched_ports, vec![3000, 8080]);
@@ -235,9 +320,11 @@ mod tests {
         store
             .update(patch(json!({ "includeUdp": true, "searchField": "port" })))
             .unwrap();
-        let (_, after) = store
+        let after = store
             .update(patch(json!({ "useHttpsForLocalhost": true })))
-            .unwrap();
+            .unwrap()
+            .after
+            .settings;
 
         assert!(after.include_udp);
         assert!(after.use_https_for_localhost);
@@ -245,10 +332,29 @@ mod tests {
     }
 
     #[test]
+    fn every_change_has_a_higher_revision() {
+        let store = SettingsStore::load(None);
+        let first = store.update(patch(json!({ "includeUdp": true }))).unwrap();
+        let second = store.adopt(Map::new());
+        let third = store.update(patch(json!({ "includeUdp": false }))).unwrap();
+
+        assert_eq!(
+            [
+                first.after.revision,
+                second.after.revision,
+                third.after.revision
+            ],
+            [1, 2, 3]
+        );
+        assert_eq!(store.snapshot(), third.after);
+    }
+
+    #[test]
     fn a_patch_of_the_wrong_type_changes_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let store = store_in(&dir);
         store.update(patch(json!({ "includeUdp": true }))).unwrap();
+        let before = store.snapshot();
 
         for bad in [
             json!({ "allowSystemProcessActions": "yes" }),
@@ -256,38 +362,111 @@ mod tests {
             json!({ "watchedPorts": [70000] }),
             json!({ "refreshIntervalMs": -1, "menuBarMode": true }),
         ] {
-            let error = store.update(patch(bad)).unwrap_err();
+            let error = store.update(patch(bad)).err().unwrap();
             assert!(error.starts_with("Invalid settings"), "{error}");
         }
 
-        let settings = store.get();
-        assert!(settings.include_udp);
-        assert!(!settings.menu_bar_mode);
-        assert_eq!(store_in(&dir).get(), settings);
+        assert_eq!(store.snapshot(), before);
+        assert_eq!(store_in(&dir).get(), before.settings);
     }
 
     #[test]
-    fn stored_json_is_camel_case_and_flat() {
-        let json = serde_json::to_value(Settings {
-            window: patch(json!({ "hideSystemServices": true })),
-            ..Settings::default()
-        })
-        .unwrap();
+    fn the_file_holds_the_settings_in_camel_case_and_whether_they_were_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(&dir);
+        store
+            .update(patch(json!({ "hideSystemServices": true })))
+            .unwrap();
 
-        assert_eq!(json["refreshIntervalMs"], json!(3000));
-        assert_eq!(json["preferredEditor"], json!("cursor"));
-        assert_eq!(json["hideSystemServices"], json!(true));
-        assert!(json.get("window").is_none());
+        let read = || -> Value {
+            serde_json::from_str(&std::fs::read_to_string(file_in(&dir)).unwrap()).unwrap()
+        };
+        assert_eq!(read()["windowSettingsAdopted"], json!(false));
+        assert_eq!(read()["settings"]["refreshIntervalMs"], json!(3000));
+        assert_eq!(read()["settings"]["preferredEditor"], json!("cursor"));
+        assert_eq!(read()["settings"]["hideSystemServices"], json!(true));
+        assert!(read()["settings"].get("window").is_none());
+
+        store.adopt(Map::new());
+        assert_eq!(read()["windowSettingsAdopted"], json!(true));
+    }
+
+    // The first launch of a version that keeps settings here: the window
+    // hands over the ones it had.
+    #[test]
+    fn the_windows_old_settings_are_adopted_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(&dir);
+        let adopted = store
+            .adopt(patch(json!({
+                "includeUdp": true,
+                "pinnedPaths": ["/Users/dev/app"],
+                "preferredEditor": "code",
+            })))
+            .after
+            .settings;
+
+        assert!(adopted.include_udp);
+        assert_eq!(adopted.preferred_editor, "code");
+        assert_eq!(adopted.window["pinnedPaths"], json!(["/Users/dev/app"]));
+
+        // Not a second time, in this launch or a later one.
+        for store in [store, store_in(&dir)] {
+            assert!(store.is_adopted());
+            let again = store.adopt(patch(json!({ "includeUdp": false })));
+            assert_eq!(again.after.settings, adopted);
+        }
+    }
+
+    // The tray is usable before the window has loaded. What the user picks
+    // there must neither be undone by the hand-over nor cancel it.
+    #[test]
+    fn a_change_made_before_the_hand_over_stands_and_the_rest_is_still_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(&dir);
+        store.update(patch(json!({ "menuBarMode": true }))).unwrap();
+        assert!(!store.is_adopted());
+
+        let adopted = store
+            .adopt(patch(json!({
+                "menuBarMode": false,
+                "watchedPorts": [3000],
+                "pinnedPaths": ["/Users/dev/app"],
+            })))
+            .after
+            .settings;
+
+        assert!(adopted.menu_bar_mode);
+        assert_eq!(adopted.watched_ports, vec![3000]);
+        assert_eq!(adopted.window["pinnedPaths"], json!(["/Users/dev/app"]));
+    }
+
+    #[test]
+    fn an_old_setting_that_cannot_be_read_is_left_out_of_the_hand_over() {
+        let store = SettingsStore::load(None);
+        let adopted = store
+            .adopt(patch(json!({
+                "refreshIntervalMs": "fast",
+                "watchedPorts": [80, "x"],
+                "includeUdp": true,
+            })))
+            .after
+            .settings;
+
+        assert_eq!(adopted.refresh_interval_ms, 3000);
+        assert!(adopted.watched_ports.is_empty());
+        assert!(adopted.include_udp);
     }
 
     // One value this version cannot read must not reset everything else.
     #[test]
     fn a_stored_value_that_cannot_be_read_only_costs_itself() {
-        let settings = Settings::from_stored(
-            r#"{"refreshIntervalMs":"fast","includeUdp":true,"watchedPorts":[80,"x"],"menuBarMode":true,"groupByDirectory":true}"#,
+        let (settings, adopted) = read_stored(
+            r#"{"windowSettingsAdopted":true,"settings":{"refreshIntervalMs":"fast","includeUdp":true,"watchedPorts":[80,"x"],"menuBarMode":true,"groupByDirectory":true}}"#,
         )
         .unwrap();
 
+        assert!(adopted);
         assert_eq!(settings.refresh_interval_ms, 3000);
         assert!(settings.watched_ports.is_empty());
         assert!(settings.include_udp);
@@ -299,26 +478,29 @@ mod tests {
     fn a_file_that_is_not_settings_is_ignored() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
-        for contents in ["", "not json", "[1, 2]", "null"] {
+        for contents in ["", "not json", "[1, 2]", "null", r#"{"settings":7}"#] {
             std::fs::write(&file, contents).unwrap();
             let store = SettingsStore::load(Some(file.clone()));
             assert_eq!(store.get(), Settings::default(), "{contents:?}");
-            assert!(!store.is_stored(), "{contents:?}");
+            assert!(!store.is_adopted(), "{contents:?}");
         }
     }
 
     #[test]
     fn without_a_config_folder_settings_last_for_the_session() {
         let store = SettingsStore::load(None);
-        let (_, after) = store.update(patch(json!({ "includeUdp": true }))).unwrap();
+        let after = store
+            .update(patch(json!({ "includeUdp": true })))
+            .unwrap()
+            .after
+            .settings;
 
         assert!(after.include_udp);
         assert!(store.get().include_udp);
-        assert!(store.is_stored());
     }
 
     #[test]
-    fn a_failed_save_leaves_no_partial_file_in_place_of_the_settings() {
+    fn saving_leaves_only_the_settings_file_behind() {
         let dir = tempfile::tempdir().unwrap();
         let store = store_in(&dir);
         store.update(patch(json!({ "includeUdp": true }))).unwrap();

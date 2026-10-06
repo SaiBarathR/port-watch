@@ -16,7 +16,7 @@ use commands::cli_install::{get_cli_install_status, install_cli_to_path, uninsta
 use commands::filesystem::{delete_project, open_in_finder};
 use commands::notifications::send_notification;
 use commands::process::stop_process;
-use commands::settings::{get_settings, update_settings};
+use commands::settings::{adopt_window_settings, get_settings, update_settings};
 use commands::workflow::{open_in_editor, open_in_terminal, open_url};
 use poller::{
     get_listening_ports, set_refresh_paused, start_poller, trigger_port_scan, PortPoller,
@@ -69,6 +69,7 @@ pub fn run() {
             trigger_port_scan,
             get_settings,
             update_settings,
+            adopt_window_settings,
             stop_process,
             open_in_finder,
             delete_project,

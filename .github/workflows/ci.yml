@@ -105,7 +105,12 @@ jobs:
           $port = $listener.LocalEndpoint.Port
           $output = & $shim check $port
           $code = $LASTEXITCODE
+          # And with its output redirected to a file.
+          Start-Process -FilePath $shim -ArgumentList "check", "$port" -RedirectStandardOutput owners.json -NoNewWindow -Wait
+          $redirected = Get-Content owners.json -Raw
           $listener.Stop()
           if ($code -ne 1) { throw "expected exit code 1 for port $port in use, got $code" }
-          if ("$output" -notmatch "`"port`":$port\b") { throw "port $port missing from the output: $output" }
+          # Captured by a script, as CI jobs that parse the JSON do.
+          if ("$output" -notmatch "`"port`":$port\b") { throw "port $port missing from the captured output: $output" }
+          if ("$redirected" -notmatch "`"port`":$port\b") { throw "port $port missing from the redirected output: $redirected" }
           exit 0

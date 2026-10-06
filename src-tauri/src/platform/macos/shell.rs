@@ -130,6 +130,47 @@ pub fn current_process_name(pid: u32) -> Option<String> {
     }
 }
 
+/// When the process started, in Unix seconds. Unlike `ps -o etime`, it does
+/// not move from one scan to the next. `KERN_PROC_PID` answers for any user's
+/// process; `proc_pidinfo` refuses the ones this user does not own.
+pub fn process_started_at(pid: u32) -> Option<u64> {
+    // The reply is a `struct kinfo_proc` (<sys/sysctl.h>), which the libc
+    // crate does not carry. It opens with the process's start time as a
+    // `timeval`, and that is all that is read from it; the buffer is simply
+    // larger than the struct's 648 bytes.
+    #[repr(C, align(8))]
+    struct Reply([u8; 1024]);
+
+    let mut reply = Reply([0; 1024]);
+    let mut size = std::mem::size_of::<Reply>();
+    let mut mib = [
+        libc::CTL_KERN,
+        libc::KERN_PROC,
+        libc::KERN_PROC_PID,
+        pid as libc::c_int,
+    ];
+    // SAFETY: `mib` names one process, `reply` is a writable buffer of `size`
+    // bytes, and the kernel writes at most `size` bytes, storing how many it
+    // wrote back into `size`.
+    let status = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            reply.0.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    // A PID that does not exist is a success with nothing written.
+    if status != 0 || size < std::mem::size_of::<libc::timeval>() {
+        return None;
+    }
+
+    let seconds = i64::from_ne_bytes(reply.0[..8].try_into().ok()?);
+    u64::try_from(seconds).ok().filter(|seconds| *seconds > 0)
+}
+
 // Exact comparison: both names are the kernel's, and anything looser would
 // let one sibling helper pass for another.
 fn verify_process_identity(pid: u32, expected_name: Option<&str>) -> Result<(), String> {
@@ -221,6 +262,63 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         false
+    }
+
+    fn unix_now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    #[test]
+    fn start_time_is_stable_and_recent_for_this_process() {
+        let pid = std::process::id();
+        let now = unix_now();
+
+        let first = process_started_at(pid).expect("own start time");
+        let second = process_started_at(pid).expect("own start time");
+
+        assert_eq!(first, second);
+        assert!(first <= now, "{first} is after {now}");
+        assert!(now - first < 3_600, "{first} is long before {now}");
+    }
+
+    #[test]
+    fn start_time_is_readable_for_another_users_process() {
+        // launchd runs as root, and the scan lists such processes too.
+        let launchd = process_started_at(1).expect("launchd's start time");
+        assert!(launchd > 0 && launchd <= unix_now());
+    }
+
+    #[test]
+    fn start_time_is_none_for_a_pid_that_does_not_exist() {
+        let mut child = Command::new("true").spawn().expect("spawn true");
+        let pid = child.id();
+        child.wait().expect("wait");
+        assert_eq!(process_started_at(pid), None);
+    }
+
+    #[test]
+    fn start_time_matches_what_ps_reports() {
+        let pid = std::process::id();
+        let output = Command::new("ps")
+            .env("LC_ALL", "C")
+            .args(["-p", &pid.to_string(), "-o", "etime="])
+            .output()
+            .expect("ps should run");
+        // etime is [[dd-]hh:]mm:ss; a test process is seconds old.
+        let etime = String::from_utf8_lossy(&output.stdout);
+        let seconds: u64 = etime
+            .trim()
+            .rsplit(':')
+            .zip([1, 60, 3_600])
+            .map(|(part, unit)| part.parse::<u64>().unwrap() * unit)
+            .sum();
+
+        let started = process_started_at(pid).expect("own start time");
+        let from_ps = unix_now() - seconds;
+        assert!(started.abs_diff(from_ps) <= 2, "{started} vs {from_ps}");
     }
 
     #[test]

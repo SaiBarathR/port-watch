@@ -51,7 +51,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
             project_root,
             system_kind: SystemKind::User,
             is_system_service: false,
-            uptime_seconds: proc_info.uptime_seconds,
+            started_at: proc_info.started_at,
             delete_blocked: None,
         };
 
@@ -76,7 +76,7 @@ struct ProcInfo {
     command_line: String,
     working_directory: String,
     executable_path: String,
-    uptime_seconds: u64,
+    started_at: u64,
 }
 
 fn run_ss_tcp() -> Result<Vec<SocketRecord>, String> {
@@ -230,14 +230,14 @@ fn read_proc_info(pid: u32) -> Result<ProcInfo, String> {
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     let user = read_proc_user(&proc_dir);
-    let uptime_seconds = read_proc_uptime(&proc_dir);
+    let started_at = read_proc_started_at(&proc_dir);
 
     Ok(ProcInfo {
         user,
         command_line,
         working_directory,
         executable_path,
-        uptime_seconds,
+        started_at,
     })
 }
 
@@ -316,39 +316,89 @@ fn resolve_uid_uncached(uid: u32) -> Option<String> {
     }
 }
 
-fn read_proc_uptime(proc_dir: &Path) -> u64 {
+// When the process started, in Unix seconds: the boot time plus the start
+// offset the kernel records. Unlike an uptime, it is the same on every scan.
+fn read_proc_started_at(proc_dir: &Path) -> u64 {
     use std::sync::OnceLock;
 
-    static CLOCK_TICKS: OnceLock<f64> = OnceLock::new();
+    static CLOCK_TICKS: OnceLock<u64> = OnceLock::new();
     let clock_ticks = *CLOCK_TICKS.get_or_init(|| {
         run_with_timeout(Command::new("getconf").arg("CLK_TCK"), SCAN_COMMAND_TIMEOUT)
             .ok()
             .and_then(|output| String::from_utf8(output.stdout).ok())
             .and_then(|value| value.trim().parse().ok())
-            .unwrap_or(100.0)
+            .filter(|ticks| *ticks > 0)
+            .unwrap_or(100)
     });
 
-    let stat = fs::read_to_string(proc_dir.join("stat")).unwrap_or_default();
-    // The comm field (2nd) can contain spaces and parens — e.g. "(tmux: server)"
-    // — so split after its closing paren; starttime is overall field 22, i.e.
-    // the 20th field after state.
-    let start_ticks = stat
+    // Read once: the kernel derives it from the wall clock, so it can shift
+    // by a second after a clock adjustment and make every process look new.
+    static BOOT_TIME: OnceLock<Option<u64>> = OnceLock::new();
+    let Some(boot_time) = *BOOT_TIME
+        .get_or_init(|| parse_boot_time(&fs::read_to_string("/proc/stat").unwrap_or_default()))
+    else {
+        return 0;
+    };
+
+    match parse_start_ticks(&fs::read_to_string(proc_dir.join("stat")).unwrap_or_default()) {
+        Some(start_ticks) => boot_time + start_ticks / clock_ticks,
+        None => 0,
+    }
+}
+
+// `btime <seconds>` in /proc/stat.
+fn parse_boot_time(proc_stat: &str) -> Option<u64> {
+    proc_stat
+        .lines()
+        .find_map(|line| line.strip_prefix("btime "))
+        .and_then(|value| value.trim().parse().ok())
+}
+
+// The comm field (2nd) can contain spaces and parens — e.g. "(tmux: server)"
+// — so split after its closing paren; starttime is overall field 22, i.e.
+// the 20th field after state.
+fn parse_start_ticks(proc_pid_stat: &str) -> Option<u64> {
+    proc_pid_stat
         .rsplit_once(')')
         .map(|(_, rest)| rest)
         .and_then(|rest| rest.split_whitespace().nth(19))
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(0);
-    let system_uptime = fs::read_to_string("/proc/uptime")
-        .ok()
-        .and_then(|raw| raw.split_whitespace().next()?.parse::<f64>().ok())
-        .unwrap_or(0.0);
-    let start_secs = start_ticks as f64 / clock_ticks;
-    (system_uptime - start_secs).max(0.0) as u64
+        .and_then(|value| value.parse().ok())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_boot_time_reads_btime() {
+        let stat = "cpu  1 2 3\nintr 5\nbtime 1790000000\nprocesses 42\n";
+        assert_eq!(parse_boot_time(stat), Some(1_790_000_000));
+        assert_eq!(parse_boot_time("cpu  1 2 3\n"), None);
+    }
+
+    #[test]
+    fn parse_start_ticks_survives_spaces_and_parens_in_the_name() {
+        let stat = "4242 (tmux: server (1)) S 1 4242 4242 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 1 0 987654 1000000 200 18446744073709551615";
+        assert_eq!(parse_start_ticks(stat), Some(987_654));
+        assert_eq!(parse_start_ticks(""), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn started_at_is_stable_and_recent_for_this_process() {
+        let proc_dir = PathBuf::from(format!("/proc/{}", std::process::id()));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let first = read_proc_started_at(&proc_dir);
+        let second = read_proc_started_at(&proc_dir);
+
+        assert_eq!(first, second);
+        assert!(first <= now + 1, "{first} is after {now}");
+        assert!(now - first.min(now) < 3_600, "{first} is long before {now}");
+    }
 
     #[test]
     fn parse_ss_line_extracts_pid_and_local() {

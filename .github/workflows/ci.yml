@@ -113,4 +113,22 @@ jobs:
           # Captured by a script, as CI jobs that parse the JSON do.
           if ("$output" -notmatch "`"port`":$port\b") { throw "port $port missing from the captured output: $output" }
           if ("$redirected" -notmatch "`"port`":$port\b") { throw "port $port missing from the redirected output: $redirected" }
+
+          # The listener is this step's own shell, started moments ago.
+          $startedAt = [long]@("$output" | ConvertFrom-Json)[0].started_at
+          $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          if ($startedAt -le 0 -or $startedAt -gt $now + 5 -or $now - $startedAt -gt 86400) {
+            throw "implausible started_at $startedAt (now $now): $output"
+          }
+
+          # UDP rides in the same PowerShell scan, and only when asked for.
+          $udp = New-Object System.Net.Sockets.UdpClient 0
+          $udpPort = $udp.Client.LocalEndPoint.Port
+          & $shim check $udpPort --udp | Out-Null
+          $withUdp = $LASTEXITCODE
+          & $shim check $udpPort | Out-Null
+          $withoutUdp = $LASTEXITCODE
+          $udp.Close()
+          if ($withUdp -ne 1) { throw "expected exit code 1 for UDP port $udpPort with --udp, got $withUdp" }
+          if ($withoutUdp -ne 0) { throw "expected exit code 0 for UDP port $udpPort without --udp, got $withoutUdp" }
           exit 0

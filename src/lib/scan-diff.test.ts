@@ -25,7 +25,7 @@ function listener(
     project_root: "/Users/dev/app",
     system_kind: "user",
     is_system_service: false,
-    uptime_seconds: 10,
+    started_at: 1_790_000_000,
     delete_blocked: null,
     ...overrides,
   };

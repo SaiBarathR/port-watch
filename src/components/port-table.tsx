@@ -33,6 +33,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { DeleteDialog } from "@/components/delete-dialog";
+import { Uptime } from "@/components/uptime";
 import {
   OpenMenuProvider,
   PortTableActionsCell,
@@ -57,7 +58,6 @@ import { sortForTable, withGroupHeaders } from "@/lib/table-rows";
 import type { AppSettings, PortProcess, RowChangeKind } from "@/lib/types";
 import {
   formatPorts,
-  formatUptime,
   processesOnPort,
   systemKindLabel,
   userProcesses,
@@ -291,14 +291,14 @@ const columns: ColumnDef<PortProcess>[] = [
   },
   {
     id: "uptime",
-    accessorKey: "uptime_seconds",
+    accessorKey: "started_at",
     header: "Uptime",
     size: DEFAULT_COLUMN_SIZING.uptime,
     minSize: 72,
     maxSize: 160,
     cell: ({ row }) => (
       <span className="block truncate font-mono text-sm">
-        {formatUptime(row.original.uptime_seconds)}
+        <Uptime startedAt={row.original.started_at} />
       </span>
     ),
   },

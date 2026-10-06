@@ -272,7 +272,7 @@ mod tests {
                 project_root: project,
                 system_kind: SystemKind::User,
                 is_system_service: false,
-                uptime_seconds: 60,
+                started_at: 1_790_000_000,
                 delete_blocked: None,
             }
         }

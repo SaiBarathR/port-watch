@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { RowMenuItems } from "@/components/row-menu";
 import { useRowActionRunner, useRowMenu } from "@/hooks/use-row-actions";
-import { focusRow } from "@/lib/row-focus";
+import { returnFocusToRow } from "@/lib/row-focus";
 import { formatPorts, type PortProcess } from "@/lib/types";
 
 interface OpenMenuContextValue {
@@ -113,7 +113,7 @@ function RowDropdownContent({
       align="end"
       onCloseAutoFocus={(event) => {
         event.preventDefault();
-        focusRow(process.id);
+        returnFocusToRow(process.id);
       }}
     >
       <MenuHeading process={process} />
@@ -140,7 +140,7 @@ export function RowContextMenuContent({ process, portIsShared }: RowMenuProps) {
     <ContextMenuContent
       onCloseAutoFocus={(event) => {
         event.preventDefault();
-        focusRow(process.id);
+        returnFocusToRow(process.id);
       }}
     >
       <MenuHeading process={process} />

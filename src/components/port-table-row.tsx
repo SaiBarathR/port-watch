@@ -67,7 +67,10 @@ export const PortTableDataRow = memo(function PortTableDataRow({
   useRefreshPause("row-context-menu", menuOpen);
 
   return (
-    <ContextMenu onOpenChange={setMenuOpen}>
+    // Not modal, like the "…" menu. A modal menu locks the page's pointer
+    // events while it is open and hands that lock on badly when one of its
+    // items opens a dialog.
+    <ContextMenu modal={false} onOpenChange={setMenuOpen}>
       <ContextMenuTrigger asChild>
         <tr
           data-row-id={row.id}

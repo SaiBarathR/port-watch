@@ -63,8 +63,26 @@ impl PortProcess {
 
 pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, String> {
     let mut processes = platform::scan_listening_ports(include_udp)?;
+    sort_processes(&mut processes);
     mark_undeletable_folders(&mut processes, DeleteRules::for_current_user());
     Ok(processes)
+}
+
+// By first port, as the table shows them. The platform scanners collect
+// processes in hash maps, so ties must be broken the same way every time:
+// two scans of an unchanged machine have to compare equal, or every scan
+// would be announced as a change.
+fn sort_processes(processes: &mut [PortProcess]) {
+    fn key(process: &PortProcess) -> (u16, u32, &str, &str) {
+        let first = process.ports.first();
+        (
+            first.map(|binding| binding.port).unwrap_or(0),
+            process.pid,
+            first.map(|binding| binding.address.as_str()).unwrap_or(""),
+            first.map(|binding| binding.protocol.as_str()).unwrap_or(""),
+        )
+    }
+    processes.sort_by(|a, b| key(a).cmp(&key(b)));
 }
 
 // A platform scanner may already have blocked a folder for a reason only it
@@ -83,7 +101,70 @@ fn mark_undeletable_folders(processes: &mut [PortProcess], rules: Result<DeleteR
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::classifier::SystemKind;
     use crate::platform::shared::parse_address_port;
+
+    fn listener(pid: u32, address: &str, port: u16) -> PortProcess {
+        PortProcess {
+            pid,
+            name: "nginx".into(),
+            user: "dev".into(),
+            ports: vec![PortBinding {
+                address: address.into(),
+                port,
+                protocol: "TCP".into(),
+            }],
+            executable_path: String::new(),
+            script_path: None,
+            command_line: String::new(),
+            working_directory: String::new(),
+            project_root: String::new(),
+            system_kind: SystemKind::User,
+            is_system_service: false,
+            started_at: 0,
+            delete_blocked: None,
+        }
+    }
+
+    // A master and its workers share a port, and on Linux several sockets
+    // nobody can be named for share PID 0. Whatever order they are found in,
+    // they come out the same.
+    #[test]
+    fn processes_sharing_a_first_port_always_sort_the_same_way() {
+        let sorted = |mut processes: Vec<PortProcess>| {
+            sort_processes(&mut processes);
+            processes
+                .iter()
+                .map(|process| {
+                    (
+                        process.ports[0].port,
+                        process.pid,
+                        process.ports[0].address.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let one_order = vec![
+            listener(300, "*", 8080),
+            listener(0, "[::]", 22),
+            listener(200, "*", 80),
+            listener(0, "0.0.0.0", 22),
+            listener(100, "*", 80),
+        ];
+        let mut another_order = one_order.clone();
+        another_order.reverse();
+
+        let expected = vec![
+            (22, 0, "0.0.0.0".to_string()),
+            (22, 0, "[::]".to_string()),
+            (80, 100, "*".to_string()),
+            (80, 200, "*".to_string()),
+            (8080, 300, "*".to_string()),
+        ];
+        assert_eq!(sorted(one_order), expected);
+        assert_eq!(sorted(another_order), expected);
+    }
 
     #[test]
     fn parse_network_name_ipv4() {

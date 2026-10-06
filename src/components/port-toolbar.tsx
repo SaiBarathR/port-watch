@@ -34,6 +34,7 @@ import { PortHistoryTimeline } from "@/components/port-history-timeline";
 import { SettingsDialog } from "@/components/settings-dialog";
 import type { ThemeMode } from "@/hooks/use-theme";
 import { processesToJson, processesToMarkdown } from "@/lib/export-snapshot";
+import { isMacOS } from "@/lib/platform";
 import {
   SEARCH_FIELD_OPTIONS,
   type AppSettings,
@@ -69,6 +70,8 @@ interface PortToolbarProps {
   onFreePort: (port: number, occupants: PortProcess[]) => void;
   onRefresh: () => void;
   loading: boolean;
+  /** True until the first scan has come back. */
+  firstScanPending: boolean;
   userCount: number;
   systemCount: number;
   hiddenSystemCount: number;
@@ -102,6 +105,7 @@ export function PortToolbar({
   onFreePort,
   onRefresh,
   loading,
+  firstScanPending,
   userCount,
   systemCount,
   hiddenSystemCount,
@@ -131,7 +135,6 @@ export function PortToolbar({
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        handleSearchFieldChange("port");
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
       }
@@ -139,7 +142,7 @@ export function PortToolbar({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleSearchFieldChange]);
+  }, []);
 
   const copyExport = async (format: "json" | "markdown") => {
     const text =
@@ -163,17 +166,19 @@ export function PortToolbar({
         ? "Search ports, processes, paths, PID…"
         : `Search by ${selectedField.label.toLowerCase()}…`;
 
-  const listenerSummary = [
-    `${userCount} user listener${userCount === 1 ? "" : "s"}`,
-    hiddenUserCount > 0 ? `${hiddenUserCount} user (hidden)` : null,
-    hiddenSystemCount > 0 ? `${hiddenSystemCount} system (hidden)` : null,
-    !settings.hideSystemServices && systemCount > 0
-      ? `${systemCount} system`
-      : null,
-    settings.includeUdp ? "UDP included" : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const listenerSummary = firstScanPending
+    ? "Scanning ports…"
+    : [
+        `${userCount} user listener${userCount === 1 ? "" : "s"}`,
+        hiddenUserCount > 0 ? `${hiddenUserCount} user (hidden)` : null,
+        hiddenSystemCount > 0 ? `${hiddenSystemCount} system (hidden)` : null,
+        !settings.hideSystemServices && systemCount > 0
+          ? `${systemCount} system`
+          : null,
+        settings.includeUdp ? "UDP included" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
 
   const stoppableOccupants = portLookupOccupants.filter(
     (process) =>
@@ -245,7 +250,7 @@ export function PortToolbar({
                 </button>
               )}
               <kbd className="hidden rounded border bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
-                ⌘K
+                {isMacOS() ? "⌘K" : "Ctrl K"}
               </kbd>
             </div>
           </div>

@@ -16,6 +16,7 @@ function App() {
   const {
     processes,
     allProcesses,
+    loading,
     refreshing,
     error,
     refresh,
@@ -113,6 +114,7 @@ function App() {
           onFreePort={handleFreePort}
           onRefresh={() => void refresh()}
           loading={refreshing}
+          firstScanPending={loading}
           userCount={userCount}
           systemCount={systemCount}
           hiddenSystemCount={hiddenSystemCount}
@@ -130,6 +132,7 @@ function App() {
         <div className="min-h-0 flex-1">
           <PortTable
             processes={allProcesses}
+            loading={loading}
             search={search}
             settings={settings}
             rowChanges={rowChanges}

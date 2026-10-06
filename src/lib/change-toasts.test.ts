@@ -3,8 +3,9 @@ import {
   MUTE_DURATIONS,
   changeToastStatus,
   isChangeToastsMuted,
+  addPortChanges,
   isPortChangeToastId,
-  nextPortChangeToastId,
+  portChangeToastContent,
 } from "./change-toasts";
 
 const NOW = Date.UTC(2026, 9, 6, 12, 0, 0);
@@ -71,17 +72,37 @@ describe("changeToastStatus", () => {
   });
 });
 
-describe("port change toast ids", () => {
-  it("are unique and recognisable", () => {
-    const first = nextPortChangeToastId();
-    const second = nextPortChangeToastId();
-    expect(first).not.toBe(second);
-    expect(isPortChangeToastId(first)).toBe(true);
-    expect(isPortChangeToastId(second)).toBe(true);
-  });
-
-  it("does not match sonner's own numeric ids or other toasts", () => {
+describe("the port change toast", () => {
+  it("has one id, distinct from sonner's own and from other toasts", () => {
+    expect(isPortChangeToastId("port-changes")).toBe(true);
     expect(isPortChangeToastId(7)).toBe(false);
     expect(isPortChangeToastId("copied")).toBe(false);
+  });
+
+  it("describes a single change", () => {
+    const shown = addPortChanges({ total: 0, latest: [] }, ["Port 3000 freed"]);
+    expect(portChangeToastContent(shown)).toEqual({
+      title: "Port change detected",
+      description: "Port 3000 freed",
+    });
+  });
+
+  it("adds later changes to what is already shown", () => {
+    let shown = addPortChanges({ total: 0, latest: [] }, ["a", "b"]);
+    shown = addPortChanges(shown, ["c"]);
+    expect(portChangeToastContent(shown)).toEqual({
+      title: "3 port changes detected",
+      description: "a\nb\nc",
+    });
+  });
+
+  it("keeps the latest lines and counts the earlier ones", () => {
+    let shown = addPortChanges({ total: 0, latest: [] }, ["1", "2", "3", "4"]);
+    shown = addPortChanges(shown, ["5", "6", "7"]);
+    expect(shown.latest).toEqual(["3", "4", "5", "6", "7"]);
+    expect(portChangeToastContent(shown)).toEqual({
+      title: "7 port changes detected",
+      description: "+2 earlier\n3\n4\n5\n6\n7",
+    });
   });
 });

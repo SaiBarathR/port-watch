@@ -7,7 +7,6 @@ import {
   type ColumnDef,
   type ColumnSizingState,
   type Header,
-  type Row,
   type RowSelectionState,
 } from "@tanstack/react-table";
 import { toast } from "sonner";
@@ -53,6 +52,7 @@ import {
 } from "@/lib/column-sizing";
 import { portHintsLabel } from "@/lib/port-hints";
 import { filterPortProcesses } from "@/lib/port-filter";
+import { sortForTable, withGroupHeaders } from "@/lib/table-rows";
 import type {
   AppSettings,
   PortProcess,
@@ -62,8 +62,6 @@ import type {
 import {
   formatPorts,
   formatUptime,
-  groupDirectory,
-  isPinned,
   processesOnPort,
   systemKindLabel,
   userProcesses,
@@ -72,6 +70,8 @@ import { cn } from "@/lib/utils";
 
 interface PortTableProps {
   processes: PortProcess[];
+  /** True until the first scan has come back. */
+  loading: boolean;
   search: string;
   settings: AppSettings;
   rowChanges: Map<number, RowChangeKind>;
@@ -125,42 +125,9 @@ function stickyCellClass(
   }
 }
 
-type TableRowItem =
-  | { kind: "group"; id: string; label: string }
-  | { kind: "data"; id: string; row: Row<PortProcess> };
-
-function withGroupHeaders(
-  rows: Row<PortProcess>[],
-  settings: Pick<AppSettings, "groupByDirectory" | "pinnedPaths">,
-): TableRowItem[] {
-  const items: TableRowItem[] = [];
-  let lastGroup: string | null = null;
-  let pinnedHeaderShown = false;
-
-  for (const row of rows) {
-    const pinned = isPinned(row.original, settings.pinnedPaths);
-
-    if (pinned && !pinnedHeaderShown) {
-      pinnedHeaderShown = true;
-      items.push({ kind: "group", id: "group-pinned", label: "Pinned" });
-    }
-
-    if (settings.groupByDirectory) {
-      const group = groupDirectory(row.original);
-      if (group !== lastGroup) {
-        lastGroup = group;
-        items.push({ kind: "group", id: `group-${group}`, label: group });
-      }
-    }
-
-    items.push({ kind: "data", id: row.id, row });
-  }
-
-  return items;
-}
-
 export function PortTable({
   processes,
+  loading,
   search,
   settings,
   rowChanges,
@@ -496,26 +463,14 @@ export function PortTable({
     ],
   );
 
-  const tableData = useMemo(() => {
-    const sorted = [...visibleProcesses].sort((a, b) => {
-      const aPinned = isPinned(a, settings.pinnedPaths);
-      const bPinned = isPinned(b, settings.pinnedPaths);
-      if (aPinned !== bPinned) {
-        return aPinned ? -1 : 1;
-      }
-
-      if (settings.groupByDirectory) {
-        const groupCompare = groupDirectory(a).localeCompare(groupDirectory(b));
-        if (groupCompare !== 0) {
-          return groupCompare;
-        }
-      }
-
-      return (a.ports[0]?.port ?? 0) - (b.ports[0]?.port ?? 0);
-    });
-
-    return sorted;
-  }, [visibleProcesses, settings.groupByDirectory, settings.pinnedPaths]);
+  const tableData = useMemo(
+    () =>
+      sortForTable(visibleProcesses, {
+        pinnedPaths: settings.pinnedPaths,
+        groupByDirectory: settings.groupByDirectory,
+      }),
+    [visibleProcesses, settings.groupByDirectory, settings.pinnedPaths],
+  );
 
   const columns = useMemo<ColumnDef<PortProcess>[]>(() => {
     const includeProtocol = settings.includeUdp;
@@ -745,7 +700,11 @@ export function PortTable({
   const columnCount = columns.length;
   const tableWidth = totalColumnWidth(columnSizing);
 
-  const tableRows = withGroupHeaders(table.getRowModel().rows, settings);
+  const tableRows = withGroupHeaders(
+    table.getRowModel().rows,
+    (row) => row.original,
+    settings,
+  );
 
   return (
     <OpenMenuProvider openMenuPid={openMenuPid} setOpenMenuPid={setOpenMenuPid}>
@@ -887,8 +846,9 @@ export function PortTable({
 
                     return (
                       <PortTableDataRow
-                        key={item.id}
+                        key={item.row.id}
                         row={item.row}
+                        columns={columns}
                         isSelected={item.row.getIsSelected()}
                         canSelect={item.row.getCanSelect()}
                         change={rowChanges.get(item.row.original.pid)}
@@ -902,7 +862,11 @@ export function PortTable({
                       colSpan={columnCount}
                       className="h-24 p-2 text-center align-middle"
                     >
-                      {processes.length > 0 ? (
+                      {loading ? (
+                        <span className="text-muted-foreground">
+                          Scanning ports…
+                        </span>
+                      ) : processes.length > 0 ? (
                         <span className="text-muted-foreground">
                           No listeners match your current search or filters.
                         </span>

@@ -11,9 +11,9 @@ export const MUTE_DURATIONS = [
 // the longest mute right after it is set.
 const MAX_MUTE_MS =
   Math.max(...MUTE_DURATIONS.map((duration) => duration.ms)) + 60_000;
-const PORT_CHANGE_TOAST_ID_PREFIX = "port-change-";
+const PORT_CHANGE_TOAST_ID = "port-changes";
+const PORT_CHANGE_PREVIEW_LINES = 5;
 
-let portChangeToastCount = 0;
 let confirmationToastId: number | string | null = null;
 
 export type ChangeToastStatus = "on" | "muted" | "off";
@@ -50,13 +50,65 @@ export function formatMutedUntil(mutedUntil: number): string {
   });
 }
 
-export function nextPortChangeToastId(): string {
-  portChangeToastCount += 1;
-  return `${PORT_CHANGE_TOAST_ID_PREFIX}${portChangeToastCount}`;
+export function isPortChangeToastId(id: number | string): boolean {
+  return id === PORT_CHANGE_TOAST_ID;
 }
 
-export function isPortChangeToastId(id: number | string): boolean {
-  return typeof id === "string" && id.startsWith(PORT_CHANGE_TOAST_ID_PREFIX);
+/** The changes the port change toast on screen stands for. */
+export interface ShownPortChanges {
+  total: number;
+  /** The most recent lines, oldest first. */
+  latest: string[];
+}
+
+const NO_PORT_CHANGES: ShownPortChanges = { total: 0, latest: [] };
+
+let shownPortChanges = NO_PORT_CHANGES;
+
+export function addPortChanges(
+  shown: ShownPortChanges,
+  messages: string[],
+): ShownPortChanges {
+  return {
+    total: shown.total + messages.length,
+    latest: [...shown.latest, ...messages].slice(-PORT_CHANGE_PREVIEW_LINES),
+  };
+}
+
+export function portChangeToastContent(shown: ShownPortChanges): {
+  title: string;
+  description: string;
+} {
+  const earlier = shown.total - shown.latest.length;
+  return {
+    title:
+      shown.total === 1
+        ? "Port change detected"
+        : `${shown.total} port changes detected`,
+    description: [
+      ...(earlier > 0 ? [`+${earlier} earlier`] : []),
+      ...shown.latest,
+    ].join("\n"),
+  };
+}
+
+/**
+ * Announces port changes in a single toast. While that toast is on screen,
+ * later changes are added to it, instead of every scan stacking a new one.
+ */
+export function showPortChanges(messages: string[]) {
+  shownPortChanges = addPortChanges(shownPortChanges, messages);
+  const forget = () => {
+    shownPortChanges = NO_PORT_CHANGES;
+  };
+  const { title, description } = portChangeToastContent(shownPortChanges);
+  toast.info(title, {
+    id: PORT_CHANGE_TOAST_ID,
+    description,
+    duration: 12_000,
+    onDismiss: forget,
+    onAutoClose: forget,
+  });
 }
 
 // Dismisses by id: sonner's no-argument dismiss() walks its whole history and

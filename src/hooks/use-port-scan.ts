@@ -8,18 +8,18 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { toast } from "sonner";
 import {
   changeToastStatus,
   dismissChangeToastConfirmation,
   dismissPortChangeToasts,
   isChangeToastsMuted,
-  nextPortChangeToastId,
+  showPortChanges,
 } from "@/lib/change-toasts";
 import {
   appendPortHistoryEvents,
   type PortHistoryEvent,
 } from "@/lib/port-history";
+import { diffProcesses } from "@/lib/scan-diff";
 import type {
   AppSettings,
   PortProcess,
@@ -320,57 +320,34 @@ export function usePortScan() {
       }
 
       if (!isInitialScanRef.current) {
-        const prevByPid = new Map(prev.map((p) => [p.pid, p]));
-        const nextChanges = new Map<number, RowChangeKind>();
-        const toastMessages: string[] = [];
-
-        for (const process of normalized) {
-          const old = prevByPid.get(process.pid);
-          if (!old) {
-            nextChanges.set(process.pid, "new");
-            for (const binding of process.ports) {
-              toastMessages.push(
-                `Port ${binding.port} is now in use by ${process.name} (PID ${process.pid})`,
-              );
-            }
-          } else if (portSignature(old) !== portSignature(process)) {
-            nextChanges.set(process.pid, "changed");
-          }
-          prevByPid.delete(process.pid);
-        }
-
-        for (const [, gone] of prevByPid) {
-          for (const binding of gone.ports) {
-            toastMessages.push(
-              `Port ${binding.port} freed (${gone.name}, PID ${gone.pid})`,
-            );
-          }
-        }
+        // Rows and toasts follow what the table shows. History and watched
+        // ports below still see every process.
+        const inView = (list: PortProcess[]) =>
+          filterPortProcesses(
+            list,
+            currentSettings.hideSystemServices,
+            currentSettings.hideUserServices,
+            "",
+            "all",
+          );
+        const { rowChanges: nextChanges, messages } = diffProcesses(
+          inView(prev),
+          inView(normalized),
+        );
 
         if (nextChanges.size > 0) {
           setRowChanges(nextChanges);
           scheduleChangeClear();
         }
 
+        // A window closed to the tray or minimized cannot show a toast; it
+        // would only be held back and shown, stale, when the window returns.
         if (
-          toastMessages.length > 0 &&
+          messages.length > 0 &&
+          document.visibilityState !== "hidden" &&
           changeToastStatus(currentSettings, Date.now()) === "on"
         ) {
-          const preview = toastMessages.slice(0, 5);
-          const remaining = toastMessages.length - preview.length;
-          toast.info(
-            toastMessages.length === 1
-              ? "Port change detected"
-              : `${toastMessages.length} port changes detected`,
-            {
-              description: [
-                ...preview,
-                ...(remaining > 0 ? [`+${remaining} more`] : []),
-              ].join("\n"),
-              id: nextPortChangeToastId(),
-              duration: 12_000,
-            },
-          );
+          showPortChanges(messages);
         }
 
         appendPortHistoryEvents(collectHistoryEvents(prev, normalized));

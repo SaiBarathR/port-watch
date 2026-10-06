@@ -9,6 +9,10 @@ import {
   muteChangeToasts,
   turnOffChangeToasts,
 } from "@/lib/change-toasts";
+import {
+  setChangeToastsMutedUntil,
+  setShowChangeToasts,
+} from "@/lib/settings-actions";
 
 // Matches sonner's default viewport offset and gap between toasts.
 const VIEWPORT_OFFSET_PX = 24;
@@ -17,15 +21,9 @@ const CONTROLS_HEIGHT_PX = 36;
 
 interface AppToasterProps {
   theme: "light" | "dark";
-  onShowChangeToastsChange: (show: boolean) => void;
-  onChangeToastsMutedUntilChange: (mutedUntil: number | null) => void;
 }
 
-export function AppToaster({
-  theme,
-  onShowChangeToastsChange,
-  onChangeToastsMutedUntilChange,
-}: AppToasterProps) {
+export function AppToaster({ theme }: AppToasterProps) {
   const { toasts } = useSonner();
   // Keeps the controls in place while the pointer is on them, so a toast that
   // expires mid-click cannot hand the click to the table underneath.
@@ -74,7 +72,7 @@ export function AppToaster({
                 title={`Mute port change toasts for ${duration.label}`}
                 aria-label={`Mute port change toasts for ${duration.label}`}
                 onClick={run(() =>
-                  muteChangeToasts(duration.ms, onChangeToastsMutedUntilChange),
+                  muteChangeToasts(duration.ms, setChangeToastsMutedUntil),
                 )}
               >
                 {duration.shortLabel}
@@ -86,7 +84,7 @@ export function AppToaster({
             size="sm"
             className="h-7 px-2 text-xs"
             title="Turn off port change toasts"
-            onClick={run(() => turnOffChangeToasts(onShowChangeToastsChange))}
+            onClick={run(() => turnOffChangeToasts(setShowChangeToasts))}
           >
             Turn off
           </Button>

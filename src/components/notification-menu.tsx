@@ -22,19 +22,17 @@ import {
   muteChangeToasts,
   turnOffChangeToasts,
 } from "@/lib/change-toasts";
+import {
+  setChangeToastsMutedUntil,
+  setShowChangeToasts,
+} from "@/lib/settings-actions";
 import type { AppSettings } from "@/lib/types";
 
 interface NotificationMenuProps {
   settings: AppSettings;
-  onShowChangeToastsChange: (show: boolean) => void;
-  onChangeToastsMutedUntilChange: (mutedUntil: number | null) => void;
 }
 
-export function NotificationMenu({
-  settings,
-  onShowChangeToastsChange,
-  onChangeToastsMutedUntilChange,
-}: NotificationMenuProps) {
+export function NotificationMenu({ settings }: NotificationMenuProps) {
   // A mute runs out with the clock, not with a state change, so the clock
   // is read on every render.
   // eslint-disable-next-line react-hooks/purity
@@ -73,9 +71,7 @@ export function NotificationMenu({
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {status === "muted" && (
-          <DropdownMenuItem
-            onClick={() => onChangeToastsMutedUntilChange(null)}
-          >
+          <DropdownMenuItem onClick={() => setChangeToastsMutedUntil(null)}>
             <BellRingIcon />
             Unmute
           </DropdownMenuItem>
@@ -85,7 +81,7 @@ export function NotificationMenu({
             <DropdownMenuItem
               key={duration.ms}
               onClick={() =>
-                muteChangeToasts(duration.ms, onChangeToastsMutedUntilChange)
+                muteChangeToasts(duration.ms, setChangeToastsMutedUntil)
               }
             >
               <ClockIcon />
@@ -93,13 +89,13 @@ export function NotificationMenu({
             </DropdownMenuItem>
           ))}
         {status === "off" ? (
-          <DropdownMenuItem onClick={() => onShowChangeToastsChange(true)}>
+          <DropdownMenuItem onClick={() => setShowChangeToasts(true)}>
             <BellIcon />
             Turn on
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem
-            onClick={() => turnOffChangeToasts(onShowChangeToastsChange)}
+            onClick={() => turnOffChangeToasts(setShowChangeToasts)}
           >
             <BellOffIcon />
             Turn off

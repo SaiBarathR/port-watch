@@ -3,20 +3,19 @@ use std::sync::Mutex;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager, Wry,
+    AppHandle, Manager, Wry,
 };
 
-use crate::app_settings::AppSettings;
 use crate::poller::PortPoller;
 use crate::scanner::PortProcess;
+use crate::settings::SettingsStore;
 
 #[derive(Default)]
 pub struct TrayState {
-    pub menu_bar_mode_enabled: bool,
     pub last_menu_signature: Option<String>,
 }
 
-pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+pub fn setup_tray(app: &AppHandle, menu_bar_mode: bool) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(Mutex::new(TrayState::default()));
 
     let icon = app
@@ -25,7 +24,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("Missing application icon for tray")?;
 
     // Initial menu (no scan yet) — the poller rebuilds it as soon as it has data.
-    let menu = build_menu(app, &[], false)?;
+    let menu = build_menu(app, &[], menu_bar_mode)?;
 
     TrayIconBuilder::with_id("main")
         .icon(icon)
@@ -274,8 +273,9 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
         "tray-refresh" => app.state::<PortPoller>().request_scan(),
         "tray-menu-bar-mode" => {
             let enabled = !is_menu_bar_mode_enabled(app);
-            if let Err(error) = apply_menu_bar_mode(app, enabled) {
-                eprintln!("Failed to apply menu bar mode: {error}");
+            let patch = serde_json::Map::from_iter([("menuBarMode".to_string(), enabled.into())]);
+            if let Err(error) = crate::settings::update(app, patch) {
+                eprintln!("Failed to change menu bar mode: {error}");
             }
         }
         "tray-quit" => app.exit(0),
@@ -320,12 +320,12 @@ fn run_port_action(
     match action {
         "pw-open" => {
             let port = port.ok_or("No port available")?;
-            let use_https = app.state::<AppSettings>().use_https_for_localhost();
+            let use_https = app.state::<SettingsStore>().get().use_https_for_localhost;
             crate::commands::workflow::open_url(app.clone(), localhost_url(port, use_https))
         }
         "pw-copy" => {
             let port = port.ok_or("No port available")?;
-            let use_https = app.state::<AppSettings>().use_https_for_localhost();
+            let use_https = app.state::<SettingsStore>().get().use_https_for_localhost;
             crate::platform::shell::copy_to_clipboard(&localhost_url(port, use_https))
         }
         "pw-finder" => {
@@ -335,7 +335,7 @@ fn run_port_action(
             crate::commands::workflow::open_in_terminal_blocking(&require_directory(process)?)
         }
         "pw-editor" => {
-            let editor = app.state::<AppSettings>().preferred_editor();
+            let editor = app.state::<SettingsStore>().get().preferred_editor;
             crate::commands::workflow::open_in_editor_blocking(
                 &require_directory(process)?,
                 &editor,
@@ -420,17 +420,7 @@ fn notify_error(app: &AppHandle, message: &str) {
 // ---------------------------------------------------------------------------
 
 fn is_menu_bar_mode_enabled(app: &AppHandle) -> bool {
-    app.try_state::<Mutex<TrayState>>()
-        .and_then(|state| state.lock().ok().map(|guard| guard.menu_bar_mode_enabled))
-        .unwrap_or(false)
-}
-
-fn set_menu_bar_mode_state(app: &AppHandle, enabled: bool) {
-    if let Some(state) = app.try_state::<Mutex<TrayState>>() {
-        if let Ok(mut guard) = state.lock() {
-            guard.menu_bar_mode_enabled = enabled;
-        }
-    }
+    app.state::<SettingsStore>().get().menu_bar_mode
 }
 
 pub fn show_main_window(app: &AppHandle) {
@@ -452,17 +442,23 @@ pub fn hide_main_window(app: &AppHandle) {
     app.state::<PortPoller>().set_window_visible(false);
 }
 
-fn apply_menu_bar_mode(app: &AppHandle, enabled: bool) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        let policy = if enabled {
-            tauri::ActivationPolicy::Accessory
-        } else {
-            tauri::ActivationPolicy::Regular
-        };
-        app.set_activation_policy(policy)
-            .map_err(|e| format!("Failed to set activation policy: {e}"))?;
+/// What the stored setting means at launch. The window is created hidden:
+/// in menu bar mode it stays hidden and the Dock icon never appears, and
+/// otherwise it is shown.
+pub fn apply_launch_mode(app: &AppHandle, menu_bar_mode: bool) {
+    if !menu_bar_mode {
+        show_main_window(app);
+        return;
     }
+    if let Err(error) = set_dock_icon_hidden(app, true) {
+        eprintln!("{error}");
+    }
+    app.state::<PortPoller>().set_window_visible(false);
+}
+
+/// Follows a change of the setting, which has already been saved.
+pub fn apply_menu_bar_mode(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    set_dock_icon_hidden(app, enabled)?;
 
     if enabled {
         hide_main_window(app);
@@ -470,17 +466,21 @@ fn apply_menu_bar_mode(app: &AppHandle, enabled: bool) -> Result<(), String> {
         show_main_window(app);
     }
 
-    set_menu_bar_mode_state(app, enabled);
-    let _ = app.emit("tray-menu-bar-mode-changed", enabled);
     rebuild_tray_menu(app);
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn set_menu_bar_mode(app: AppHandle, enabled: bool) -> Result<(), String> {
-    apply_menu_bar_mode(&app, enabled)
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+fn set_dock_icon_hidden(app: &AppHandle, hidden: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let policy = if hidden {
+            tauri::ActivationPolicy::Accessory
+        } else {
+            tauri::ActivationPolicy::Regular
+        };
+        app.set_activation_policy(policy)
+            .map_err(|e| format!("Failed to set activation policy: {e}"))?;
+    }
+    Ok(())
 }

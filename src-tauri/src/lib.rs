@@ -1,4 +1,3 @@
-mod app_settings;
 mod classifier;
 pub mod cli;
 pub mod cli_install;
@@ -8,24 +7,22 @@ mod platform;
 mod poller;
 mod process_actions;
 pub mod scanner;
+mod settings;
 mod tray;
 
 use tauri::Manager;
 
-use app_settings::AppSettings;
 use commands::cli_install::{get_cli_install_status, install_cli_to_path, uninstall_cli_from_path};
 use commands::filesystem::{delete_project, open_in_finder};
 use commands::notifications::send_notification;
 use commands::process::stop_process;
-use commands::settings::{
-    set_allow_system_process_actions, set_preferred_editor, set_use_https_for_localhost,
-};
+use commands::settings::{adopt_window_settings, get_settings, update_settings};
 use commands::workflow::{open_in_editor, open_in_terminal, open_url};
 use poller::{
-    get_listening_ports, set_refresh_paused, set_scan_settings, start_poller, trigger_port_scan,
-    PortPoller,
+    get_listening_ports, set_refresh_paused, start_poller, trigger_port_scan, PortPoller,
 };
-use tray::{set_menu_bar_mode, setup_tray};
+use settings::SettingsStore;
+use tray::setup_tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -37,9 +34,23 @@ pub fn run() {
 
     builder
         .manage(PortPoller::new())
-        .manage(AppSettings::new())
         .setup(|app| {
-            setup_tray(app.handle())?;
+            // Read before anything starts, so the tray, the poller and the
+            // window all begin with what the user chose.
+            let store = SettingsStore::load(
+                app.path()
+                    .app_config_dir()
+                    .ok()
+                    .map(|folder| folder.join("settings.json")),
+            );
+            let settings = store.get();
+            app.manage(store);
+
+            setup_tray(app.handle(), settings.menu_bar_mode)?;
+            settings::apply_to_poller(app.handle(), &settings);
+            // The window is created hidden. In menu bar mode it stays that
+            // way, and the Dock icon never appears.
+            tray::apply_launch_mode(app.handle(), settings.menu_bar_mode);
             start_poller(app.handle().clone());
             Ok(())
         })
@@ -54,19 +65,17 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_listening_ports,
-            set_scan_settings,
             set_refresh_paused,
             trigger_port_scan,
-            set_allow_system_process_actions,
-            set_use_https_for_localhost,
-            set_preferred_editor,
+            get_settings,
+            update_settings,
+            adopt_window_settings,
             stop_process,
             open_in_finder,
             delete_project,
             open_url,
             open_in_terminal,
             open_in_editor,
-            set_menu_bar_mode,
             send_notification,
             get_cli_install_status,
             install_cli_to_path,

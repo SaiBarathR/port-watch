@@ -27,6 +27,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { AppSettings, PortProcess } from "@/lib/types";
+import { togglePinnedPath } from "@/lib/settings-actions";
+import { updateSettings } from "@/lib/settings-store";
 import {
   isPinned,
   localhostUrl,
@@ -43,8 +45,6 @@ export interface PortTableActionsHandlers {
     description?: string,
   ) => void;
   openFreePortDialog: (process: PortProcess, port: number) => void;
-  onTogglePinnedPath: (path: string) => void;
-  onUseHttpsForLocalhostChange: (useHttps: boolean) => void;
   setHistoryPort: (port: number) => void;
   setDeleteTarget: (
     target: { process: PortProcess; mode: "trash" | "permanent" } | null,
@@ -233,7 +233,9 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               <>
                 <DropdownMenuCheckboxItem
                   checked={settings.useHttpsForLocalhost}
-                  onCheckedChange={handlers.onUseHttpsForLocalhostChange}
+                  onCheckedChange={(useHttpsForLocalhost) =>
+                    updateSettings({ useHttpsForLocalhost })
+                  }
                   onSelect={(event) => event.preventDefault()}
                 >
                   Use HTTPS
@@ -267,9 +269,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               Open in Editor
             </DropdownMenuItem>
             {pinnedPath && (
-              <DropdownMenuItem
-                onClick={() => handlers.onTogglePinnedPath(pinnedPath)}
-              >
+              <DropdownMenuItem onClick={() => togglePinnedPath(pinnedPath)}>
                 {pinned ? <PinOffIcon /> : <PinIcon />}
                 {pinned ? "Unpin project" : "Pin project"}
               </DropdownMenuItem>

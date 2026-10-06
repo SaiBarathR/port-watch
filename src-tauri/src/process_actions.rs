@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
-use crate::app_settings::AppSettings;
 use crate::platform;
 use crate::platform::path_validation::{folder_identity, DeleteRules, FolderIdentity};
 use crate::poller::PortPoller;
 use crate::scanner::{PortProcess, ProcessIdentity};
+use crate::settings::SettingsStore;
 
 fn not_listed(pid: u32) -> String {
     format!("PID {pid} is not in the latest scan. Refresh and try again.")
@@ -109,7 +109,10 @@ pub fn stop_process(
     }
 
     let listed = app.state::<PortPoller>().find_by_pid(pid);
-    let allow_system_actions = app.state::<AppSettings>().allow_system_process_actions();
+    let allow_system_actions = app
+        .state::<SettingsStore>()
+        .get()
+        .allow_system_process_actions;
     let target = plan_stop(pid, listed.as_ref(), seen, allow_system_actions, || {
         platform::shell::is_running(pid)
     })?;
@@ -253,7 +256,10 @@ pub fn delete_project(app: &AppHandle, pid: u32, request: &DeleteRequest) -> Res
     }
 
     let listed = app.state::<PortPoller>().find_by_pid(pid);
-    let allow_system_actions = app.state::<AppSettings>().allow_system_process_actions();
+    let allow_system_actions = app
+        .state::<SettingsStore>()
+        .get()
+        .allow_system_process_actions;
     let rules = DeleteRules::for_current_user()?;
 
     delete_with(

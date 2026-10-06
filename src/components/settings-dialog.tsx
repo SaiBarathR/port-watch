@@ -49,7 +49,12 @@ import {
   uninstallCliFromPath,
   type CliInstallStatus,
 } from "@/lib/cli-install";
-import { type AppSettings, type RefreshInterval } from "@/lib/types";
+import {
+  setChangeToastsMutedUntil,
+  setShowChangeToasts,
+} from "@/lib/settings-actions";
+import { updateSettings } from "@/lib/settings-store";
+import { parsePort, type AppSettings, type RefreshInterval } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const THEME_OPTIONS: {
@@ -125,16 +130,6 @@ interface SettingsDialogProps {
   settings: AppSettings;
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
-  onAllowSystemActionsChange: (allow: boolean) => void;
-  onRefreshIntervalChange: (interval: RefreshInterval) => void;
-  onPreferredEditorChange: (editor: AppSettings["preferredEditor"]) => void;
-  onGroupByDirectoryChange: (group: boolean) => void;
-  onShowChangeToastsChange: (show: boolean) => void;
-  onChangeToastsMutedUntilChange: (mutedUntil: number | null) => void;
-  onWatchedPortNotificationsChange: (enabled: boolean) => void;
-  onWatchedPortsChange: (ports: number[]) => void;
-  onIncludeUdpChange: (include: boolean) => void;
-  onUseHttpsForLocalhostChange: (useHttps: boolean) => void;
   trigger: ReactNode;
 }
 
@@ -142,16 +137,6 @@ export function SettingsDialog({
   settings,
   theme,
   onThemeChange,
-  onAllowSystemActionsChange,
-  onRefreshIntervalChange,
-  onPreferredEditorChange,
-  onGroupByDirectoryChange,
-  onShowChangeToastsChange,
-  onChangeToastsMutedUntilChange,
-  onWatchedPortNotificationsChange,
-  onWatchedPortsChange,
-  onIncludeUdpChange,
-  onUseHttpsForLocalhostChange,
   trigger,
 }: SettingsDialogProps) {
   const [open, setOpen] = useState(false);
@@ -224,22 +209,22 @@ export function SettingsDialog({
   };
 
   const addWatchedPort = () => {
-    const port = Number.parseInt(watchedPortInput.trim(), 10);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    const port = parsePort(watchedPortInput);
+    if (port === null) {
       return;
     }
-    if (settings.watchedPorts.includes(port)) {
-      setWatchedPortInput("");
-      return;
+    if (!settings.watchedPorts.includes(port)) {
+      updateSettings({
+        watchedPorts: [...settings.watchedPorts, port].sort((a, b) => a - b),
+      });
     }
-    onWatchedPortsChange(
-      [...settings.watchedPorts, port].sort((a, b) => a - b),
-    );
     setWatchedPortInput("");
   };
 
   const removeWatchedPort = (port: number) => {
-    onWatchedPortsChange(settings.watchedPorts.filter((item) => item !== port));
+    updateSettings({
+      watchedPorts: settings.watchedPorts.filter((item) => item !== port),
+    });
   };
 
   return (
@@ -262,7 +247,9 @@ export function SettingsDialog({
               <Select
                 value={String(settings.refreshIntervalMs)}
                 onValueChange={(v) =>
-                  onRefreshIntervalChange(Number(v) as RefreshInterval)
+                  updateSettings({
+                    refreshIntervalMs: Number(v) as RefreshInterval,
+                  })
                 }
               >
                 <SelectTrigger
@@ -286,7 +273,7 @@ export function SettingsDialog({
               <Switch
                 id="settings-include-udp"
                 checked={settings.includeUdp}
-                onCheckedChange={onIncludeUdpChange}
+                onCheckedChange={(includeUdp) => updateSettings({ includeUdp })}
               />
             </SettingRow>
           </SettingSection>
@@ -336,7 +323,9 @@ export function SettingsDialog({
               <Switch
                 id="settings-group-by-directory"
                 checked={settings.groupByDirectory}
-                onCheckedChange={onGroupByDirectoryChange}
+                onCheckedChange={(groupByDirectory) =>
+                  updateSettings({ groupByDirectory })
+                }
               />
             </SettingRow>
             <SettingRow
@@ -347,7 +336,9 @@ export function SettingsDialog({
               <Switch
                 id="settings-allow-system-actions"
                 checked={settings.allowSystemProcessActions}
-                onCheckedChange={onAllowSystemActionsChange}
+                onCheckedChange={(allowSystemProcessActions) =>
+                  updateSettings({ allowSystemProcessActions })
+                }
               />
             </SettingRow>
           </SettingSection>
@@ -361,7 +352,7 @@ export function SettingsDialog({
               <Switch
                 id="settings-show-change-toasts"
                 checked={settings.showChangeToasts}
-                onCheckedChange={onShowChangeToastsChange}
+                onCheckedChange={setShowChangeToasts}
               />
             </SettingRow>
             <SettingRow
@@ -393,7 +384,7 @@ export function SettingsDialog({
                 <DropdownMenuContent align="end" className="z-[1000000000]">
                   {toastsMuted && (
                     <DropdownMenuItem
-                      onClick={() => onChangeToastsMutedUntilChange(null)}
+                      onClick={() => setChangeToastsMutedUntil(null)}
                     >
                       Unmute
                     </DropdownMenuItem>
@@ -402,7 +393,7 @@ export function SettingsDialog({
                     <DropdownMenuItem
                       key={duration.ms}
                       onClick={() =>
-                        onChangeToastsMutedUntilChange(Date.now() + duration.ms)
+                        setChangeToastsMutedUntil(Date.now() + duration.ms)
                       }
                     >
                       Mute for {duration.label}
@@ -419,7 +410,9 @@ export function SettingsDialog({
               <Switch
                 id="settings-watched-port-notifications"
                 checked={settings.watchedPortNotifications}
-                onCheckedChange={onWatchedPortNotificationsChange}
+                onCheckedChange={(watchedPortNotifications) =>
+                  updateSettings({ watchedPortNotifications })
+                }
               />
             </SettingRow>
             <div className="py-3">
@@ -516,7 +509,9 @@ export function SettingsDialog({
               <Switch
                 id="settings-use-https-localhost"
                 checked={settings.useHttpsForLocalhost}
-                onCheckedChange={onUseHttpsForLocalhostChange}
+                onCheckedChange={(useHttpsForLocalhost) =>
+                  updateSettings({ useHttpsForLocalhost })
+                }
               />
             </SettingRow>
             <SettingRow
@@ -527,7 +522,9 @@ export function SettingsDialog({
               <Select
                 value={settings.preferredEditor}
                 onValueChange={(v) =>
-                  onPreferredEditorChange(v as AppSettings["preferredEditor"])
+                  updateSettings({
+                    preferredEditor: v as AppSettings["preferredEditor"],
+                  })
                 }
               >
                 <SelectTrigger size="sm" className="w-full">

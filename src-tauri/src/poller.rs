@@ -1,9 +1,273 @@
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+//! One background task scans for listening ports and publishes what it finds.
+//! Everything else talks to it through channels: settings and window
+//! visibility arrive on a watch channel, "scan now" requests on a `Notify`,
+//! and results leave on another watch channel.
+//!
+//! `Notify` keeps one permit, so any number of requests made while a scan is
+//! running lead to exactly one more scan after it: a request is never dropped.
+
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::{watch, Notify};
+use tokio::time::Instant;
 
 use crate::scanner::{scan_listening_ports, PortProcess};
+
+// With the window hidden nobody is watching the table, so periodic scans slow
+// to this unless a watched port still wants prompt alerts.
+const HIDDEN_INTERVAL: Duration = Duration::from_secs(15);
+// A scan that overruns its interval is still followed by a pause.
+const MIN_GAP: Duration = Duration::from_millis(100);
+// How long a caller waits for a scan before giving up on it.
+const SCAN_WAIT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, PartialEq)]
+struct Config {
+    interval_ms: u64,
+    include_udp: bool,
+    paused: bool,
+    watch_while_hidden: bool,
+    window_visible: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            interval_ms: 3000,
+            include_udp: false,
+            paused: false,
+            watch_while_hidden: false,
+            window_visible: true,
+        }
+    }
+}
+
+impl Config {
+    /// Time between periodic scans; None while they are off or paused.
+    fn interval(&self) -> Option<Duration> {
+        if self.paused || self.interval_ms == 0 {
+            return None;
+        }
+
+        let interval = Duration::from_millis(self.interval_ms);
+        Some(if self.window_visible || self.watch_while_hidden {
+            interval
+        } else {
+            interval.max(HIDDEN_INTERVAL)
+        })
+    }
+
+    /// Whether the change from `previous` should be followed by a scan right
+    /// away. Pausing and hiding the window only change the pace.
+    fn calls_for_scan(&self, previous: &Config) -> bool {
+        self.include_udp != previous.include_udp
+            || self.interval_ms != previous.interval_ms
+            || (previous.paused && !self.paused)
+            || (!previous.window_visible && self.window_visible)
+    }
+}
+
+/// The latest scan result. A failed scan keeps the processes of the last
+/// good one and adds the error.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    pub processes: Arc<Vec<PortProcess>>,
+    pub error: Option<String>,
+    /// False until the first scan has finished.
+    pub scanned: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Progress {
+    started: u64,
+    completed: u64,
+}
+
+pub type ScanFuture = Pin<Box<dyn Future<Output = Result<Vec<PortProcess>, String>> + Send>>;
+
+pub struct PortPoller {
+    config: watch::Sender<Config>,
+    snapshot: watch::Sender<Snapshot>,
+    progress: watch::Sender<Progress>,
+    kick: Notify,
+}
+
+impl PortPoller {
+    pub fn new() -> Self {
+        Self::with_config(Config::default())
+    }
+
+    fn with_config(config: Config) -> Self {
+        Self {
+            config: watch::Sender::new(config),
+            snapshot: watch::Sender::new(Snapshot {
+                processes: Arc::new(Vec::new()),
+                error: None,
+                scanned: false,
+            }),
+            progress: watch::Sender::new(Progress::default()),
+            kick: Notify::new(),
+        }
+    }
+
+    pub fn processes(&self) -> Arc<Vec<PortProcess>> {
+        self.snapshot.borrow().processes.clone()
+    }
+
+    pub fn find_by_pid(&self, pid: u32) -> Option<PortProcess> {
+        self.snapshot
+            .borrow()
+            .processes
+            .iter()
+            .find(|process| process.pid == pid)
+            .cloned()
+    }
+
+    /// Asks for a scan without waiting for it.
+    pub fn request_scan(&self) {
+        self.kick.notify_one();
+    }
+
+    /// Asks for a scan and waits for one that started after the request, so
+    /// the caller sees the effect of whatever it just did. A scan already in
+    /// flight does not count.
+    pub async fn scan_now(&self) -> Result<(), String> {
+        let mut progress = self.progress.subscribe();
+        let target = progress.borrow().started + 1;
+        self.request_scan();
+
+        let waited = tokio::time::timeout(
+            SCAN_WAIT,
+            progress.wait_for(|progress| progress.completed >= target),
+        )
+        .await;
+        match waited {
+            Ok(Ok(_)) => Ok(()),
+            _ => Err("Scan timed out before completing".into()),
+        }
+    }
+
+    /// The first finished scan, or what there is with an error if none
+    /// finishes in time.
+    pub async fn first_scan(&self) -> Snapshot {
+        let mut snapshot = self.snapshot.subscribe();
+        let waited =
+            tokio::time::timeout(SCAN_WAIT, snapshot.wait_for(|snapshot| snapshot.scanned)).await;
+        if let Ok(Ok(snapshot)) = waited {
+            return snapshot.clone();
+        }
+
+        let mut snapshot = self.snapshot.borrow().clone();
+        snapshot
+            .error
+            .get_or_insert_with(|| "Scan timed out before completing".into());
+        snapshot
+    }
+
+    pub fn set_scan_settings(&self, interval_ms: u64, include_udp: bool, watch_while_hidden: bool) {
+        self.update_config(|config| {
+            config.interval_ms = interval_ms;
+            config.include_udp = include_udp;
+            config.watch_while_hidden = watch_while_hidden;
+        });
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        self.update_config(|config| config.paused = paused);
+    }
+
+    pub fn set_window_visible(&self, visible: bool) {
+        self.update_config(|config| config.window_visible = visible);
+    }
+
+    fn update_config(&self, change: impl FnOnce(&mut Config)) {
+        self.config.send_if_modified(|config| {
+            let previous = config.clone();
+            change(config);
+            *config != previous
+        });
+    }
+
+    /// The scan loop. It scans once at once, then whenever the interval
+    /// elapses, a scan is requested, or a setting changes in a way that calls
+    /// for one. `on_change` runs after a scan whose result differs from the
+    /// one before it; a scan that found nothing new is silent.
+    pub async fn run(&self, scan: impl Fn(bool) -> ScanFuture, on_change: impl Fn(&Snapshot)) {
+        let mut config_rx = self.config.subscribe();
+        let mut config = config_rx.borrow_and_update().clone();
+
+        loop {
+            let started = Instant::now();
+            self.progress.send_modify(|progress| progress.started += 1);
+            let result = scan(config.include_udp).await;
+            self.publish(result, &on_change);
+            self.progress
+                .send_modify(|progress| progress.completed += 1);
+
+            // Wait for a reason to scan again.
+            loop {
+                let tick = async {
+                    match config.interval() {
+                        Some(interval) => {
+                            let due = (started + interval).max(Instant::now() + MIN_GAP);
+                            tokio::time::sleep_until(due).await;
+                        }
+                        None => std::future::pending().await,
+                    }
+                };
+
+                tokio::select! {
+                    _ = tick => break,
+                    _ = self.kick.notified() => break,
+                    changed = config_rx.changed() => {
+                        if changed.is_err() {
+                            return;
+                        }
+                        let next = config_rx.borrow_and_update().clone();
+                        let scan_now = next.calls_for_scan(&config);
+                        config = next;
+                        if scan_now {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn publish(&self, result: Result<Vec<PortProcess>, String>, on_change: &impl Fn(&Snapshot)) {
+        let previous = self.snapshot.borrow().clone();
+        let next = match result {
+            Ok(processes) => Snapshot {
+                // The same allocation when nothing changed.
+                processes: if *previous.processes == processes {
+                    previous.processes.clone()
+                } else {
+                    Arc::new(processes)
+                },
+                error: None,
+                scanned: true,
+            },
+            Err(error) => Snapshot {
+                processes: previous.processes.clone(),
+                error: Some(error),
+                scanned: true,
+            },
+        };
+
+        let changed = !previous.scanned
+            || next.error != previous.error
+            || !Arc::ptr_eq(&next.processes, &previous.processes);
+        if changed {
+            self.snapshot.send_replace(next.clone());
+            on_change(&next);
+        }
+    }
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PortsUpdatedPayload {
@@ -11,123 +275,49 @@ pub struct PortsUpdatedPayload {
     pub error: Option<String>,
 }
 
-#[derive(Debug)]
-struct PollerInner {
-    last_result: Vec<PortProcess>,
-    last_error: Option<String>,
-    last_scan_at: Option<Instant>,
-    in_flight: bool,
-    include_udp: bool,
-    interval_ms: u64,
-    refresh_paused: bool,
-    generation: u64,
+// The same shape, borrowed, so an event does not copy the list.
+#[derive(Clone, serde::Serialize)]
+struct PortsUpdatedEvent<'a> {
+    processes: &'a [PortProcess],
+    error: Option<&'a str>,
 }
 
-impl Default for PollerInner {
-    fn default() -> Self {
-        Self {
-            last_result: Vec::new(),
-            last_error: None,
-            last_scan_at: None,
-            in_flight: false,
-            include_udp: false,
-            interval_ms: 3000,
-            refresh_paused: false,
-            generation: 0,
-        }
-    }
-}
-
-pub struct PortPoller {
-    inner: Mutex<PollerInner>,
-}
-
-impl PortPoller {
-    pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(PollerInner::default()),
-        }
-    }
-
-    // A panic while holding the lock must not freeze scanning forever (a
-    // poisoned `in_flight = true` would skip every future scan), so recover
-    // the guard instead of propagating poison.
-    fn lock_inner(&self) -> std::sync::MutexGuard<'_, PollerInner> {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    pub fn find_by_pid(&self, pid: u32) -> Option<PortProcess> {
-        let inner = self.lock_inner();
-        inner
-            .last_result
-            .iter()
-            .find(|process| process.pid == pid)
-            .cloned()
-    }
-
-    pub fn snapshot(&self) -> Vec<PortProcess> {
-        let snapshot = self.lock_inner().last_result.clone();
-        snapshot
-    }
-}
-
-struct CacheSnapshot {
-    payload: PortsUpdatedPayload,
-    scan_complete: bool,
-    in_flight: bool,
-}
-
-fn read_cache(app: &AppHandle) -> Result<CacheSnapshot, String> {
-    let poller = app.state::<PortPoller>();
-    let inner = poller.lock_inner();
-
-    let scan_complete = inner.last_scan_at.is_some();
-    let in_flight = inner.in_flight;
-
-    Ok(CacheSnapshot {
-        payload: PortsUpdatedPayload {
-            processes: inner.last_result.clone(),
-            error: inner.last_error.clone(),
-        },
-        scan_complete,
-        in_flight,
-    })
+pub fn start_poller(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let poller = app.state::<PortPoller>();
+        poller
+            .run(
+                |include_udp| {
+                    Box::pin(async move {
+                        tauri::async_runtime::spawn_blocking(move || {
+                            scan_listening_ports(include_udp)
+                        })
+                        .await
+                        .unwrap_or_else(|err| Err(format!("Scan task failed: {err}")))
+                    })
+                },
+                |snapshot| {
+                    let _ = app.emit(
+                        "ports-updated",
+                        PortsUpdatedEvent {
+                            processes: &snapshot.processes,
+                            error: snapshot.error.as_deref(),
+                        },
+                    );
+                    crate::tray::rebuild_tray_menu(&app);
+                },
+            )
+            .await;
+    });
 }
 
 #[tauri::command]
 pub async fn get_listening_ports(app: AppHandle) -> Result<PortsUpdatedPayload, String> {
-    const MAX_WAIT: Duration = Duration::from_secs(30);
-    let started = Instant::now();
-    let mut triggered_scan = false;
-
-    loop {
-        let snapshot = read_cache(&app)?;
-
-        if snapshot.scan_complete {
-            return Ok(snapshot.payload);
-        }
-
-        if !snapshot.in_flight && !triggered_scan {
-            triggered_scan = true;
-            spawn_scan(app.clone());
-        }
-
-        if started.elapsed() >= MAX_WAIT {
-            return Ok(PortsUpdatedPayload {
-                processes: snapshot.payload.processes,
-                error: Some(
-                    snapshot
-                        .payload
-                        .error
-                        .unwrap_or_else(|| "Scan timed out before completing".into()),
-                ),
-            });
-        }
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let snapshot = app.state::<PortPoller>().first_scan().await;
+    Ok(PortsUpdatedPayload {
+        processes: snapshot.processes.to_vec(),
+        error: snapshot.error,
+    })
 }
 
 #[tauri::command]
@@ -135,146 +325,448 @@ pub fn set_scan_settings(
     app: AppHandle,
     interval_ms: u64,
     include_udp: bool,
+    watch_while_hidden: Option<bool>,
 ) -> Result<(), String> {
-    let poller = app.state::<PortPoller>();
-    let mut inner = poller.lock_inner();
-
-    let settings_changed = inner.interval_ms != interval_ms || inner.include_udp != include_udp;
-
-    inner.interval_ms = interval_ms;
-    inner.include_udp = include_udp;
-
-    if settings_changed {
-        inner.generation = inner.generation.wrapping_add(1);
-        let generation = inner.generation;
-        drop(inner);
-        spawn_poller_loop(app.clone(), generation);
-        spawn_scan(app);
-    }
-
+    app.state::<PortPoller>().set_scan_settings(
+        interval_ms,
+        include_udp,
+        watch_while_hidden.unwrap_or(false),
+    );
     Ok(())
 }
 
 #[tauri::command]
 pub fn set_refresh_paused(app: AppHandle, paused: bool) -> Result<(), String> {
-    let poller = app.state::<PortPoller>();
-    poller.lock_inner().refresh_paused = paused;
+    app.state::<PortPoller>().set_paused(paused);
     Ok(())
 }
 
+// Resolves once a scan that started after the call has finished, so the
+// caller can stop its spinner even when that scan found nothing new.
 #[tauri::command]
-pub fn trigger_port_scan(app: AppHandle) -> Result<(), String> {
-    spawn_scan(app);
-    Ok(())
+pub async fn trigger_port_scan(app: AppHandle) -> Result<(), String> {
+    app.state::<PortPoller>().scan_now().await
 }
 
-pub fn start_poller(app: AppHandle) {
-    spawn_scan(app.clone());
-    let generation = {
-        let poller = app.state::<PortPoller>();
-        let generation = poller.lock_inner().generation;
-        generation
-    };
-    spawn_poller_loop(app, generation);
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::classifier::SystemKind;
+    use crate::scanner::PortBinding;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    use tokio::sync::Semaphore;
 
-fn spawn_poller_loop(app: AppHandle, generation: u64) {
-    tauri::async_runtime::spawn(async move {
-        loop {
-            let (interval_ms, current_generation, paused) = {
-                let poller = app.state::<PortPoller>();
-                let inner = poller.lock_inner();
-                (inner.interval_ms, inner.generation, inner.refresh_paused)
-            };
+    fn listener(pid: u32, port: u16) -> PortProcess {
+        PortProcess {
+            pid,
+            name: "node".into(),
+            user: "dev".into(),
+            ports: vec![PortBinding {
+                address: "*".into(),
+                port,
+                protocol: "TCP".into(),
+            }],
+            executable_path: "/usr/local/bin/node".into(),
+            script_path: None,
+            command_line: "node server.js".into(),
+            working_directory: "/Users/dev/app".into(),
+            project_root: "/Users/dev/app".into(),
+            system_kind: SystemKind::User,
+            is_system_service: false,
+            started_at: 1_790_000_000,
+            delete_blocked: None,
+        }
+    }
 
-            if current_generation != generation {
-                break;
+    type ScanResult = Result<Vec<PortProcess>, String>;
+
+    // A scanner the test scripts: it records every call, hands out queued
+    // results (repeating the last one), and can be made to hold each scan
+    // until the test lets it finish.
+    #[derive(Default)]
+    struct FakeScanner {
+        calls: Mutex<Vec<bool>>,
+        results: Mutex<VecDeque<ScanResult>>,
+        last: Mutex<Option<ScanResult>>,
+        gate: Option<Semaphore>,
+    }
+
+    impl FakeScanner {
+        fn returning(results: impl IntoIterator<Item = ScanResult>) -> Self {
+            Self {
+                results: Mutex::new(results.into_iter().collect()),
+                ..Self::default()
             }
+        }
 
-            if interval_ms == 0 || paused {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                continue;
+        fn gated(mut self) -> Self {
+            self.gate = Some(Semaphore::new(0));
+            self
+        }
+
+        fn finish_one_scan(&self) {
+            self.gate.as_ref().unwrap().add_permits(1);
+        }
+
+        fn calls(&self) -> Vec<bool> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn scan(self: &Arc<Self>, include_udp: bool) -> ScanFuture {
+            let scanner = self.clone();
+            Box::pin(async move {
+                scanner.calls.lock().unwrap().push(include_udp);
+                if let Some(gate) = &scanner.gate {
+                    gate.acquire().await.unwrap().forget();
+                }
+                let next = scanner.results.lock().unwrap().pop_front();
+                let mut last = scanner.last.lock().unwrap();
+                if let Some(next) = next {
+                    *last = Some(next);
+                }
+                last.clone().unwrap_or_else(|| Ok(Vec::new()))
+            })
+        }
+    }
+
+    struct Running {
+        poller: Arc<PortPoller>,
+        scanner: Arc<FakeScanner>,
+        published: Arc<Mutex<Vec<Snapshot>>>,
+    }
+
+    impl Running {
+        fn start(config: Config, scanner: FakeScanner) -> Self {
+            let poller = Arc::new(PortPoller::with_config(config));
+            let scanner = Arc::new(scanner);
+            let published = Arc::new(Mutex::new(Vec::new()));
+
+            tokio::spawn({
+                let poller = poller.clone();
+                let scanner = scanner.clone();
+                let published = published.clone();
+                async move {
+                    poller
+                        .run(
+                            |include_udp| scanner.scan(include_udp),
+                            |snapshot| published.lock().unwrap().push(snapshot.clone()),
+                        )
+                        .await;
+                }
+            });
+
+            Self {
+                poller,
+                scanner,
+                published,
             }
-
-            let scan_started = Instant::now();
-            run_scan(&app).await;
-
-            let generation_changed = {
-                let poller = app.state::<PortPoller>();
-                let current = poller.lock_inner().generation;
-                current != generation
-            };
-            if generation_changed {
-                break;
-            }
-
-            let elapsed = scan_started.elapsed();
-            let wait = Duration::from_millis(interval_ms)
-                .saturating_sub(elapsed)
-                .max(Duration::from_millis(100));
-
-            tokio::time::sleep(wait).await;
-        }
-    });
-}
-
-fn spawn_scan(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        run_scan(&app).await;
-    });
-}
-
-async fn run_scan(app: &AppHandle) {
-    let include_udp = {
-        let poller = app.state::<PortPoller>();
-        let mut inner = poller.lock_inner();
-
-        if inner.in_flight {
-            return;
         }
 
-        inner.in_flight = true;
-        inner.include_udp
-    };
-
-    let scan_result =
-        tauri::async_runtime::spawn_blocking(move || scan_listening_ports(include_udp)).await;
-
-    let (processes, error) = match scan_result {
-        Ok(Ok(processes)) => (processes, None),
-        Ok(Err(err)) => {
-            let previous = {
-                let poller = app.state::<PortPoller>();
-                let last = poller.lock_inner().last_result.clone();
-                last
-            };
-            (previous, Some(err))
+        fn scans(&self) -> usize {
+            self.scanner.calls().len()
         }
-        Err(err) => {
-            let previous = {
-                let poller = app.state::<PortPoller>();
-                let last = poller.lock_inner().last_result.clone();
-                last
-            };
-            (previous, Some(format!("Scan task failed: {err}")))
+
+        fn published(&self) -> usize {
+            self.published.lock().unwrap().len()
         }
-    };
+    }
 
-    let payload = {
-        let poller = app.state::<PortPoller>();
-        let mut inner = poller.lock_inner();
-
-        inner.in_flight = false;
-        inner.last_scan_at = Some(Instant::now());
-        if error.is_none() {
-            inner.last_result = processes.clone();
+    fn manual() -> Config {
+        Config {
+            interval_ms: 0,
+            ..Config::default()
         }
-        inner.last_error = error.clone();
+    }
 
-        PortsUpdatedPayload { processes, error }
-    };
+    // Lets the loop run without moving the clock.
+    async fn settle() {
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+    }
 
-    let _ = app.emit("ports-updated", &payload);
+    async fn advance(seconds: u64) {
+        tokio::time::sleep(Duration::from_secs(seconds)).await;
+        settle().await;
+    }
 
-    crate::tray::rebuild_tray_menu(app);
+    #[tokio::test(start_paused = true)]
+    async fn scans_at_startup_and_publishes_the_result() {
+        let running = Running::start(
+            Config::default(),
+            FakeScanner::returning([Ok(vec![listener(1, 3000)])]),
+        );
+
+        let snapshot = running.poller.first_scan().await;
+
+        assert!(snapshot.scanned);
+        assert_eq!(snapshot.error, None);
+        assert_eq!(*snapshot.processes, vec![listener(1, 3000)]);
+        assert_eq!(running.published(), 1);
+        assert_eq!(
+            running.poller.find_by_pid(1).map(|process| process.pid),
+            Some(1)
+        );
+        assert!(running.poller.find_by_pid(2).is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_scan_that_found_nothing_new_publishes_nothing() {
+        let running = Running::start(
+            Config::default(),
+            FakeScanner::returning([Ok(vec![listener(1, 3000)])]),
+        );
+
+        advance(30).await;
+
+        assert!(running.scans() >= 10, "{} scans", running.scans());
+        assert_eq!(running.published(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_empty_first_scan_is_still_published() {
+        let running = Running::start(manual(), FakeScanner::returning([Ok(Vec::new())]));
+        settle().await;
+        assert_eq!(running.published(), 1);
+        assert!(running.poller.first_scan().await.scanned);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_changed_scan_is_published() {
+        let running = Running::start(
+            Config::default(),
+            FakeScanner::returning([
+                Ok(vec![listener(1, 3000)]),
+                Ok(vec![listener(1, 3000)]),
+                Ok(vec![listener(1, 3000), listener(2, 8080)]),
+            ]),
+        );
+
+        advance(30).await;
+
+        assert_eq!(running.published(), 2);
+        assert_eq!(running.poller.processes().len(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_scan_keeps_the_last_data_and_reports_the_error_once() {
+        let running = Running::start(
+            Config::default(),
+            FakeScanner::returning([
+                Ok(vec![listener(1, 3000)]),
+                Err("lsof did not finish within 10 s".to_string()),
+                Err("lsof did not finish within 10 s".to_string()),
+                Ok(vec![listener(1, 3000)]),
+            ]),
+        );
+
+        advance(30).await;
+
+        let published = running.published.lock().unwrap().clone();
+        let errors: Vec<Option<&str>> = published
+            .iter()
+            .map(|snapshot| snapshot.error.as_deref())
+            .collect();
+        // Good, failed (once, though it failed twice), good again.
+        assert_eq!(
+            errors,
+            vec![None, Some("lsof did not finish within 10 s"), None]
+        );
+        for snapshot in &published {
+            assert_eq!(*snapshot.processes, vec![listener(1, 3000)]);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn manual_mode_scans_only_when_asked() {
+        let running = Running::start(manual(), FakeScanner::default());
+
+        advance(60).await;
+        assert_eq!(running.scans(), 1);
+
+        running.poller.request_scan();
+        settle().await;
+        assert_eq!(running.scans(), 2);
+    }
+
+    // The old poller returned early when a scan was in flight, so a refresh
+    // asked for during a scan was lost: for good, in manual mode.
+    #[tokio::test(start_paused = true)]
+    async fn requests_during_a_scan_lead_to_exactly_one_more() {
+        let running = Running::start(manual(), FakeScanner::default().gated());
+        settle().await;
+        assert_eq!(running.scans(), 1);
+
+        for _ in 0..3 {
+            running.poller.request_scan();
+        }
+        running.scanner.finish_one_scan();
+        settle().await;
+        assert_eq!(running.scans(), 2, "the follow-up scan should have started");
+
+        running.scanner.finish_one_scan();
+        advance(60).await;
+        assert_eq!(running.scans(), 2, "three requests are one follow-up");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn scan_now_waits_for_a_scan_that_started_after_the_request() {
+        let running = Running::start(manual(), FakeScanner::default().gated());
+        settle().await;
+
+        let waiter = tokio::spawn({
+            let poller = running.poller.clone();
+            async move { poller.scan_now().await }
+        });
+        settle().await;
+
+        // The scan that was already running when the request came in.
+        running.scanner.finish_one_scan();
+        settle().await;
+        assert!(!waiter.is_finished(), "an earlier scan must not satisfy it");
+        assert_eq!(running.scans(), 2);
+
+        running.scanner.finish_one_scan();
+        assert_eq!(waiter.await.unwrap(), Ok(()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn scan_now_gives_up_on_a_scan_that_never_finishes() {
+        let running = Running::start(manual(), FakeScanner::default().gated());
+        settle().await;
+
+        let error = running.poller.scan_now().await.unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_scan_reports_a_timeout_instead_of_waiting_forever() {
+        let running = Running::start(manual(), FakeScanner::default().gated());
+
+        let snapshot = running.poller.first_scan().await;
+
+        assert!(!snapshot.scanned);
+        assert!(snapshot.error.unwrap().contains("timed out"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pausing_stops_periodic_scans_and_resuming_scans_at_once() {
+        let running = Running::start(Config::default(), FakeScanner::default());
+        settle().await;
+        assert_eq!(running.scans(), 1);
+
+        running.poller.set_paused(true);
+        advance(60).await;
+        assert_eq!(running.scans(), 1, "pausing itself must not scan");
+
+        // A request still gets through while paused.
+        running.poller.request_scan();
+        settle().await;
+        assert_eq!(running.scans(), 2);
+
+        running.poller.set_paused(false);
+        settle().await;
+        assert_eq!(running.scans(), 3);
+
+        advance(30).await;
+        assert!(running.scans() >= 12, "{} scans", running.scans());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hidden_window_slows_the_scans_down() {
+        let running = Running::start(Config::default(), FakeScanner::default());
+        settle().await;
+
+        running.poller.set_window_visible(false);
+        settle().await;
+        let before = running.scans();
+        advance(60).await;
+        let hidden = running.scans() - before;
+        assert!((3..=5).contains(&hidden), "{hidden} scans in a minute");
+
+        // Showing the window again scans straight away and restores the pace.
+        let before = running.scans();
+        running.poller.set_window_visible(true);
+        settle().await;
+        assert_eq!(running.scans(), before + 1);
+        advance(60).await;
+        assert!(running.scans() - before >= 20);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hidden_window_keeps_the_pace_while_a_port_is_watched() {
+        let running = Running::start(
+            Config {
+                watch_while_hidden: true,
+                window_visible: false,
+                ..Config::default()
+            },
+            FakeScanner::default(),
+        );
+
+        advance(60).await;
+
+        assert!(running.scans() >= 20, "{} scans", running.scans());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_interval_is_not_made_faster_by_hiding_the_window() {
+        let running = Running::start(
+            Config {
+                interval_ms: 60_000,
+                window_visible: false,
+                ..Config::default()
+            },
+            FakeScanner::default(),
+        );
+
+        advance(150).await;
+
+        assert_eq!(running.scans(), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn turning_udp_on_rescans_with_it() {
+        let running = Running::start(manual(), FakeScanner::default());
+        settle().await;
+
+        running.poller.set_scan_settings(0, true, false);
+        settle().await;
+        assert_eq!(running.scanner.calls(), vec![false, true]);
+
+        // Setting the same values again changes nothing.
+        running.poller.set_scan_settings(0, true, false);
+        settle().await;
+        assert_eq!(running.scans(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn changing_the_interval_scans_and_adopts_the_new_pace() {
+        let running = Running::start(manual(), FakeScanner::default());
+        settle().await;
+
+        running.poller.set_scan_settings(10_000, false, false);
+        settle().await;
+        assert_eq!(running.scans(), 2);
+
+        advance(60).await;
+        assert_eq!(running.scans(), 8);
+    }
+
+    #[test]
+    fn hidden_pace_is_the_slower_of_the_two() {
+        let hidden = |interval_ms| Config {
+            interval_ms,
+            window_visible: false,
+            ..Config::default()
+        };
+        assert_eq!(hidden(3_000).interval(), Some(HIDDEN_INTERVAL));
+        assert_eq!(hidden(60_000).interval(), Some(Duration::from_secs(60)));
+        assert_eq!(hidden(0).interval(), None);
+        assert_eq!(
+            Config::default().interval(),
+            Some(Duration::from_millis(3_000))
+        );
+    }
 }

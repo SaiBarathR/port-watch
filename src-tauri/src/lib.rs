@@ -10,11 +10,12 @@ mod process_actions;
 pub mod scanner;
 mod tray;
 
+use tauri::Manager;
+
 use app_settings::AppSettings;
 use commands::cli_install::{get_cli_install_status, install_cli_to_path, uninstall_cli_from_path};
 use commands::filesystem::{delete_project, open_in_finder};
 use commands::notifications::send_notification;
-use commands::ports::list_listening_ports;
 use commands::process::stop_process;
 use commands::settings::{
     set_allow_system_process_actions, set_preferred_editor, set_use_https_for_localhost,
@@ -48,11 +49,10 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                tray::hide_main_window(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
-            list_listening_ports,
             get_listening_ports,
             set_scan_settings,
             set_refresh_paused,

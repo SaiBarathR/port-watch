@@ -39,17 +39,6 @@ interface PortsUpdatedPayload {
 }
 
 function parsePortsPayload(payload: unknown): PortsUpdatedPayload {
-  if (Array.isArray(payload)) {
-    return {
-      processes: payload.map((item) =>
-        normalizePortProcess(
-          item as PortProcess & { isSystemService?: boolean },
-        ),
-      ),
-      error: null,
-    };
-  }
-
   if (payload && typeof payload === "object") {
     const record = payload as Record<string, unknown>;
     const processes = record.processes;
@@ -385,11 +374,15 @@ export function usePortScan() {
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
+      // Resolves when a scan that started after this call has finished. An
+      // event only follows if that scan found something new, so the spinner
+      // cannot wait for one.
       await invoke("trigger_port_scan");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setRefreshing(false);
       setLoading(false);
+    } finally {
+      setRefreshing(false);
     }
   }, []);
 
@@ -426,24 +419,7 @@ export function usePortScan() {
           return;
         }
 
-        if (payload.error) {
-          applyScanResultRef.current(payload.processes, payload.error);
-          return;
-        }
-
-        if (payload.processes.length === 0 && !payload.error) {
-          const direct = parsePortsPayload(
-            await invoke<PortProcess[]>("list_listening_ports", {
-              includeUdp: settingsRef.current.includeUdp,
-            }),
-          );
-          if (cancelled || receivedLiveEvent) {
-            return;
-          }
-          applyScanResultRef.current(direct.processes, direct.error);
-        } else {
-          applyScanResultRef.current(payload.processes, payload.error);
-        }
+        applyScanResultRef.current(payload.processes, payload.error);
       } catch (err) {
         if (cancelled) {
           return;
@@ -460,14 +436,20 @@ export function usePortScan() {
     };
   }, []);
 
+  // With the window hidden the backend scans less often, unless a watched
+  // port is waiting to raise a desktop alert.
+  const watchWhileHidden =
+    settings.watchedPortNotifications && settings.watchedPorts.length > 0;
+
   useEffect(() => {
     void invoke("set_scan_settings", {
       intervalMs: settings.refreshIntervalMs,
       includeUdp: settings.includeUdp,
+      watchWhileHidden,
     }).catch(() => {
       // ignore outside Tauri
     });
-  }, [settings.refreshIntervalMs, settings.includeUdp]);
+  }, [settings.refreshIntervalMs, settings.includeUdp, watchWhileHidden]);
 
   useEffect(() => {
     void invoke("set_allow_system_process_actions", {

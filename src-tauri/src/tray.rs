@@ -215,7 +215,7 @@ fn menu_signature(processes: &[PortProcess], menu_bar_enabled: bool) -> String {
 /// every scan — it diffs a signature and only touches the menu when something
 /// the menu shows actually changed. The menu must be mutated on the main thread.
 pub fn rebuild_tray_menu(app: &AppHandle) {
-    let processes = app.state::<PortPoller>().snapshot();
+    let processes = app.state::<PortPoller>().processes();
     let menu_bar_enabled = is_menu_bar_mode_enabled(app);
 
     let signature = menu_signature(&processes, menu_bar_enabled);
@@ -271,9 +271,7 @@ pub fn rebuild_tray_menu(app: &AppHandle) {
 fn handle_menu_event(app: &AppHandle, id: &str) {
     match id {
         "tray-open-window" => show_main_window(app),
-        "tray-refresh" => {
-            let _ = crate::poller::trigger_port_scan(app.clone());
-        }
+        "tray-refresh" => app.state::<PortPoller>().request_scan(),
         "tray-menu-bar-mode" => {
             let enabled = !is_menu_bar_mode_enabled(app);
             if let Err(error) = apply_menu_bar_mode(app, enabled) {
@@ -347,7 +345,7 @@ fn run_port_action(
             // The menu can be older than the latest scan. Without the scan's
             // entry there is no name to confirm or to check the PID against.
             let Some(process) = process else {
-                let _ = crate::poller::trigger_port_scan(app.clone());
+                app.state::<PortPoller>().request_scan();
                 return Err(format!(
                     "PID {pid} is no longer listening, so it was not stopped."
                 ));
@@ -366,7 +364,8 @@ fn run_port_action(
             )?;
             // Nothing else rescans after a tray stop, so with manual refresh
             // the stopped process would stay listed indefinitely.
-            crate::poller::trigger_port_scan(app.clone())
+            app.state::<PortPoller>().request_scan();
+            Ok(())
         }
         _ => Ok(()),
     }
@@ -440,6 +439,17 @@ pub fn show_main_window(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+    // Scans at once and goes back to the normal pace.
+    app.state::<PortPoller>().set_window_visible(true);
+}
+
+/// Hides the main window to the tray. The poller slows down while nothing
+/// is there to show the result.
+pub fn hide_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    app.state::<PortPoller>().set_window_visible(false);
 }
 
 fn apply_menu_bar_mode(app: &AppHandle, enabled: bool) -> Result<(), String> {
@@ -455,9 +465,7 @@ fn apply_menu_bar_mode(app: &AppHandle, enabled: bool) -> Result<(), String> {
     }
 
     if enabled {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.hide();
-        }
+        hide_main_window(app);
     } else {
         show_main_window(app);
     }

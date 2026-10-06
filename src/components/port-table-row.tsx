@@ -15,7 +15,10 @@ function changeRowClass(change: RowChangeKind | undefined): string {
   }
 }
 
-function stickyCellClass(position: "first" | "last") {
+// The select and actions columns stay in view while the rest scrolls sideways.
+export function stickyCellClass(
+  position: "first" | "last" | "corner-left" | "corner-right",
+) {
   const base =
     "bg-background group-hover:bg-[color-mix(in_oklch,var(--muted)_50%,var(--background))]";
   switch (position) {
@@ -23,6 +26,10 @@ function stickyCellClass(position: "first" | "last") {
       return cn(base, "sticky left-0 z-10");
     case "last":
       return cn(base, "sticky right-0 z-10");
+    case "corner-left":
+      return "sticky top-0 left-0 z-30 bg-background";
+    case "corner-right":
+      return "sticky top-0 right-0 z-30 bg-background";
   }
 }
 

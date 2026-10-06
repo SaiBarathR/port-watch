@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { AppSettings, PortProcess } from "@/lib/types";
+import { useProcessActions } from "@/components/process-actions";
 import { togglePinnedPath } from "@/lib/settings-actions";
 import { updateSettings } from "@/lib/settings-store";
 import {
@@ -36,20 +37,6 @@ import {
   primaryPath,
   primaryPort,
 } from "@/lib/types";
-
-export interface PortTableActionsHandlers {
-  canStop: (process: PortProcess) => boolean;
-  openStopDialog: (
-    targets: PortProcess[],
-    title?: string,
-    description?: string,
-  ) => void;
-  openFreePortDialog: (process: PortProcess, port: number) => void;
-  setHistoryPort: (port: number) => void;
-  setDeleteTarget: (
-    target: { process: PortProcess; mode: "trash" | "permanent" } | null,
-  ) => void;
-}
 
 interface OpenMenuContextValue {
   openMenuId: string | null;
@@ -76,14 +63,13 @@ interface PortTableActionsCellProps {
     AppSettings,
     "pinnedPaths" | "preferredEditor" | "useHttpsForLocalhost"
   >;
-  handlers: PortTableActionsHandlers;
 }
 
 export const PortTableActionsCell = memo(function PortTableActionsCell({
   process,
   settings,
-  handlers,
 }: PortTableActionsCellProps) {
+  const actions = useProcessActions();
   const menu = useContext(OpenMenuContext);
   if (!menu) {
     return null;
@@ -93,7 +79,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
   const isOpen = openMenuId === process.id;
   const folderPath = pinPath(process);
   const canDeleteFolder =
-    !!folderPath && handlers.canStop(process) && !process.delete_blocked;
+    !!folderPath && actions.canStop(process) && !process.delete_blocked;
   const editorPath = process.project_root || process.working_directory;
   const port = primaryPort(process);
   const pinnedPath = pinPath(process);
@@ -191,10 +177,10 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
           <DropdownMenuGroup>
             {port !== null && (
               <DropdownMenuItem
-                disabled={!handlers.canStop(process)}
+                disabled={!actions.canStop(process)}
                 onClick={() => {
                   setOpenMenuId(null);
-                  handlers.openFreePortDialog(process, port);
+                  actions.freePort(port, process);
                 }}
               >
                 <OctagonIcon />
@@ -202,10 +188,10 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
-              disabled={!handlers.canStop(process)}
+              disabled={!actions.canStop(process)}
               onClick={() => {
                 setOpenMenuId(null);
-                handlers.openStopDialog([process]);
+                actions.stop([process]);
               }}
             >
               <OctagonIcon />
@@ -215,7 +201,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               <DropdownMenuItem
                 onClick={() => {
                   setOpenMenuId(null);
-                  handlers.setHistoryPort(port);
+                  actions.showHistory(port);
                 }}
               >
                 <HistoryIcon />
@@ -282,7 +268,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               disabled={!canDeleteFolder}
               onClick={() => {
                 setOpenMenuId(null);
-                handlers.setDeleteTarget({ process, mode: "trash" });
+                actions.remove(process, "trash");
               }}
             >
               <TrashIcon />
@@ -293,7 +279,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               disabled={!canDeleteFolder}
               onClick={() => {
                 setOpenMenuId(null);
-                handlers.setDeleteTarget({ process, mode: "permanent" });
+                actions.remove(process, "permanent");
               }}
             >
               <Trash2Icon />

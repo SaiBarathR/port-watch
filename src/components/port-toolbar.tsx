@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PortHistoryTimeline } from "@/components/port-history-timeline";
+import { useProcessActions } from "@/components/process-actions";
 import { SettingsDialog } from "@/components/settings-dialog";
 import type { ThemeMode } from "@/hooks/use-theme";
 import { processesToJson, processesToMarkdown } from "@/lib/export-snapshot";
@@ -57,7 +58,6 @@ interface PortToolbarProps {
   settings: AppSettings;
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
-  onFreePort: (port: number, occupants: PortProcess[]) => void;
   onRefresh: () => void;
   loading: boolean;
   /** True until the first scan has come back. */
@@ -78,7 +78,6 @@ export function PortToolbar({
   settings,
   theme,
   onThemeChange,
-  onFreePort,
   onRefresh,
   loading,
   firstScanPending,
@@ -157,10 +156,8 @@ export function PortToolbar({
         .filter(Boolean)
         .join(" · ");
 
-  const stoppableOccupants = portLookupOccupants.filter(
-    (process) =>
-      !process.is_system_service || settings.allowSystemProcessActions,
-  );
+  const { canStop, freePort } = useProcessActions();
+  const canFreePort = portLookupOccupants.some(canStop);
 
   return (
     <div className="flex flex-col gap-3 border-b pb-4">
@@ -355,8 +352,8 @@ export function PortToolbar({
               <Button
                 variant="destructive"
                 size="sm"
-                disabled={stoppableOccupants.length === 0}
-                onClick={() => onFreePort(exactPortQuery, stoppableOccupants)}
+                disabled={!canFreePort}
+                onClick={() => freePort(exactPortQuery)}
               >
                 <OctagonIcon />
                 Free port {exactPortQuery}

@@ -118,10 +118,21 @@ impl DeleteRules {
 /// index on Windows. It holds the directory open, so drop it before removing
 /// the directory.
 #[derive(Debug, PartialEq, Eq)]
-pub struct FolderIdentity(same_file::Handle);
+pub struct FolderIdentity {
+    handle: same_file::Handle,
+    // A second witness. On some Windows volumes (ReFS, some network shares)
+    // the file index is not unique, and two folders can report the same one.
+    created: Option<std::time::SystemTime>,
+}
 
 pub fn folder_identity(folder: &Path) -> std::io::Result<FolderIdentity> {
-    same_file::Handle::from_path(folder).map(FolderIdentity)
+    let handle = same_file::Handle::from_path(folder)?;
+    let created = handle
+        .as_file()
+        .metadata()
+        .and_then(|metadata| metadata.created())
+        .ok();
+    Ok(FolderIdentity { handle, created })
 }
 
 fn matches_any(name: &str, candidates: &[&str]) -> bool {

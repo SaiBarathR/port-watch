@@ -82,6 +82,11 @@ pub fn stop_process(
     force: bool,
     expected: Option<&ProcessIdentity>,
 ) -> Result<(), String> {
+    // Held to the end. taskkill is given a PID, and a PID is not issued
+    // again while a handle to its process is open, so what is checked below
+    // is what taskkill is then pointed at.
+    let _held = ProcessHandle::open(pid);
+
     if !still_there(pid, expected)? {
         // Nothing is signalled: a PID that is free now can be another
         // process's a moment later.
@@ -126,12 +131,22 @@ pub fn is_running(pid: u32) -> bool {
     live_process(pid) != LiveProcess::Gone
 }
 
+/// When the process started, read the way a stop reads it, so that a scan
+/// and the stop that follows it agree.
+pub fn process_started_at(pid: u32) -> Option<u64> {
+    match live_process(pid) {
+        LiveProcess::Running { started_at, .. } if started_at > 0 => Some(started_at),
+        _ => None,
+    }
+}
+
 pub fn probe() -> Probe {
     Probe {
         live: live_process,
         names_match: crate::platform::shared::process_names_match,
-        // The scan's start time comes through PowerShell and this one straight
-        // from the kernel, so the two may land a second apart.
+        // A scan reads the start time the same way, but falls back to
+        // PowerShell's when it cannot open the process, and that one may
+        // land a second away.
         start_slack: 1,
     }
 }
@@ -149,74 +164,111 @@ fn still_there(pid: u32, expected: Option<&ProcessIdentity>) -> Result<bool, Str
     }
 }
 
-// Asked of the kernel directly. `tasklist` reports no start time, and a
-// failure to run it could not be told from "no such process".
-fn live_process(pid: u32) -> LiveProcess {
+mod win32 {
     use std::ffi::c_void;
+
+    pub type Handle = *mut c_void;
 
     #[repr(C)]
     #[derive(Default)]
-    struct FileTime {
-        low: u32,
-        high: u32,
+    pub struct FileTime {
+        pub low: u32,
+        pub high: u32,
     }
 
     #[link(name = "kernel32")]
     extern "system" {
-        fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut c_void;
-        fn CloseHandle(handle: *mut c_void) -> i32;
-        fn GetLastError() -> u32;
-        fn GetExitCodeProcess(process: *mut c_void, exit_code: *mut u32) -> i32;
-        fn GetProcessTimes(
-            process: *mut c_void,
+        pub fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> Handle;
+        pub fn CloseHandle(handle: Handle) -> i32;
+        pub fn GetLastError() -> u32;
+        pub fn GetExitCodeProcess(process: Handle, exit_code: *mut u32) -> i32;
+        pub fn GetProcessTimes(
+            process: Handle,
             creation: *mut FileTime,
             exit: *mut FileTime,
             kernel: *mut FileTime,
             user: *mut FileTime,
         ) -> i32;
-        fn QueryFullProcessImageNameW(
-            process: *mut c_void,
+        pub fn QueryFullProcessImageNameW(
+            process: Handle,
             flags: u32,
             name: *mut u16,
             size: *mut u32,
         ) -> i32;
     }
-    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
-    const ERROR_INVALID_PARAMETER: u32 = 87;
-    const STILL_ACTIVE: u32 = 259;
 
-    // SAFETY: plain Win32 calls. Every pointer is to a live local of the type
-    // the call writes, the name buffer is passed with its capacity, and the
-    // handle is closed before returning.
-    unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle.is_null() {
-            // "Invalid parameter" is how a PID that names no process is
-            // reported. Any other failure (access denied, for a protected
-            // process) means there is one.
-            return if GetLastError() == ERROR_INVALID_PARAMETER {
-                LiveProcess::Gone
+    pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    pub const ERROR_INVALID_PARAMETER: u32 = 87;
+    pub const STILL_ACTIVE: u32 = 259;
+}
+
+// A process object, and with it the PID, outlives its process for as long as
+// anyone holds a handle to it.
+struct ProcessHandle(win32::Handle);
+
+impl ProcessHandle {
+    // The error is the Win32 code.
+    fn open(pid: u32) -> Result<Self, u32> {
+        // SAFETY: OpenProcess takes three integers. Null is its failure
+        // value, and the error code is read before any other call.
+        unsafe {
+            let handle = win32::OpenProcess(win32::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                Err(win32::GetLastError())
             } else {
-                LiveProcess::Running {
-                    name: None,
-                    started_at: 0,
-                }
-            };
+                Ok(Self(handle))
+            }
+        }
+    }
+}
+
+impl Drop for ProcessHandle {
+    fn drop(&mut self) {
+        // SAFETY: the handle came from OpenProcess and is closed only here.
+        unsafe {
+            win32::CloseHandle(self.0);
+        }
+    }
+}
+
+// Asked of the kernel directly. `tasklist` reports no start time, and a
+// failure to run it could not be told from "no such process".
+fn live_process(pid: u32) -> LiveProcess {
+    let process = match ProcessHandle::open(pid) {
+        Ok(process) => process,
+        // "Invalid parameter" is how a PID that names no process is
+        // reported. Any other failure (access denied, for a protected
+        // process) means there is one.
+        Err(win32::ERROR_INVALID_PARAMETER) => return LiveProcess::Gone,
+        Err(_) => {
+            return LiveProcess::Running {
+                name: None,
+                started_at: 0,
+            }
+        }
+    };
+
+    // SAFETY: plain Win32 calls on a handle that stays open until `process`
+    // is dropped. Every pointer is to a live local of the type the call
+    // writes, and the name buffer is passed with its capacity.
+    unsafe {
+        let mut exit_code = 0u32;
+        if win32::GetExitCodeProcess(process.0, &mut exit_code) != 0
+            && exit_code != win32::STILL_ACTIVE
+        {
+            return LiveProcess::Gone;
         }
 
-        // A process object outlives its process for as long as anyone holds
-        // a handle to it.
-        let mut exit_code = 0u32;
-        let exited = GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code != STILL_ACTIVE;
-
-        let mut creation = FileTime::default();
+        let mut creation = win32::FileTime::default();
         let (mut exit, mut kernel, mut user) = (
-            FileTime::default(),
-            FileTime::default(),
-            FileTime::default(),
+            win32::FileTime::default(),
+            win32::FileTime::default(),
+            win32::FileTime::default(),
         );
         let started_at =
-            if GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) != 0 {
+            if win32::GetProcessTimes(process.0, &mut creation, &mut exit, &mut kernel, &mut user)
+                != 0
+            {
                 crate::platform::shared::filetime_to_unix_seconds(
                     (u64::from(creation.high) << 32) | u64::from(creation.low),
                 )
@@ -226,23 +278,19 @@ fn live_process(pid: u32) -> LiveProcess {
 
         let mut path = [0u16; 1024];
         let mut length = path.len() as u32;
-        let name = if QueryFullProcessImageNameW(handle, 0, path.as_mut_ptr(), &mut length) != 0 {
-            String::from_utf16_lossy(&path[..length as usize])
-                .rsplit(['\\', '/'])
-                .next()
-                .filter(|name| !name.is_empty())
-                .map(str::to_string)
-        } else {
-            None
-        };
+        let name =
+            if win32::QueryFullProcessImageNameW(process.0, 0, path.as_mut_ptr(), &mut length) != 0
+            {
+                String::from_utf16_lossy(&path[..length as usize])
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string)
+            } else {
+                None
+            };
 
-        CloseHandle(handle);
-
-        if exited {
-            LiveProcess::Gone
-        } else {
-            LiveProcess::Running { name, started_at }
-        }
+        LiveProcess::Running { name, started_at }
     }
 }
 
@@ -305,12 +353,15 @@ mod tests {
         assert_eq!(live_process(u32::MAX - 2), LiveProcess::Gone);
         assert!(!is_running(u32::MAX - 2));
 
+        // An exited process whose handle is still held, here by `child`:
+        // the PID still opens, and cannot have been issued to anyone else.
         let mut child = pinger();
         let pid = child.id();
         child.kill().expect("kill");
         child.wait().expect("wait");
-        drop(child);
         assert_eq!(live_process(pid), LiveProcess::Gone);
+        assert_eq!(process_started_at(pid), None);
+        drop(child);
     }
 
     #[test]
@@ -367,15 +418,28 @@ mod tests {
         assert!(still_running);
     }
 
+    // `child` keeps its handle, so the PID cannot have gone to another
+    // process by the time it is looked up.
     #[test]
-    fn an_exited_process_counts_as_stopped_without_running_taskkill() {
+    fn an_exited_process_counts_as_stopped() {
         let mut child = pinger();
         let identity = identity_of(child.id());
         let pid = child.id();
         child.kill().expect("kill");
         child.wait().expect("wait");
-        drop(child);
 
         assert_eq!(stop_process(pid, false, Some(&identity)), Ok(()));
+        drop(child);
+    }
+
+    #[test]
+    fn a_scan_reads_the_start_time_the_way_a_stop_does() {
+        let mut child = pinger();
+        let identity = identity_of(child.id());
+        let started_at = process_started_at(child.id());
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(started_at, Some(identity.started_at));
     }
 }

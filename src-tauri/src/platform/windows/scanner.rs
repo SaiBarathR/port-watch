@@ -86,7 +86,11 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
                     project_root: project_root.clone(),
                     system_kind: SystemKind::User,
                     is_system_service: false,
-                    started_at: listener.started_at.max(0) as u64,
+                    // Read the way a stop reads it, so the two agree to
+                    // the second; PowerShell's own figure passes through a
+                    // local time, which is ambiguous for an hour each year.
+                    started_at: super::shell::process_started_at(listener.pid)
+                        .unwrap_or(listener.started_at.max(0) as u64),
                     delete_blocked: delete_blocked.clone(),
                 };
                 classify_process(&mut process);

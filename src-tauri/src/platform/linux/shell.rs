@@ -1,3 +1,6 @@
+use crate::platform::unix::{self, LiveProcess, Probe};
+use crate::scanner::ProcessIdentity;
+
 pub fn open_in_file_manager(path: &str) -> Result<(), String> {
     let status = std::process::Command::new("xdg-open")
         .arg(path)
@@ -96,73 +99,53 @@ pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
     Err(format!("Could not open a terminal at: {cwd}"))
 }
 
-pub fn stop_process(pid: u32, force: bool, expected_name: Option<&str>) -> Result<(), String> {
-    verify_process_identity(pid, expected_name)?;
-
-    if force {
-        send_signal(pid, "-KILL")?;
-    } else {
-        send_signal(pid, "-TERM")?;
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        // Re-verify before escalating: the PID may have been reused by an
-        // unrelated process during the grace window.
-        if still_matches(pid, expected_name) {
-            send_signal(pid, "-KILL")?;
-        }
-    }
-    Ok(())
+pub fn stop_process(
+    pid: u32,
+    force: bool,
+    expected: Option<&ProcessIdentity>,
+) -> Result<(), String> {
+    unix::stop_process(&probe(), pid, force, expected)
 }
 
-pub fn current_process_name(pid: u32) -> Option<String> {
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-    let name = comm.trim().to_string();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
+pub fn is_running(pid: u32) -> bool {
+    live_process(pid) != LiveProcess::Gone
+}
+
+// Both names are the kernel's 15-character `comm`, but the comparison stays
+// as tolerant as it has been.
+pub fn probe() -> Probe {
+    Probe {
+        live: live_process,
+        names_match: crate::platform::shared::process_names_match,
     }
 }
 
-fn verify_process_identity(pid: u32, expected_name: Option<&str>) -> Result<(), String> {
-    let Some(expected) = expected_name else {
-        return Ok(());
+fn live_process(pid: u32) -> LiveProcess {
+    let proc_dir = std::path::PathBuf::from(format!("/proc/{pid}"));
+    let Ok(stat) = std::fs::read_to_string(proc_dir.join("stat")) else {
+        return LiveProcess::Gone;
     };
+    if matches!(parse_state(&stat), Some('Z' | 'X')) {
+        return LiveProcess::Gone;
+    }
 
-    match current_process_name(pid) {
-        Some(name) if crate::platform::shared::process_names_match(&name, expected) => Ok(()),
-        Some(name) => Err(format!(
-            "PID {pid} now belongs to \"{name}\", not \"{expected}\" — the process list was stale. Refresh and try again."
-        )),
-        // Already gone: the goal (process stopped) is achieved.
-        None => Ok(()),
+    let name = std::fs::read_to_string(proc_dir.join("comm"))
+        .ok()
+        .map(|comm| comm.trim().to_string())
+        .filter(|name| !name.is_empty());
+    LiveProcess::Running {
+        name,
+        started_at: super::scanner::read_proc_started_at(&proc_dir),
     }
 }
 
-fn still_matches(pid: u32, expected_name: Option<&str>) -> bool {
-    match (current_process_name(pid), expected_name) {
-        (Some(name), Some(expected)) => {
-            crate::platform::shared::process_names_match(&name, expected)
-        }
-        (Some(_), None) => true,
-        (None, _) => false,
-    }
-}
-
-fn send_signal(pid: u32, signal: &str) -> Result<(), String> {
-    let status = std::process::Command::new("kill")
-        .arg(signal)
-        .arg(pid.to_string())
-        .status()
-        .map_err(|e| format!("Failed to run kill: {e}"))?;
-
-    // A process that exited on its own before the signal landed is stopped
-    // all the same — common for pre-forked workers whose master was stopped
-    // a moment earlier.
-    if !status.success() && current_process_name(pid).is_some() {
-        return Err(format!("kill {signal} failed for PID {pid}"));
-    }
-
-    Ok(())
+// The state is the field after the name, which is parenthesised and may
+// itself contain spaces and parentheses. Z (zombie) and X (dead) have exited.
+fn parse_state(proc_pid_stat: &str) -> Option<char> {
+    proc_pid_stat
+        .rsplit_once(')')
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .and_then(|state| state.chars().next())
 }
 
 #[cfg(test)]
@@ -170,14 +153,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn already_exited_process_counts_as_stopped() {
+    fn parse_state_reads_the_field_after_the_name() {
+        assert_eq!(parse_state("42 (sleep) S 1 42 42"), Some('S'));
+        assert_eq!(parse_state("42 (tmux: server (1)) Z 1 42"), Some('Z'));
+        assert_eq!(parse_state(""), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn this_process_is_running_under_its_own_name_and_start_time() {
+        let pid = std::process::id();
+        let LiveProcess::Running { name, started_at } = live_process(pid) else {
+            panic!("the test process should be running");
+        };
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap();
+        assert_eq!(name.as_deref(), Some(comm.trim()));
+        assert!(started_at > 0);
+        assert!(is_running(pid));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_pid_that_does_not_exist_is_gone() {
         let mut child = std::process::Command::new("true")
             .spawn()
             .expect("spawn true");
         let pid = child.id();
         child.wait().expect("wait");
-
-        assert_eq!(stop_process(pid, false, Some("true")), Ok(()));
-        assert_eq!(stop_process(pid, true, None), Ok(()));
+        assert_eq!(live_process(pid), LiveProcess::Gone);
     }
 }

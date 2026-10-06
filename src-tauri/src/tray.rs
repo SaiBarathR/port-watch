@@ -355,7 +355,15 @@ fn run_port_action(
             if !confirm_stop(app, process) {
                 return Ok(());
             }
-            crate::process_actions::stop_process(app, pid, false, Some(&process.name))?;
+            crate::process_actions::stop_process(
+                app,
+                pid,
+                false,
+                crate::process_actions::SeenProcess {
+                    name: Some(&process.name),
+                    started_at: Some(process.started_at),
+                },
+            )?;
             // Nothing else rescans after a tray stop, so with manual refresh
             // the stopped process would stay listed indefinitely.
             crate::poller::trigger_port_scan(app.clone())

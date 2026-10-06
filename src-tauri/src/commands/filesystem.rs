@@ -34,6 +34,7 @@ pub async fn delete_project(
     app: AppHandle,
     pid: u32,
     expected_name: String,
+    expected_started_at: Option<u64>,
     path: String,
     mode: DeleteMode,
     confirmation: Option<String>,
@@ -44,6 +45,7 @@ pub async fn delete_project(
             pid,
             &DeleteRequest {
                 expected_name: &expected_name,
+                expected_started_at,
                 path: &path,
                 mode,
                 confirmation: confirmation.as_deref(),

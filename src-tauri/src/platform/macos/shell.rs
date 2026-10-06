@@ -1,3 +1,6 @@
+use crate::platform::unix::{self, LiveProcess, Probe};
+use crate::scanner::ProcessIdentity;
+
 pub fn open_in_file_manager(path: &str) -> Result<(), String> {
     let mut command = std::process::Command::new("open");
     // `open` launches a bundle (Foo.app) rather than showing what is in it,
@@ -56,63 +59,52 @@ pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
     Ok(())
 }
 
-// SIGTERM gets this long before escalating to SIGKILL, and SIGKILL gets as
-// long again to take effect before the stop is reported as failed.
-const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
-const EXIT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+pub fn stop_process(
+    pid: u32,
+    force: bool,
+    expected: Option<&ProcessIdentity>,
+) -> Result<(), String> {
+    unix::stop_process(&probe(), pid, force, expected)
+}
 
-pub fn stop_process(pid: u32, force: bool, expected_name: Option<&str>) -> Result<(), String> {
-    verify_process_identity(pid, expected_name)?;
+pub fn is_running(pid: u32) -> bool {
+    live_process(pid) != LiveProcess::Gone
+}
 
-    if !force {
-        send_signal(pid, "-TERM")?;
-        // The wait re-verifies identity on every poll, so reaching the
-        // escalation below means the PID was not reused by an unrelated
-        // process during the grace window.
-        if wait_for_exit(pid, expected_name, STOP_GRACE) {
-            return Ok(());
-        }
-    }
-
-    send_signal(pid, "-KILL")?;
-    if wait_for_exit(pid, expected_name, STOP_GRACE) {
-        Ok(())
-    } else {
-        Err(format!("PID {pid} is still running after SIGKILL"))
+// Names are compared exactly: both are the kernel's, and anything looser
+// would let one sibling helper pass for another.
+pub fn probe() -> Probe {
+    Probe {
+        live: live_process,
+        names_match: |live, scanned| live == scanned,
     }
 }
 
-// The kernel's name for a live process: the `pbi_name` field lsof prints as
-// the command name during a scan, so an unchanged process compares equal to
-// what the user saw. `ps` cannot supply it: its `comm` is argv[0], which
-// launchers and processes rewrite (`python3` for python3.13, Next.js's
-// `next-server (v…)`, puma, nginx workers), and its `ucomm` keeps only 16
-// bytes, which sibling helpers share (`Google Chrome He…`).
-pub fn current_process_name(pid: u32) -> Option<String> {
-    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
-    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
-    // SAFETY: `info` is a writable, zero-initialised buffer of exactly `size`
-    // bytes, which is what PROC_PIDTBSDINFO fills, and every bit pattern is
-    // a valid `proc_bsdinfo`.
-    let info = unsafe {
-        let written = libc::proc_pidinfo(
-            pid as libc::c_int,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            info.as_mut_ptr().cast(),
-            size,
-        );
-        if written != size {
-            return None;
-        }
-        info.assume_init()
+fn live_process(pid: u32) -> LiveProcess {
+    // The start time comes from a call that answers for every user's
+    // process, so it also says whether the PID exists at all.
+    let Some(started_at) = process_started_at(pid) else {
+        return LiveProcess::Gone;
     };
-    // A zombie has already exited and released its ports; it only lingers
-    // until its parent reaps it.
-    if info.pbi_status == libc::SZOMB {
-        return None;
-    }
 
+    match bsd_info(pid) {
+        Ok(info) if info.pbi_status == libc::SZOMB => LiveProcess::Gone,
+        Ok(info) => LiveProcess::Running {
+            name: process_name(&info),
+            started_at,
+        },
+        // Another user's process: it exists, but its name is not ours to read.
+        Err(error) if error.raw_os_error() == Some(libc::EPERM) => LiveProcess::Running {
+            name: None,
+            started_at,
+        },
+        // "No such process" for a PID that still has a start time is a
+        // zombie: exited, not yet reaped by its parent.
+        Err(_) => LiveProcess::Gone,
+    }
+}
+
+fn process_name(info: &libc::proc_bsdinfo) -> Option<String> {
     let raw = if info.pbi_name[0] != 0 {
         &info.pbi_name[..]
     } else {
@@ -127,6 +119,30 @@ pub fn current_process_name(pid: u32) -> Option<String> {
         None
     } else {
         Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+
+// Fails with EPERM for a process another user owns, and with ESRCH for one
+// that has exited, zombie or not.
+fn bsd_info(pid: u32) -> std::io::Result<libc::proc_bsdinfo> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: `info` is a writable, zero-initialised buffer of exactly `size`
+    // bytes, which is what PROC_PIDTBSDINFO fills, and every bit pattern is
+    // a valid `proc_bsdinfo`.
+    unsafe {
+        let written = libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        );
+        if written == size {
+            Ok(info.assume_init())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
     }
 }
 
@@ -171,73 +187,11 @@ pub fn process_started_at(pid: u32) -> Option<u64> {
     u64::try_from(seconds).ok().filter(|seconds| *seconds > 0)
 }
 
-// Exact comparison: both names are the kernel's, and anything looser would
-// let one sibling helper pass for another.
-fn verify_process_identity(pid: u32, expected_name: Option<&str>) -> Result<(), String> {
-    let Some(expected) = expected_name else {
-        return Ok(());
-    };
-
-    match current_process_name(pid) {
-        Some(name) if name == expected => Ok(()),
-        Some(name) => Err(format!(
-            "PID {pid} now belongs to \"{name}\", not \"{expected}\" — the process list was stale. Refresh and try again."
-        )),
-        // Already gone: the goal (process stopped) is achieved.
-        None => Ok(()),
-    }
-}
-
-fn still_matches(pid: u32, expected_name: Option<&str>) -> bool {
-    match (current_process_name(pid), expected_name) {
-        (Some(name), Some(expected)) => name == expected,
-        (Some(_), None) => true,
-        (None, _) => false,
-    }
-}
-
-// Polls instead of sleeping a fixed interval: most processes exit within
-// milliseconds of a signal.
-fn wait_for_exit(pid: u32, expected_name: Option<&str>, timeout: std::time::Duration) -> bool {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if !still_matches(pid, expected_name) {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(EXIT_POLL_INTERVAL);
-    }
-}
-
-fn send_signal(pid: u32, signal: &str) -> Result<(), String> {
-    let output = std::process::Command::new("kill")
-        .arg(signal)
-        .arg(pid.to_string())
-        .output()
-        .map_err(|e| format!("Failed to run kill: {e}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    // `kill: 123: Operation not permitted` -> `Operation not permitted`
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    match stderr.trim().rsplit(": ").next().unwrap_or_default() {
-        // Exited on its own before the signal landed, so it is stopped all
-        // the same — common when its parent was stopped a moment earlier.
-        "No such process" => Ok(()),
-        "" => Err(format!("kill {signal} failed for PID {pid}")),
-        reason => Err(format!("kill {signal} failed for PID {pid}: {reason}")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
     use std::os::unix::process::CommandExt;
-    use std::process::{Child, Command, Stdio};
+    use std::process::{Child, Command};
     use std::time::{Duration, Instant};
 
     // What lsof calls this PID: an independent witness for the name a scan
@@ -321,6 +275,20 @@ mod tests {
         assert!(started.abs_diff(from_ps) <= 2, "{started} vs {from_ps}");
     }
 
+    fn name_of(pid: u32) -> Option<String> {
+        match live_process(pid) {
+            LiveProcess::Running { name, .. } => name,
+            LiveProcess::Gone => None,
+        }
+    }
+
+    fn identity(pid: u32, name: &str) -> ProcessIdentity {
+        ProcessIdentity {
+            name: name.to_string(),
+            started_at: process_started_at(pid).expect("start time"),
+        }
+    }
+
     #[test]
     fn identity_uses_the_full_executable_name() {
         // This test binary (`port_watch_lib-<hash>`) has a name longer than
@@ -328,13 +296,13 @@ mod tests {
         let pid = std::process::id();
         let name = scanned_name(pid);
         assert!(name.len() > 16, "{name}");
-        assert_eq!(current_process_name(pid), Some(name.clone()));
-        assert_eq!(verify_process_identity(pid, Some(&name)), Ok(()));
+        assert_eq!(name_of(pid), Some(name.clone()));
 
         // Chrome's helpers and WebKit's XPC services differ only past the
         // 16th byte; one must not pass for another.
         let sibling = &name[..name.len() - 1];
-        assert!(verify_process_identity(pid, Some(sibling)).is_err());
+        assert!((probe().names_match)(&name, &name));
+        assert!(!(probe().names_match)(&name, sibling));
     }
 
     #[test]
@@ -350,7 +318,8 @@ mod tests {
             let name = scanned_name(child.id());
             assert_eq!(name, "sleep");
 
-            let result = stop_process(child.id(), force, Some(&name));
+            let expected = identity(child.id(), &name);
+            let result = stop_process(child.id(), force, Some(&expected));
             let stopped = exited(&mut child);
             let _ = child.kill();
             assert_eq!(result, Ok(()), "force={force}");
@@ -359,107 +328,62 @@ mod tests {
     }
 
     #[test]
-    fn refuses_pid_that_now_runs_a_different_program() {
-        let mut child = Command::new("sleep")
-            .arg("60")
-            .spawn()
-            .expect("spawn sleep");
-
-        let result = stop_process(child.id(), true, Some("node"));
-        let still_running = child.try_wait().expect("try_wait").is_none();
-        let _ = child.kill();
-        let _ = child.wait();
-
-        assert!(result.unwrap_err().contains("now belongs to"));
-        assert!(still_running, "a mismatched PID must not be signalled");
-    }
-
-    #[test]
-    fn already_exited_process_counts_as_stopped() {
-        let mut child = Command::new("true").spawn().expect("spawn true");
-        let pid = child.id();
-        child.wait().expect("wait");
-
-        assert_eq!(stop_process(pid, false, Some("true")), Ok(()));
-        assert_eq!(stop_process(pid, true, None), Ok(()));
-    }
-
-    #[test]
     fn every_scanned_process_passes_its_own_identity_check() {
         let scanned = crate::scanner::scan_listening_ports(false).expect("scan");
         for process in scanned {
-            // None: it exited between the scan and this lookup.
-            if let Some(name) = current_process_name(process.pid) {
-                assert_eq!(name, process.name, "PID {}", process.pid);
+            match live_process(process.pid) {
+                // It exited between the scan and this lookup.
+                LiveProcess::Gone => {}
+                LiveProcess::Running { name, started_at } => {
+                    // The name is unreadable for another user's process.
+                    if let Some(name) = name {
+                        assert_eq!(name, process.name, "PID {}", process.pid);
+                    }
+                    assert_eq!(started_at, process.started_at, "PID {}", process.pid);
+                }
             }
         }
     }
 
+    // launchd runs as root: it exists and has a start time, but an ordinary
+    // user cannot read its name. That must not make it look gone.
     #[test]
-    fn failing_to_signal_a_live_process_is_an_error() {
+    fn another_users_process_is_running_not_gone() {
         // SAFETY: geteuid has no preconditions.
         if unsafe { libc::geteuid() } == 0 {
-            return; // root may signal anything
+            return; // root can read every name
         }
-        // Signal 0 only probes permission; launchd is never really signalled.
-        let error = send_signal(1, "-0").unwrap_err();
-        assert!(error.contains("not permitted"), "{error}");
+        assert!(is_running(1));
+        assert!(matches!(
+            live_process(1),
+            LiveProcess::Running { name: None, started_at } if started_at > 0
+        ));
     }
 
+    // The kernel still answers for a zombie's start time, and refuses its
+    // details with the same call that refuses another user's process. Only
+    // the error tells the two apart.
     #[test]
-    fn unreaped_zombie_counts_as_gone() {
+    fn an_unreaped_zombie_is_gone_not_unreadable() {
         let mut child = Command::new("true").spawn().expect("spawn true");
         let deadline = Instant::now() + Duration::from_secs(5);
-        while current_process_name(child.id()).is_some() && Instant::now() < deadline {
+        while live_process(child.id()) != LiveProcess::Gone && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
-        let name = current_process_name(child.id());
+        let zombie = live_process(child.id());
+        let still_has_a_start_time = process_started_at(child.id()).is_some();
         let _ = child.wait();
-        assert_eq!(name, None);
+
+        assert_eq!(zombie, LiveProcess::Gone);
+        assert!(still_has_a_start_time, "the child should not be reaped yet");
     }
 
     #[test]
-    fn escalates_to_sigkill_when_sigterm_is_ignored() {
-        let mut child = Command::new("perl")
-            .args([
-                "-e",
-                "$SIG{TERM} = 'IGNORE'; $| = 1; print \"ready\\n\"; sleep 60",
-            ])
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("spawn perl");
-        let mut ready = String::new();
-        BufReader::new(child.stdout.take().expect("stdout"))
-            .read_line(&mut ready)
-            .expect("read ready line");
-        let name = scanned_name(child.id());
-
-        let started = Instant::now();
-        let result = stop_process(child.id(), false, Some(&name));
-        let elapsed = started.elapsed();
-        let stopped = exited(&mut child);
-        let _ = child.kill();
-
-        assert_eq!(result, Ok(()));
-        assert!(stopped, "process should be gone after escalation");
-        assert!(elapsed >= STOP_GRACE, "SIGTERM grace was skipped");
-    }
-
-    #[test]
-    fn graceful_stop_returns_as_soon_as_the_process_exits() {
-        let mut child = Command::new("sleep")
-            .arg("60")
-            .spawn()
-            .expect("spawn sleep");
-
-        let started = Instant::now();
-        let result = stop_process(child.id(), false, Some("sleep"));
-        let elapsed = started.elapsed();
-        let stopped = exited(&mut child);
-        let _ = child.kill();
-
-        assert_eq!(result, Ok(()));
-        assert!(stopped);
-        assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
+    fn a_pid_that_does_not_exist_is_gone() {
+        let mut child = Command::new("true").spawn().expect("spawn true");
+        let pid = child.id();
+        child.wait().expect("wait");
+        assert_eq!(live_process(pid), LiveProcess::Gone);
+        assert!(!is_running(pid));
     }
 }

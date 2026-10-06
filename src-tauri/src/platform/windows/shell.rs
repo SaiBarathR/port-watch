@@ -1,5 +1,7 @@
 use std::process::Command;
 
+use crate::scanner::ProcessIdentity;
+
 // In a windows_subsystem = "windows" app, console children (taskkill, clip,
 // tasklist, powershell) each flash a visible console window unless spawned
 // with CREATE_NO_WINDOW. GUI children (explorer, wt) and the deliberately
@@ -74,8 +76,18 @@ pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn stop_process(pid: u32, force: bool, expected_name: Option<&str>) -> Result<(), String> {
-    verify_process_identity(pid, expected_name)?;
+pub fn stop_process(
+    pid: u32,
+    force: bool,
+    expected: Option<&ProcessIdentity>,
+) -> Result<(), String> {
+    // The name is the whole identity here: tasklist reports no start time.
+    let expected_name = expected.map(|identity| identity.name.as_str());
+    if is_gone(pid, expected_name)? {
+        // Nothing is signalled: a PID that is free now can be another
+        // process's a moment later.
+        return Ok(());
+    }
 
     let mut command = Command::new("taskkill");
     command.no_window().args(["/PID", &pid.to_string()]);
@@ -90,7 +102,9 @@ pub fn stop_process(pid: u32, force: bool, expected_name: Option<&str>) -> Resul
     if !status.success() && !force {
         // Console processes reject the graceful WM_CLOSE path outright;
         // re-verify identity before force-killing.
-        verify_process_identity(pid, expected_name)?;
+        if is_gone(pid, expected_name)? {
+            return Ok(());
+        }
         let force_status = Command::new("taskkill")
             .no_window()
             .args(["/F", "/PID", &pid.to_string()])
@@ -107,6 +121,10 @@ pub fn stop_process(pid: u32, force: bool, expected_name: Option<&str>) -> Resul
     }
 
     Ok(())
+}
+
+pub fn is_running(pid: u32) -> bool {
+    current_process_name(pid).is_some()
 }
 
 pub fn current_process_name(pid: u32) -> Option<String> {
@@ -126,17 +144,18 @@ pub fn current_process_name(pid: u32) -> Option<String> {
     }
 }
 
-fn verify_process_identity(pid: u32, expected_name: Option<&str>) -> Result<(), String> {
+// Ok(true) when the process has already exited, Ok(false) when it is running
+// under the expected name, and an error when the PID is something else now.
+fn is_gone(pid: u32, expected_name: Option<&str>) -> Result<bool, String> {
     let Some(expected) = expected_name else {
-        return Ok(());
+        return Ok(false);
     };
 
     match current_process_name(pid) {
-        Some(name) if crate::platform::shared::process_names_match(&name, expected) => Ok(()),
+        Some(name) if crate::platform::shared::process_names_match(&name, expected) => Ok(false),
         Some(name) => Err(format!(
             "PID {pid} now belongs to \"{name}\", not \"{expected}\" — the process list was stale. Refresh and try again."
         )),
-        // Already gone: the goal (process stopped) is achieved.
-        None => Ok(()),
+        None => Ok(true),
     }
 }

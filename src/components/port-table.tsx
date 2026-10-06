@@ -16,11 +16,14 @@ import {
   stickyCellClass,
 } from "@/components/port-table-row";
 import { useProcessActions } from "@/components/process-actions";
+import { useRowActionRunner } from "@/hooks/use-row-actions";
 import {
   DEFAULT_COLUMN_SIZING,
   loadColumnSizing,
   saveColumnSizing,
 } from "@/lib/column-sizing";
+import { isMacOS } from "@/lib/platform";
+import { focusRow } from "@/lib/row-focus";
 import { useRefreshPause } from "@/lib/refresh-pause";
 import { sortForTable, withGroupHeaders } from "@/lib/table-rows";
 import type { AppSettings, PortProcess, RowChangeKind } from "@/lib/types";
@@ -94,10 +97,29 @@ export function PortTable({
     [shownProcesses, settings.groupByDirectory, settings.pinnedPaths],
   );
 
+  // A socket can be shared (a master and its workers). For such a row,
+  // stopping it and freeing its port are different things.
+  const isPortShared = useMemo(() => {
+    const holders = new Map<number, number>();
+    for (const process of processes) {
+      for (const port of new Set(process.ports.map((held) => held.port))) {
+        holders.set(port, (holders.get(port) ?? 0) + 1);
+      }
+    }
+    return (process: PortProcess) =>
+      (holders.get(process.ports[0]?.port ?? -1) ?? 0) > 1;
+  }, [processes]);
+
   const portsColumnWidth = columnSizing.ports ?? DEFAULT_COLUMN_SIZING.ports;
   const meta = useMemo<PortTableMeta>(
-    () => ({ portsColumnWidth, rowChanges, canStop, actionSettings }),
-    [actionSettings, canStop, portsColumnWidth, rowChanges],
+    () => ({
+      portsColumnWidth,
+      rowChanges,
+      canStop,
+      isPortShared,
+      actionSettings,
+    }),
+    [actionSettings, canStop, isPortShared, portsColumnWidth, rowChanges],
   );
 
   // With system services hidden every row is the current user's own
@@ -153,6 +175,68 @@ export function PortTable({
     .rows.map((row) => row.original);
 
   const columnCount = table.getVisibleLeafColumns().length;
+
+  // The table is one tab stop. Tab lands on a row; the arrow keys move from
+  // row to row, and the row's own keys act on it. Before this, each row was
+  // three tab stops: its checkbox, its folder link and its menu button.
+  const rows = table.getRowModel().rows;
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
+  const tabStopId = rows.some((row) => row.id === activeRowId)
+    ? activeRowId
+    : (rows[0]?.id ?? null);
+  const run = useRowActionRunner();
+
+  const onRowKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    // A control inside the row has the key, not the row.
+    if (target.tagName !== "TR") {
+      return;
+    }
+    const index = rows.findIndex((row) => row.id === target.dataset.rowId);
+    if (index < 0) {
+      return;
+    }
+    const row = rows[index];
+    const process = row.original;
+    const shared = isPortShared(process);
+    const mod = isMacOS() ? event.metaKey : event.ctrlKey;
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    const moveTo = (to: number) =>
+      focusRow(rows[Math.max(0, Math.min(rows.length - 1, to))].id);
+
+    if (key === "ArrowDown") {
+      moveTo(index + 1);
+    } else if (key === "ArrowUp") {
+      moveTo(index - 1);
+    } else if (key === "Home") {
+      moveTo(0);
+    } else if (key === "End") {
+      moveTo(rows.length - 1);
+    } else if (key === " ") {
+      if (row.getCanSelect()) {
+        row.toggleSelected();
+      }
+    } else if (key === "Enter" && !mod && !event.altKey) {
+      run("open-browser", process, shared);
+    } else if (mod && key === "o") {
+      run("open-editor", process, shared);
+    } else if (mod && event.shiftKey && key === "c") {
+      run("copy-url", process, shared);
+    } else if (mod && (key === "Backspace" || key === "Delete")) {
+      run("stop", process, shared);
+    } else if (
+      (mod && key === "k") ||
+      key === "ContextMenu" ||
+      (event.shiftKey && key === "F10")
+    ) {
+      setOpenMenuId(row.id);
+    } else {
+      return;
+    }
+    event.preventDefault();
+    // The toolbar's own shortcuts are for when no row has the keys.
+    event.stopPropagation();
+  };
 
   const tableRows = withGroupHeaders(
     table.getRowModel().rows,
@@ -231,7 +315,18 @@ export function PortTable({
                   </tr>
                 ))}
               </thead>
-              <tbody className="[&_tr:last-child]:border-0">
+              <tbody
+                className="[&_tr:last-child]:border-0"
+                onKeyDown={onRowKeyDown}
+                onFocus={(event) => {
+                  const row = (
+                    event.target as HTMLElement
+                  ).closest<HTMLElement>("tr[data-row-id]");
+                  if (row?.dataset.rowId) {
+                    setActiveRowId(row.dataset.rowId);
+                  }
+                }}
+              >
                 {tableRows.length ? (
                   tableRows.map((item) => {
                     if (item.kind === "group") {
@@ -252,6 +347,8 @@ export function PortTable({
                         meta={meta}
                         isSelected={item.row.getIsSelected()}
                         canSelect={item.row.getCanSelect()}
+                        isTabStop={item.row.id === tabStopId}
+                        portIsShared={isPortShared(item.row.original)}
                         change={rowChanges.get(item.row.original.id)}
                         columnCount={columnCount}
                       />

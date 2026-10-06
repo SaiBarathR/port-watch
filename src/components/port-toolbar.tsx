@@ -35,6 +35,7 @@ import { SettingsDialog } from "@/components/settings-dialog";
 import type { ThemeMode } from "@/hooks/use-theme";
 import { processesToJson, processesToMarkdown } from "@/lib/export-snapshot";
 import { isMacOS } from "@/lib/platform";
+import { focusTabStopRow } from "@/lib/row-focus";
 import { formatHistorySeen, getPortSummary } from "@/lib/port-history";
 import {
   listenerScope,
@@ -115,18 +116,31 @@ export function PortToolbar({
     [onSearchChange, search],
   );
 
+  // ⌘F and "/" go to the search box, and ⌘R refreshes. ⌘K used to be the
+  // search key and still is, unless a row has the keys: there it opens the
+  // row's actions, and the table keeps the event to itself.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      const mod = isMacOS() ? event.metaKey : event.ctrlKey;
+      const key = event.key.toLowerCase();
+      const typing =
+        event.target instanceof HTMLElement &&
+        (event.target.isContentEditable ||
+          ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName));
+
+      if ((mod && (key === "f" || key === "k")) || (key === "/" && !typing)) {
         event.preventDefault();
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
+      } else if (mod && key === "r") {
+        event.preventDefault();
+        onRefresh();
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [onRefresh]);
 
   const copyExport = async (format: "json" | "markdown") => {
     const text =
@@ -206,6 +220,10 @@ export function PortToolbar({
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
                   clearSearch();
+                } else if (e.key === "ArrowDown") {
+                  // Down from the search box is into the results.
+                  e.preventDefault();
+                  focusTabStopRow();
                 }
               }}
             />
@@ -221,7 +239,7 @@ export function PortToolbar({
                 </button>
               )}
               <kbd className="hidden rounded border bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
-                {isMacOS() ? "⌘K" : "Ctrl K"}
+                {isMacOS() ? "⌘F" : "Ctrl F"}
               </kbd>
             </div>
           </div>

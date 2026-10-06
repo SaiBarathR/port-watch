@@ -141,6 +141,18 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   const [open, setOpen] = useState(false);
   const [watchedPortInput, setWatchedPortInput] = useState("");
+
+  // ⌘, is where a Mac app keeps its settings; Ctrl+, does the same elsewhere.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((isMacOS() ? event.metaKey : event.ctrlKey) && event.key === ",") {
+        event.preventDefault();
+        setOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   const [historyVersion, setHistoryVersion] = useState(0);
   const [selectedHistoryPort, setSelectedHistoryPort] = useState<number | null>(
     null,

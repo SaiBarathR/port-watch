@@ -2,16 +2,17 @@ import type { ColumnSizingState } from "@tanstack/react-table";
 
 const COLUMN_SIZING_KEY = "port-watch-column-sizing";
 
+// Together these fit a 1200 px window with every column shown.
 export const DEFAULT_COLUMN_SIZING: ColumnSizingState = {
   select: 40,
-  ports: 160,
-  name: 130,
-  pid: 72,
-  user: 96,
-  script: 280,
-  directory: 200,
-  uptime: 88,
-  type: 120,
+  ports: 150,
+  name: 120,
+  pid: 68,
+  user: 90,
+  script: 240,
+  directory: 190,
+  uptime: 80,
+  type: 110,
   actions: 52,
 };
 

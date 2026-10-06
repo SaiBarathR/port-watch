@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useRefreshPause } from "@/lib/refresh-pause";
+import { focusRow, focusTabStopRow } from "@/lib/row-focus";
 import { useSettings } from "@/lib/settings-store";
 import { processesOnPort, type PortProcess } from "@/lib/types";
 
@@ -83,11 +84,38 @@ export function ProcessActionsProvider({
   } | null>(null);
   const [historyPort, setHistoryPort] = useState<number | null>(null);
 
+  const dialogOpen =
+    stopRequest !== null || deleteTarget !== null || historyPort !== null;
   // Rows must not move behind a dialog that is about them.
-  useRefreshPause(
-    "process-dialog",
-    stopRequest !== null || deleteTarget !== null || historyPort !== null,
-  );
+  useRefreshPause("process-dialog", dialogOpen);
+
+  // A dialog hands the keyboard back to the button that opened it, and these
+  // have none: they open from menus and shortcuts. So where the keyboard was
+  // is noted when one is asked for, and it is put back when the dialog
+  // closes, on the row it was about if the menu item itself is gone.
+  const returnFocusRef = useRef<{ element: Element | null; rowId?: string }>({
+    element: null,
+  });
+  const noteFocus = useCallback((rowId?: string) => {
+    returnFocusRef.current = { element: document.activeElement, rowId };
+  }, []);
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    const closed = wasOpenRef.current && !dialogOpen;
+    wasOpenRef.current = dialogOpen;
+    if (!closed) {
+      return;
+    }
+    const { element, rowId } = returnFocusRef.current;
+    const timer = window.setTimeout(() => {
+      if (element instanceof HTMLElement && element.isConnected) {
+        element.focus();
+      } else if (!rowId || !focusRow(rowId)) {
+        focusTabStopRow();
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [dialogOpen]);
 
   // Read through a ref, so the actions keep their identity from one scan to
   // the next and the rows that hold them do not render again.
@@ -108,6 +136,7 @@ export function ProcessActionsProvider({
       canStop,
       stop: (targets, title, description) => {
         if (targets.length > 0) {
+          noteFocus(targets.length === 1 ? targets[0].id : undefined);
           setStopRequest({ targets, title, description });
         }
       },
@@ -123,6 +152,7 @@ export function ProcessActionsProvider({
           });
           return;
         }
+        noteFocus(first?.id);
         setStopRequest({
           targets,
           title: `Free port ${port}?`,
@@ -132,10 +162,16 @@ export function ProcessActionsProvider({
               : `Stop ${targets.length} processes to free port ${port}.`,
         });
       },
-      remove: (process, mode) => setDeleteTarget({ process, mode }),
-      showHistory: setHistoryPort,
+      remove: (process, mode) => {
+        noteFocus(process.id);
+        setDeleteTarget({ process, mode });
+      },
+      showHistory: (port) => {
+        noteFocus();
+        setHistoryPort(port);
+      },
     }),
-    [canStop],
+    [canStop, noteFocus],
   );
 
   return (

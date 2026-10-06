@@ -1,5 +1,8 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { flexRender, type Cell, type Row } from "@tanstack/react-table";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { RowContextMenuContent } from "@/components/port-table-actions-cell";
+import { useRefreshPause } from "@/lib/refresh-pause";
 import type { RowChangeKind } from "@/lib/types";
 import type { PortProcess } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -45,6 +48,9 @@ interface PortTableDataRowProps {
   // selection-only updates, so without these props the checkbox tick never updates.
   isSelected: boolean;
   canSelect: boolean;
+  /** The row Tab lands on. The arrow keys move it. */
+  isTabStop: boolean;
+  portIsShared: boolean;
 }
 
 export const PortTableDataRow = memo(function PortTableDataRow({
@@ -53,40 +59,68 @@ export const PortTableDataRow = memo(function PortTableDataRow({
   columnCount,
   isSelected,
   canSelect,
+  isTabStop,
+  portIsShared,
 }: PortTableDataRowProps) {
-  return (
-    <tr
-      aria-selected={isSelected}
-      data-state={isSelected ? "selected" : undefined}
-      data-can-select={canSelect}
-      className={cn(
-        "group border-b transition-colors",
-        ROW_BACKGROUND,
-        change && ROW_TINT[change],
-      )}
-    >
-      {row.getVisibleCells().map((cell: Cell<PortProcess, unknown>, index) => {
-        const isFirst = index === 0;
-        const isLast = index === columnCount - 1;
-        const stickyClass = isFirst
-          ? stickyCellClass("first")
-          : isLast
-            ? stickyCellClass("last")
-            : undefined;
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Rows must not move under an open menu.
+  useRefreshPause("row-context-menu", menuOpen);
 
-        return (
-          <td
-            key={cell.id}
-            className={cn(
-              "overflow-hidden p-2 align-middle whitespace-nowrap",
-              stickyClass,
-            )}
-          >
-            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-          </td>
-        );
-      })}
-    </tr>
+  return (
+    <ContextMenu onOpenChange={setMenuOpen}>
+      <ContextMenuTrigger asChild>
+        <tr
+          data-row-id={row.id}
+          tabIndex={isTabStop ? 0 : -1}
+          aria-selected={isSelected}
+          data-state={isSelected ? "selected" : undefined}
+          data-can-select={canSelect}
+          className={cn(
+            // No transition: the first and last cells are painted on their
+            // own and would change a beat ahead of the rest of the row.
+            "group border-b outline-none",
+            ROW_BACKGROUND,
+            change && ROW_TINT[change],
+            // Drawn with the row's colour and a bar on its first cell: an
+            // outline on a table row is not painted by every engine.
+            "focus-visible:[--row:color-mix(in_oklab,var(--ring)_22%,var(--background))]",
+          )}
+        >
+          {row
+            .getVisibleCells()
+            .map((cell: Cell<PortProcess, unknown>, index) => {
+              const isFirst = index === 0;
+              const isLast = index === columnCount - 1;
+              const stickyClass = isFirst
+                ? cn(
+                    stickyCellClass("first"),
+                    "group-focus-visible:shadow-[inset_3px_0_0_var(--ring)]",
+                  )
+                : isLast
+                  ? stickyCellClass("last")
+                  : undefined;
+
+              return (
+                <td
+                  key={cell.id}
+                  className={cn(
+                    "overflow-hidden p-2 align-middle whitespace-nowrap",
+                    stickyClass,
+                  )}
+                >
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </td>
+              );
+            })}
+        </tr>
+      </ContextMenuTrigger>
+      {menuOpen && (
+        <RowContextMenuContent
+          process={row.original}
+          portIsShared={portIsShared}
+        />
+      )}
+    </ContextMenu>
   );
 });
 

@@ -1,42 +1,22 @@
 import { createContext, memo, useContext, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import {
-  CopyIcon,
-  ExternalLinkIcon,
-  FolderOpenIcon,
-  HistoryIcon,
-  LinkIcon,
-  MoreHorizontalIcon,
-  OctagonIcon,
-  PinIcon,
-  PinOffIcon,
-  TerminalIcon,
-  Trash2Icon,
-  TrashIcon,
-  CodeIcon,
-} from "lucide-react";
-import { toast } from "sonner";
+import { MoreHorizontalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
+import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { AppSettings, PortProcess } from "@/lib/types";
-import { useProcessActions } from "@/components/process-actions";
-import { togglePinnedPath } from "@/lib/settings-actions";
-import { updateSettings } from "@/lib/settings-store";
-import {
-  isPinned,
-  localhostUrl,
-  pinPath,
-  primaryPath,
-  primaryPort,
-} from "@/lib/types";
+import { RowMenuItems } from "@/components/row-menu";
+import { useRowActionRunner, useRowMenu } from "@/hooks/use-row-actions";
+import { focusRow } from "@/lib/row-focus";
+import { formatPorts, type PortProcess } from "@/lib/types";
 
 interface OpenMenuContextValue {
   openMenuId: string | null;
@@ -57,19 +37,31 @@ export function OpenMenuProvider({
   );
 }
 
-interface PortTableActionsCellProps {
+// Every port, in words: a row only spells out as many as fit its column.
+function MenuHeading({ process }: { process: PortProcess }) {
+  const udp = process.ports.some((binding) => binding.protocol === "UDP");
+  return (
+    <p className="max-w-72 truncate px-2 py-1.5 text-xs text-muted-foreground">
+      {process.name} · {process.ports.length === 1 ? "port" : "ports"}{" "}
+      {formatPorts(process.ports, udp)}
+    </p>
+  );
+}
+
+interface RowMenuProps {
   process: PortProcess;
-  settings: Pick<
-    AppSettings,
-    "pinnedPaths" | "preferredEditor" | "useHttpsForLocalhost"
-  >;
+  portIsShared: boolean;
+}
+
+interface PortTableActionsCellProps extends RowMenuProps {
+  /** Not read: a settings change must redraw a menu that is open. */
+  settings: object;
 }
 
 export const PortTableActionsCell = memo(function PortTableActionsCell({
   process,
-  settings,
+  portIsShared,
 }: PortTableActionsCellProps) {
-  const actions = useProcessActions();
   const menu = useContext(OpenMenuContext);
   if (!menu) {
     return null;
@@ -77,86 +69,6 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
 
   const { openMenuId, setOpenMenuId } = menu;
   const isOpen = openMenuId === process.id;
-  const folderPath = pinPath(process);
-  const canDeleteFolder =
-    !!folderPath && actions.canStop(process) && !process.delete_blocked;
-  const editorPath = process.project_root || process.working_directory;
-  const port = primaryPort(process);
-  const pinnedPath = pinPath(process);
-  const pinned = isPinned(process, settings.pinnedPaths);
-
-  const openFolder = async (path: string) => {
-    try {
-      await invoke("open_in_finder", { path });
-    } catch (err) {
-      toast.error(String(err));
-    }
-  };
-
-  const copyPath = async () => {
-    const path = primaryPath(process);
-    try {
-      await navigator.clipboard.writeText(path);
-      toast.success("Path copied to clipboard");
-    } catch (err) {
-      toast.error(String(err));
-    }
-  };
-
-  const copyUrl = async () => {
-    if (port === null) {
-      toast.error("No port available");
-      return;
-    }
-    const url = localhostUrl(port, settings.useHttpsForLocalhost);
-    try {
-      await navigator.clipboard.writeText(url);
-      toast.success("URL copied to clipboard");
-    } catch (err) {
-      toast.error(String(err));
-    }
-  };
-
-  const openInBrowser = async () => {
-    if (port === null) {
-      toast.error("No port available");
-      return;
-    }
-    try {
-      await invoke("open_url", {
-        url: localhostUrl(port, settings.useHttpsForLocalhost),
-      });
-    } catch (err) {
-      toast.error(String(err));
-    }
-  };
-
-  const openInTerminal = async (cwd: string) => {
-    if (!cwd) {
-      toast.error("No working directory available");
-      return;
-    }
-    try {
-      await invoke("open_in_terminal", { cwd });
-    } catch (err) {
-      toast.error(String(err));
-    }
-  };
-
-  const openInEditor = async (cwd: string) => {
-    if (!cwd) {
-      toast.error("No working directory available");
-      return;
-    }
-    try {
-      await invoke("open_in_editor", {
-        cwd,
-        editor: settings.preferredEditor,
-      });
-    } catch (err) {
-      toast.error(String(err));
-    }
-  };
 
   return (
     <DropdownMenu
@@ -167,132 +79,78 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
       modal={false}
     >
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon">
+        {/* Reached from the row with the menu key, not by tabbing. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          tabIndex={-1}
+          aria-label={`Actions for ${process.name}`}
+        >
           <MoreHorizontalIcon />
-          <span className="sr-only">Actions</span>
         </Button>
       </DropdownMenuTrigger>
       {isOpen && (
-        <DropdownMenuContent align="end">
-          <DropdownMenuGroup>
-            {port !== null && (
-              <DropdownMenuItem
-                disabled={!actions.canStop(process)}
-                onClick={() => {
-                  setOpenMenuId(null);
-                  actions.freePort(port, process);
-                }}
-              >
-                <OctagonIcon />
-                Free port {port}
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              disabled={!actions.canStop(process)}
-              onClick={() => {
-                setOpenMenuId(null);
-                actions.stop([process]);
-              }}
-            >
-              <OctagonIcon />
-              Stop
-            </DropdownMenuItem>
-            {port !== null && (
-              <DropdownMenuItem
-                onClick={() => {
-                  setOpenMenuId(null);
-                  actions.showHistory(port);
-                }}
-              >
-                <HistoryIcon />
-                Port {port} history
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              disabled={!folderPath}
-              onClick={() => void openFolder(folderPath)}
-            >
-              <FolderOpenIcon />
-              Reveal in file manager
-            </DropdownMenuItem>
-            {port !== null && (
-              <>
-                <DropdownMenuCheckboxItem
-                  checked={settings.useHttpsForLocalhost}
-                  onCheckedChange={(useHttpsForLocalhost) =>
-                    updateSettings({ useHttpsForLocalhost })
-                  }
-                  onSelect={(event) => event.preventDefault()}
-                >
-                  Use HTTPS
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuItem onClick={() => void openInBrowser()}>
-                  <ExternalLinkIcon />
-                  Open in Browser
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void copyUrl()}>
-                  <LinkIcon />
-                  Copy URL
-                </DropdownMenuItem>
-              </>
-            )}
-            <DropdownMenuItem onClick={() => void copyPath()}>
-              <CopyIcon />
-              Copy Path
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!editorPath}
-              onClick={() => void openInTerminal(editorPath)}
-            >
-              <TerminalIcon />
-              Open in Terminal
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!editorPath}
-              onClick={() => void openInEditor(editorPath)}
-            >
-              <CodeIcon />
-              Open in Editor
-            </DropdownMenuItem>
-            {pinnedPath && (
-              <DropdownMenuItem onClick={() => togglePinnedPath(pinnedPath)}>
-                {pinned ? <PinOffIcon /> : <PinIcon />}
-                {pinned ? "Unpin project" : "Pin project"}
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem
-              variant="destructive"
-              disabled={!canDeleteFolder}
-              onClick={() => {
-                setOpenMenuId(null);
-                actions.remove(process, "trash");
-              }}
-            >
-              <TrashIcon />
-              Move to Trash
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              disabled={!canDeleteFolder}
-              onClick={() => {
-                setOpenMenuId(null);
-                actions.remove(process, "permanent");
-              }}
-            >
-              <Trash2Icon />
-              Delete Permanently
-            </DropdownMenuItem>
-            {process.delete_blocked && (
-              <p className="max-w-56 px-2 pt-0.5 pb-1.5 text-xs text-muted-foreground">
-                {process.delete_blocked}
-              </p>
-            )}
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
+        <RowDropdownContent
+          process={process}
+          portIsShared={portIsShared}
+          onClose={() => setOpenMenuId(null)}
+        />
       )}
     </DropdownMenu>
   );
 });
+
+function RowDropdownContent({
+  process,
+  portIsShared,
+  onClose,
+}: RowMenuProps & { onClose: () => void }) {
+  const groups = useRowMenu(process, portIsShared);
+  const run = useRowActionRunner();
+
+  return (
+    <DropdownMenuContent
+      align="end"
+      onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        focusRow(process.id);
+      }}
+    >
+      <MenuHeading process={process} />
+      <DropdownMenuSeparator />
+      <RowMenuItems
+        groups={groups}
+        onRun={(id) => {
+          onClose();
+          run(id, process, portIsShared);
+        }}
+        Item={DropdownMenuItem}
+        Separator={DropdownMenuSeparator}
+      />
+    </DropdownMenuContent>
+  );
+}
+
+/** The same menu, for a right-click on the row. */
+export function RowContextMenuContent({ process, portIsShared }: RowMenuProps) {
+  const groups = useRowMenu(process, portIsShared);
+  const run = useRowActionRunner();
+
+  return (
+    <ContextMenuContent
+      onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        focusRow(process.id);
+      }}
+    >
+      <MenuHeading process={process} />
+      <ContextMenuSeparator />
+      <RowMenuItems
+        groups={groups}
+        onRun={(id) => run(id, process, portIsShared)}
+        Item={ContextMenuItem}
+        Separator={ContextMenuSeparator}
+      />
+    </ContextMenuContent>
+  );
+}

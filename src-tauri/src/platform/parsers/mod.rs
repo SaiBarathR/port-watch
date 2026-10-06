@@ -5,6 +5,8 @@
 pub mod lsof;
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub mod powershell;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub mod procargs;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub mod procfs;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

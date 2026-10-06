@@ -30,6 +30,7 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 - **Row actions** — stop process, open in browser, file manager, terminal, editor (Cursor / VS Code), copy path/URL, pin project, move to trash, delete permanently
 - **Compact tray popover** for quick access without opening the full window
 - **Watched-port notifications** — in-app toasts and desktop alerts when specific ports change
+- **Notification controls** — clear all toasts, mute port change toasts for 15 minutes / 1 hour / 8 hours, or turn them off, from the toast stack or the toolbar bell (mute and on/off are also in Settings)
 - **Export snapshot** — copy filtered results as JSON or Markdown
 - **CLI** — `port-watch check <port> [--udp]` for scripting and CI
 - **Safety guards** — blocks destructive actions on protected system paths

@@ -10,6 +10,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import {
+  changeToastStatus,
+  dismissChangeToastConfirmation,
+  dismissPortChangeToasts,
+  isChangeToastsMuted,
+  nextPortChangeToastId,
+} from "@/lib/change-toasts";
+import {
   appendPortHistoryEvents,
   type PortHistoryEvent,
 } from "@/lib/port-history";
@@ -352,7 +359,10 @@ export function usePortScan() {
           scheduleChangeClear();
         }
 
-        if (toastMessages.length > 0 && currentSettings.showChangeToasts) {
+        if (
+          toastMessages.length > 0 &&
+          changeToastStatus(currentSettings, Date.now()) === "on"
+        ) {
           const preview = toastMessages.slice(0, 5);
           const remaining = toastMessages.length - preview.length;
           toast.info(
@@ -364,6 +374,7 @@ export function usePortScan() {
                 ...preview,
                 ...(remaining > 0 ? [`+${remaining} more`] : []),
               ].join("\n"),
+              id: nextPortChangeToastId(),
               duration: 12_000,
             },
           );
@@ -575,6 +586,39 @@ export function usePortScan() {
     };
   }, []);
 
+  // Drop an expired mute so the UI stops showing it; the toast gate itself
+  // checks the clock on every scan.
+  const mutedUntil = settings.changeToastsMutedUntil;
+  useEffect(() => {
+    if (mutedUntil === null) {
+      return;
+    }
+
+    let timer: number | undefined;
+    const check = () => {
+      window.clearTimeout(timer);
+      const now = Date.now();
+      if (isChangeToastsMuted(mutedUntil, now)) {
+        timer = window.setTimeout(check, mutedUntil - now);
+        return;
+      }
+      persistSettings((current) =>
+        current.changeToastsMutedUntil === mutedUntil
+          ? { ...current, changeToastsMutedUntil: null }
+          : current,
+      );
+    };
+
+    check();
+    // Timers stall while the machine sleeps, so re-check on window focus too.
+    window.addEventListener("focus", check);
+
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", check);
+    };
+  }, [mutedUntil, persistSettings]);
+
   // Hiding both user and system services would blank the table, so enabling
   // one hide-toggle always releases the other (mirrors loadSettings).
   const setHideSystemServices = useCallback(
@@ -632,7 +676,27 @@ export function usePortScan() {
 
   const setShowChangeToasts = useCallback(
     (showChangeToasts: boolean) => {
-      persistSettings((current) => ({ ...current, showChangeToasts }));
+      dismissChangeToastConfirmation();
+      // Turning toasts on means on, so a mute never outlives the switch.
+      persistSettings((current) => ({
+        ...current,
+        showChangeToasts,
+        changeToastsMutedUntil: null,
+      }));
+      if (!showChangeToasts) {
+        dismissPortChangeToasts();
+      }
+    },
+    [persistSettings],
+  );
+
+  const setChangeToastsMutedUntil = useCallback(
+    (changeToastsMutedUntil: number | null) => {
+      dismissChangeToastConfirmation();
+      persistSettings((current) => ({ ...current, changeToastsMutedUntil }));
+      if (changeToastsMutedUntil !== null) {
+        dismissPortChangeToasts();
+      }
     },
     [persistSettings],
   );
@@ -760,6 +824,7 @@ export function usePortScan() {
     setPreferredEditor,
     setGroupByDirectory,
     setShowChangeToasts,
+    setChangeToastsMutedUntil,
     setPinnedPaths,
     togglePinnedPath,
     setWatchedPorts,

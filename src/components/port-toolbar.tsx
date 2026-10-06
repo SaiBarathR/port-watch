@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { NotificationMenu } from "@/components/notification-menu";
 import {
   Select,
   SelectContent,
@@ -60,6 +61,7 @@ interface PortToolbarProps {
   onPreferredEditorChange: (editor: AppSettings["preferredEditor"]) => void;
   onGroupByDirectoryChange: (group: boolean) => void;
   onShowChangeToastsChange: (show: boolean) => void;
+  onChangeToastsMutedUntilChange: (mutedUntil: number | null) => void;
   onWatchedPortNotificationsChange: (enabled: boolean) => void;
   onWatchedPortsChange: (ports: number[]) => void;
   onIncludeUdpChange: (include: boolean) => void;
@@ -92,6 +94,7 @@ export function PortToolbar({
   onPreferredEditorChange,
   onGroupByDirectoryChange,
   onShowChangeToastsChange,
+  onChangeToastsMutedUntilChange,
   onWatchedPortNotificationsChange,
   onWatchedPortsChange,
   onIncludeUdpChange,
@@ -309,6 +312,12 @@ export function PortToolbar({
           <RefreshCwIcon className={loading ? "animate-spin" : ""} />
         </Button>
 
+        <NotificationMenu
+          settings={settings}
+          onShowChangeToastsChange={onShowChangeToastsChange}
+          onChangeToastsMutedUntilChange={onChangeToastsMutedUntilChange}
+        />
+
         <SettingsDialog
           settings={settings}
           theme={theme}
@@ -318,6 +327,7 @@ export function PortToolbar({
           onPreferredEditorChange={onPreferredEditorChange}
           onGroupByDirectoryChange={onGroupByDirectoryChange}
           onShowChangeToastsChange={onShowChangeToastsChange}
+          onChangeToastsMutedUntilChange={onChangeToastsMutedUntilChange}
           onWatchedPortNotificationsChange={onWatchedPortNotificationsChange}
           onWatchedPortsChange={onWatchedPortsChange}
           onIncludeUdpChange={onIncludeUdpChange}

@@ -54,6 +54,7 @@ export interface AppSettings {
   preferredEditor: PreferredEditor;
   groupByDirectory: boolean;
   showChangeToasts: boolean;
+  changeToastsMutedUntil: number | null;
   menuBarMode: boolean;
   searchField: SearchField;
   pinnedPaths: string[];
@@ -71,6 +72,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   preferredEditor: "cursor",
   groupByDirectory: false,
   showChangeToasts: true,
+  changeToastsMutedUntil: null,
   menuBarMode: false,
   searchField: "all",
   pinnedPaths: [],

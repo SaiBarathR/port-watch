@@ -372,17 +372,17 @@ fn remember(menus: &mut VecDeque<(u64, Shown)>, number: u64, shown: Shown) {
     }
 }
 
-/// The process a menu item was built from. None for an item of a menu too
-/// old to be remembered, which then does nothing.
-fn shown_process(menus: &VecDeque<(u64, Shown)>, number: u64, row: &str) -> Option<PortProcess> {
-    menus
-        .iter()
-        .find(|(kept, _)| *kept == number)?
-        .1
-        .processes
-        .iter()
-        .find(|process| process.id == row)
-        .cloned()
+/// The process a menu item was built from, and the editor that menu named
+/// in its "Open in …" items. None for an item of a menu too old to be
+/// remembered, which then does nothing.
+fn shown_process(
+    menus: &VecDeque<(u64, Shown)>,
+    number: u64,
+    row: &str,
+) -> Option<(PortProcess, String)> {
+    let (_, shown) = menus.iter().find(|(kept, _)| *kept == number)?;
+    let process = shown.processes.iter().find(|process| process.id == row)?;
+    Some((process.clone(), shown.editor.clone()))
 }
 
 // ---------------------------------------------------------------------------
@@ -405,11 +405,11 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             // The process the item was built from. The menu on screen can be
             // older than the latest scan, or than the latest menu, and the
             // item said what it would act on.
-            let process = app.try_state::<Mutex<TrayState>>().and_then(|state| {
+            let clicked = app.try_state::<Mutex<TrayState>>().and_then(|state| {
                 let state = state.lock().ok()?;
                 shown_process(&state.menus, menu, &row)
             });
-            let Some(process) = process else {
+            let Some((process, editor)) = clicked else {
                 app.state::<PortPoller>().request_scan();
                 return;
             };
@@ -417,7 +417,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             // Off the main thread: a stop can wait for seconds, and the
             // launchers wait on a child process.
             tauri::async_runtime::spawn_blocking(move || {
-                if let Err(error) = run_port_action(&app, action, &process) {
+                if let Err(error) = run_port_action(&app, action, &process, &editor) {
                     notify_error(&app, &error);
                 }
             });
@@ -426,15 +426,18 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
     }
 }
 
+// `editor` is the one the clicked menu named, which the setting may have
+// moved on from while that menu was open.
 fn run_port_action(
     app: &AppHandle,
     action: PortAction,
     process: &PortProcess,
+    editor: &str,
 ) -> Result<(), String> {
-    let settings = || app.state::<SettingsStore>().get();
     let url = || {
+        let use_https = app.state::<SettingsStore>().get().use_https_for_localhost;
         primary_port(process)
-            .map(|port| localhost_url(port, settings().use_https_for_localhost))
+            .map(|port| localhost_url(port, use_https))
             .ok_or("No port available")
     };
 
@@ -447,10 +450,9 @@ fn run_port_action(
         PortAction::Terminal => {
             crate::commands::workflow::open_in_terminal_blocking(&require_directory(process)?)
         }
-        PortAction::Editor => crate::commands::workflow::open_in_editor_blocking(
-            &require_directory(process)?,
-            &settings().preferred_editor,
-        ),
+        PortAction::Editor => {
+            crate::commands::workflow::open_in_editor_blocking(&require_directory(process)?, editor)
+        }
         PortAction::Stop => {
             if !confirm_stop(app, process) {
                 return Ok(());
@@ -657,10 +659,14 @@ mod tests {
     }
 
     fn showing(processes: Vec<PortProcess>) -> Shown {
+        showing_with_editor(processes, "cursor")
+    }
+
+    fn showing_with_editor(processes: Vec<PortProcess>, editor: &str) -> Shown {
         Shown {
             processes,
             menu_bar_mode: false,
-            editor: "cursor".into(),
+            editor: editor.into(),
         }
     }
 
@@ -673,11 +679,33 @@ mod tests {
         remember(&mut menus, 1, showing(vec![listener(42, 3000)]));
         remember(&mut menus, 2, showing(vec![listener(42, 4000)]));
 
-        let port =
-            |number| shown_process(&menus, number, "pid-42").map(|process| process.ports[0].port);
+        let port = |number| {
+            shown_process(&menus, number, "pid-42").map(|(process, _)| process.ports[0].port)
+        };
         assert_eq!(port(1), Some(3000));
         assert_eq!(port(2), Some(4000));
         assert_eq!(shown_process(&menus, 2, "pid-7"), None);
+    }
+
+    // The same for the setting an item was labelled from: "Open in Cursor"
+    // opens Cursor, even if the editor was changed while that menu was open.
+    #[test]
+    fn a_click_gets_the_editor_its_own_menu_named() {
+        let mut menus = VecDeque::new();
+        remember(
+            &mut menus,
+            1,
+            showing_with_editor(vec![listener(42, 3000)], "cursor"),
+        );
+        remember(
+            &mut menus,
+            2,
+            showing_with_editor(vec![listener(42, 3000)], "code"),
+        );
+
+        let editor = |number| shown_process(&menus, number, "pid-42").map(|(_, editor)| editor);
+        assert_eq!(editor(1).as_deref(), Some("cursor"));
+        assert_eq!(editor(2).as_deref(), Some("code"));
     }
 
     #[test]

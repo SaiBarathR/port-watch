@@ -55,7 +55,13 @@ export function StopDialog({
     const failures: string[] = [];
     const stopped: PortProcess[] = [];
 
-    for (const process of processes) {
+    // Oldest first: a parent predates its children, and stopping it first
+    // keeps it from respawning a worker that was stopped a moment earlier.
+    const ordered = [...processes].sort(
+      (a, b) => b.uptime_seconds - a.uptime_seconds,
+    );
+
+    for (const process of ordered) {
       try {
         await invoke("stop_process", {
           pid: process.pid,

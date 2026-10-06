@@ -65,6 +65,8 @@ fn tokenize(command_line: &str) -> Vec<String> {
 /// scan, tolerating truncation (macOS/Linux report at most ~15 chars), a
 /// Windows `.exe` suffix, and full-path vs basename differences. Used to
 /// refuse killing a PID that has been reused by a different process.
+// macOS reads the kernel's name on both sides and compares it exactly.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn process_names_match(current: &str, expected: &str) -> bool {
     fn normalize(name: &str) -> String {
         let base = name

@@ -56,6 +56,7 @@ import {
   formatUptime,
   groupDirectory,
   isPinned,
+  processesOnPort,
   systemKindLabel,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -349,16 +350,49 @@ export function PortTable({
     [settings.allowSystemProcessActions],
   );
 
+  // Read through a ref so the row action handlers keep their identity across
+  // scans instead of re-rendering every row.
+  const processesRef = useRef(processes);
+  useEffect(() => {
+    processesRef.current = processes;
+  }, [processes]);
+
+  // A listening socket can be shared by several processes (a reloader and its
+  // worker, a pre-forked server), so freeing the port means stopping them all.
+  const openFreePortDialog = useCallback(
+    (process: PortProcess, port: number) => {
+      const others = processesOnPort(processesRef.current, port).filter(
+        (occupant) => occupant.pid !== process.pid && canStop(occupant),
+      );
+      const targets = [process, ...others];
+      openStopDialog(
+        targets,
+        `Free port ${port}?`,
+        others.length === 0
+          ? `Stop ${process.name} (PID ${process.pid}) to free port ${port}.`
+          : `Stop ${targets.length} processes to free port ${port}.`,
+      );
+    },
+    [canStop, openStopDialog],
+  );
+
   const actionHandlers = useMemo<PortTableActionsHandlers>(
     () => ({
       canStop,
       openStopDialog,
+      openFreePortDialog,
       onTogglePinnedPath,
       onUseHttpsForLocalhostChange,
       setHistoryPort,
       setDeleteTarget,
     }),
-    [canStop, openStopDialog, onTogglePinnedPath, onUseHttpsForLocalhostChange],
+    [
+      canStop,
+      openStopDialog,
+      openFreePortDialog,
+      onTogglePinnedPath,
+      onUseHttpsForLocalhostChange,
+    ],
   );
 
   const actionSettings = useMemo(

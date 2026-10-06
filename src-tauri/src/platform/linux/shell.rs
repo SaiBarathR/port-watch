@@ -155,9 +155,29 @@ fn send_signal(pid: u32, signal: &str) -> Result<(), String> {
         .status()
         .map_err(|e| format!("Failed to run kill: {e}"))?;
 
-    if !status.success() {
+    // A process that exited on its own before the signal landed is stopped
+    // all the same — common for pre-forked workers whose master was stopped
+    // a moment earlier.
+    if !status.success() && current_process_name(pid).is_some() {
         return Err(format!("kill {signal} failed for PID {pid}"));
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn already_exited_process_counts_as_stopped() {
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("spawn true");
+        let pid = child.id();
+        child.wait().expect("wait");
+
+        assert_eq!(stop_process(pid, false, Some("true")), Ok(()));
+        assert_eq!(stop_process(pid, true, None), Ok(()));
+    }
 }

@@ -42,6 +42,7 @@ export interface PortTableActionsHandlers {
     title?: string,
     description?: string,
   ) => void;
+  openFreePortDialog: (process: PortProcess, port: number) => void;
   onTogglePinnedPath: (path: string) => void;
   onUseHttpsForLocalhostChange: (useHttps: boolean) => void;
   setHistoryPort: (port: number) => void;
@@ -191,11 +192,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
                 disabled={!handlers.canStop(process)}
                 onClick={() => {
                   setOpenMenuPid(null);
-                  handlers.openStopDialog(
-                    [process],
-                    `Free port ${port}?`,
-                    `Stop ${process.name} (PID ${process.pid}) to free port ${port}.`,
-                  );
+                  handlers.openFreePortDialog(process, port);
                 }}
               >
                 <OctagonIcon data-icon="inline-start" />

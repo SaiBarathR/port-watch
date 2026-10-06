@@ -17,7 +17,8 @@ pub fn stop_process_blocking(
     platform::shell::stop_process(pid, force, expected_name)
 }
 
-// Async so the up-to-2s graceful-stop window runs off the main thread.
+// Async so the graceful-stop wait (seconds, when a process ignores SIGTERM)
+// runs off the main thread.
 // `expected_name` lets the backend refuse to kill a PID that has been
 // reused by a different process since the caller's snapshot.
 #[tauri::command]

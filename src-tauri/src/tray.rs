@@ -331,7 +331,7 @@ fn handle_port_action(app: &AppHandle, id: &str) {
     let app = app.clone();
     let action = action.to_string();
 
-    // Run off the main thread: stop_process can block up to 2s and the launch
+    // Run off the main thread: stop_process can block for seconds and the launch
     // helpers wait on a child process — neither should freeze the UI thread.
     tauri::async_runtime::spawn_blocking(move || {
         if let Err(error) = run_port_action(&app, &action, pid, port, process.as_ref()) {
@@ -381,7 +381,10 @@ fn run_port_action(
                 pid,
                 false,
                 expected_name.as_deref(),
-            )
+            )?;
+            // Nothing else rescans after a tray stop, so with manual refresh
+            // the stopped process would stay listed indefinitely.
+            crate::poller::trigger_port_scan(app.clone())
         }
         _ => Ok(()),
     }

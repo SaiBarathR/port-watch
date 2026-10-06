@@ -201,6 +201,11 @@ mod tests {
             "com.docker.backe",
             "com.docker.backend"
         ));
+        // macOS: lsof reports up to 31 chars, `ps -o ucomm` only the first 16.
+        assert!(process_names_match(
+            "Cursor Helper (P",
+            "Cursor Helper (Plugin)"
+        ));
         assert!(!process_names_match("nginx", "node"));
         assert!(!process_names_match("node", "nodemon"));
         assert!(!process_names_match("", "node"));

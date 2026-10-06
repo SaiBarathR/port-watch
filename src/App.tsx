@@ -5,7 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AppToaster } from "@/components/app-toaster";
 import { PortTable } from "@/components/port-table";
 import { PortToolbar } from "@/components/port-toolbar";
-import { CliInstallPrompt } from "@/components/cli-install-prompt";
+import { CliInstallBanner } from "@/components/cli-install-banner";
 import { ProcessActionsProvider } from "@/components/process-actions";
 import { useChangeToastMuteExpiry } from "@/hooks/use-change-toast-mute";
 import { usePortQuery } from "@/hooks/use-port-query";
@@ -18,7 +18,7 @@ function App() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const settings = useSettings();
   const { rowChanges, onScanChange } = useScanSideEffects();
-  const { processes, loading, refreshing, error, refresh } =
+  const { processes, loading, refreshing, error, refresh, lastScanAt } =
     useScanStream(onScanChange);
   const {
     search,
@@ -75,6 +75,7 @@ function App() {
             onRefresh={refreshNow}
             loading={refreshing}
             firstScanPending={loading}
+            lastScanAt={lastScanAt}
             userCount={userCount}
             systemCount={systemCount}
           />
@@ -96,10 +97,12 @@ function App() {
               rowChanges={rowChanges}
             />
           </div>
+
+          {/* Under the table, so that it takes room from the bottom and the
+              rows stay where they are. */}
+          <CliInstallBanner />
         </main>
       </ProcessActionsProvider>
-
-      <CliInstallPrompt />
 
       <AppToaster theme={resolvedTheme === "light" ? "light" : "dark"} />
     </div>

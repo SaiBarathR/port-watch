@@ -130,6 +130,12 @@ export function useRowActionRunner() {
         case "copy-path":
           void orToast(navigator.clipboard.writeText(folder), "Path copied");
           break;
+        case "copy-command":
+          void orToast(
+            navigator.clipboard.writeText(process.command_line),
+            "Command copied",
+          );
+          break;
         case "pin":
           togglePinnedPath(folder);
           break;

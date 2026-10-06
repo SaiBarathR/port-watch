@@ -12,6 +12,7 @@ import {
   OctagonXIcon,
   PinIcon,
   PinOffIcon,
+  SquareTerminalIcon,
   TerminalIcon,
   Trash2Icon,
   TrashIcon,
@@ -33,6 +34,8 @@ function iconFor(action: RowAction): LucideIcon {
       return FolderOpenIcon;
     case "copy-path":
       return CopyIcon;
+    case "copy-command":
+      return SquareTerminalIcon;
     case "pin":
       return action.label.startsWith("Unpin") ? PinOffIcon : PinIcon;
     case "watch":

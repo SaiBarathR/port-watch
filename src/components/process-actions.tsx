@@ -10,15 +10,8 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { DeleteDialog } from "@/components/delete-dialog";
-import { PortHistoryTimeline } from "@/components/port-history-timeline";
+import { PortHistoryDialog } from "@/components/port-history-dialog";
 import { StopDialog } from "@/components/stop-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { useRefreshPause } from "@/lib/refresh-pause";
 import { focusRow, focusTabStopRow } from "@/lib/row-focus";
 import { useSettings } from "@/lib/settings-store";
@@ -39,7 +32,8 @@ export interface ProcessActions {
   freePort: (port: number, first?: PortProcess) => void;
   /** Asks, then stops the process and removes its project folder. */
   remove: (process: PortProcess, mode: "trash" | "permanent") => void;
-  showHistory: (port: number) => void;
+  /** One port's history, or every port's when none is given. */
+  showHistory: (port?: number) => void;
 }
 
 const ProcessActionsContext = createContext<ProcessActions | null>(null);
@@ -82,10 +76,10 @@ export function ProcessActionsProvider({
     process: PortProcess;
     mode: "trash" | "permanent";
   } | null>(null);
-  const [historyPort, setHistoryPort] = useState<number | null>(null);
+  const [history, setHistory] = useState<number | "all" | null>(null);
 
   const dialogOpen =
-    stopRequest !== null || deleteTarget !== null || historyPort !== null;
+    stopRequest !== null || deleteTarget !== null || history !== null;
   // Rows must not move behind a dialog that is about them.
   useRefreshPause("process-dialog", dialogOpen);
 
@@ -168,7 +162,7 @@ export function ProcessActionsProvider({
       },
       showHistory: (port) => {
         noteFocus();
-        setHistoryPort(port);
+        setHistory(port ?? "all");
       },
     }),
     [canStop, noteFocus],
@@ -200,20 +194,7 @@ export function ProcessActionsProvider({
         onComplete={onChanged}
       />
 
-      <Dialog
-        open={historyPort !== null}
-        onOpenChange={(open) => !open && setHistoryPort(null)}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Port {historyPort} history</DialogTitle>
-            <DialogDescription>
-              Occupied and freed events recorded during scans.
-            </DialogDescription>
-          </DialogHeader>
-          {historyPort !== null && <PortHistoryTimeline port={historyPort} />}
-        </DialogContent>
-      </Dialog>
+      <PortHistoryDialog show={history} onClose={() => setHistory(null)} />
     </ProcessActionsContext.Provider>
   );
 }

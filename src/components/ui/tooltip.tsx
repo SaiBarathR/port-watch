@@ -2,8 +2,10 @@ import * as React from "react";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { cn } from "@/lib/utils";
 
+// Half a second: with none, tooltips flashed open and shut under a pointer
+// that was only crossing the table.
 function TooltipProvider({
-  delayDuration = 0,
+  delayDuration = 500,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
   return (

@@ -31,6 +31,7 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 - **Native tray menu** — every listening dev server with open, copy URL, reveal, terminal, editor and stop, without opening the window
 - **Watched-port notifications** — in-app toasts and desktop alerts when specific ports change
 - **Notification controls** — clear all toasts, mute port change toasts for 15 minutes / 1 hour / 8 hours, or turn them off, from the toast stack or the toolbar bell (mute and on/off are also in Settings)
+- **Refresh state** — the toolbar says whether the list is live, paused while a menu or dialog is open, or off and how long ago it was updated
 - **Export snapshot** — copy filtered results as JSON or Markdown
 - **CLI** — `port-watch check <port> [--udp]` for scripting and CI
 - **Safety guards** — blocks destructive actions on protected system paths
@@ -129,11 +130,11 @@ Click the tray icon for a native menu of your listening dev servers. Each one ha
 
 ### Port lookup
 
-Search by port and type a port number to see, on the line under the search box, whether it is free and who last held it, or who is using it now. **History** shows what has come and gone on it; **Free port** stops every process bound to it that can be stopped.
+Search by port and type a port number to see, on the line under the search box, whether it is free and who last held it, or who is using it now. **History** shows what has come and gone on it; **Free port** stops every process bound to it that can be stopped. The history of every port is under **… → Port History**.
 
 ### CLI
 
-Install from **Settings → Command line** (one click) or run `install-cli` on the bundled binary:
+Install from **Settings → Integrations → Command-line tool** (one click), from the strip the app shows under the table until it is installed or dismissed, or by running `install-cli` on the bundled binary:
 
 ```bash
 port-watch check 3000

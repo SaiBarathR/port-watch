@@ -8,7 +8,9 @@ import {
 } from "./change-toasts";
 
 const NOW = Date.UTC(2026, 9, 6, 12, 0, 0);
-const LONGEST_MUTE_MS = Math.max(...MUTE_DURATIONS.map((duration) => duration.ms));
+const LONGEST_MUTE_MS = Math.max(
+  ...MUTE_DURATIONS.map((duration) => duration.ms),
+);
 
 describe("isChangeToastsMuted", () => {
   it("is muted until the deadline passes", () => {

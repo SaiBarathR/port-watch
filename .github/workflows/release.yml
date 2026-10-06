@@ -34,10 +34,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust-targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Reads the cache CI writes on main; a tag's own cache is unreachable
+          # from any later run, so it is not saved.
+          shared-key: tauri
+          save-if: false
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -51,6 +60,16 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      # A tag can point at a commit CI never ran on; do not ship it untested.
+      - name: Run frontend unit tests
+        run: npm test
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: |
+          npm run build
+          cargo test
 
       - uses: tauri-apps/tauri-action@v0
         env:

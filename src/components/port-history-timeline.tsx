@@ -125,15 +125,15 @@ export function PortHistoryTimeline({
     <div className={cn("space-y-3", className)}>
       <PortSummaryBar summary={summary} />
       <div className="max-h-48 space-y-3 overflow-y-auto pr-0.5">
-        {(Object.keys(DAY_GROUP_LABELS) as Array<keyof typeof DAY_GROUP_LABELS>).map(
-          (group) => (
-            <TimelineDayGroup
-              key={group}
-              label={DAY_GROUP_LABELS[group]}
-              events={grouped[group]}
-            />
-          ),
-        )}
+        {(
+          Object.keys(DAY_GROUP_LABELS) as Array<keyof typeof DAY_GROUP_LABELS>
+        ).map((group) => (
+          <TimelineDayGroup
+            key={group}
+            label={DAY_GROUP_LABELS[group]}
+            events={grouped[group]}
+          />
+        ))}
       </div>
     </div>
   );
@@ -155,7 +155,8 @@ export function PortHistoryList({
   if (summaries.length === 0) {
     return (
       <p className={cn("text-xs text-muted-foreground", className)}>
-        No history yet. Events appear when ports are occupied or freed during scans.
+        No history yet. Events appear when ports are occupied or freed during
+        scans.
       </p>
     );
   }
@@ -187,7 +188,10 @@ export function PortHistoryList({
                   {formatHistorySeen(summary.lastSeen)}
                 </p>
               </div>
-              <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
+              <Badge
+                variant="secondary"
+                className="shrink-0 font-mono text-[10px]"
+              >
                 {summary.eventCount}
               </Badge>
             </button>

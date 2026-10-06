@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push to a pull request supersedes the run in progress; pushes to main
+# each get a full run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     strategy:
@@ -22,8 +28,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Shared with release.yml. Only main writes it; pull requests read it.
+          shared-key: tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -38,11 +54,28 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Typecheck frontend
+      # Formatting and frontend lint do not depend on the platform, so one leg
+      # is enough (and Windows checkouts carry CRLF line endings).
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: |
+          npm run format:check
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Lint frontend
+        if: runner.os == 'Linux'
+        run: npm run lint
+
+      - name: Typecheck and build frontend
         run: npm run build
 
       - name: Run frontend unit tests
         run: npm test
+
+      # Every leg: most of the backend is behind #[cfg(target_os)].
+      - name: Lint Rust
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Run Rust tests
         working-directory: src-tauri

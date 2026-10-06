@@ -114,7 +114,9 @@ export function getPortTimeline(port: number): PortHistoryEvent[] {
     .reverse();
 }
 
-export function getPortSummaries(events: PortHistoryEvent[] = loadRaw()): PortSummary[] {
+export function getPortSummaries(
+  events: PortHistoryEvent[] = loadRaw(),
+): PortSummary[] {
   // Key by protocol + port so TCP and UDP activity on the same port number
   // don't merge into one summary.
   const byPort = new Map<string, PortHistoryEvent[]>();
@@ -133,7 +135,8 @@ export function getPortSummaries(events: PortHistoryEvent[] = loadRaw()): PortSu
 
   for (const portEvents of byPort.values()) {
     const sorted = [...portEvents].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );
     const first = sorted[0]!;
     const last = sorted[sorted.length - 1]!;

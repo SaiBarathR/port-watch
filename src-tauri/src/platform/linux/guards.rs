@@ -8,20 +8,14 @@ fn is_protected_canonical(path: &Path) -> bool {
         return false;
     }
 
-    const PROTECTED_PREFIXES: &[&str] = &[
-        "/usr",
-        "/bin",
-        "/sbin",
-        "/lib",
-        "/lib64",
-        "/opt",
-    ];
+    const PROTECTED_PREFIXES: &[&str] = &["/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt"];
 
     PROTECTED_PREFIXES
         .iter()
         .any(|prefix| normalized.starts_with(prefix))
 }
 
+#[cfg(test)]
 pub fn is_protected_path(path: &str) -> bool {
     if path.trim().starts_with("/usr/local/") {
         return false;
@@ -30,14 +24,8 @@ pub fn is_protected_path(path: &str) -> bool {
     path_validation::resolve_existing_path(path)
         .map(|canonical| is_protected_canonical(&canonical))
         .unwrap_or_else(|_| {
-            const PROTECTED_PREFIXES: &[&str] = &[
-                "/usr",
-                "/bin",
-                "/sbin",
-                "/lib",
-                "/lib64",
-                "/opt",
-            ];
+            const PROTECTED_PREFIXES: &[&str] =
+                &["/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt"];
             let normalized = path.trim();
             if normalized.starts_with("/usr/local/") {
                 return false;
@@ -48,6 +36,7 @@ pub fn is_protected_path(path: &str) -> bool {
         })
 }
 
+#[cfg(test)]
 pub fn is_user_allowed_path(path: &str) -> bool {
     path_validation::resolve_delete_path(path, is_protected_canonical).is_ok()
 }
@@ -56,7 +45,10 @@ pub fn resolve_delete_path(path: &str) -> Result<std::path::PathBuf, String> {
     path_validation::resolve_delete_path(path, is_protected_canonical)
 }
 
-pub fn resolve_permanent_delete(path: &str, confirmation: &str) -> Result<std::path::PathBuf, String> {
+pub fn resolve_permanent_delete(
+    path: &str,
+    confirmation: &str,
+) -> Result<std::path::PathBuf, String> {
     path_validation::resolve_permanent_delete(path, confirmation, is_protected_canonical)
 }
 

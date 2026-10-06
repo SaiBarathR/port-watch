@@ -1,0 +1,10 @@
+dist
+node_modules
+package-lock.json
+src-tauri/target
+src-tauri/gen
+# Prose and standalone pages are hand-formatted.
+*.md
+*.html
+.claude
+.cursor

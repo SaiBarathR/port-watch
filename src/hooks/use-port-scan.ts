@@ -27,11 +27,7 @@ import type {
   RowChangeKind,
   SearchField,
 } from "@/lib/types";
-import {
-  DEFAULT_SETTINGS,
-  portSignature,
-  processHasPort,
-} from "@/lib/types";
+import { DEFAULT_SETTINGS, portSignature, processHasPort } from "@/lib/types";
 
 const SETTINGS_KEY = "port-watch-settings";
 const CHANGE_HIGHLIGHT_MS = 10_000;
@@ -42,16 +38,15 @@ interface PortsUpdatedPayload {
   scanning?: boolean;
 }
 
-import {
-  filterPortProcesses,
-  normalizePortProcess,
-} from "@/lib/port-filter";
+import { filterPortProcesses, normalizePortProcess } from "@/lib/port-filter";
 
 function parsePortsPayload(payload: unknown): PortsUpdatedPayload {
   if (Array.isArray(payload)) {
     return {
       processes: payload.map((item) =>
-        normalizePortProcess(item as PortProcess & { isSystemService?: boolean }),
+        normalizePortProcess(
+          item as PortProcess & { isSystemService?: boolean },
+        ),
       ),
       error: null,
     };
@@ -65,7 +60,9 @@ function parsePortsPayload(payload: unknown): PortsUpdatedPayload {
     return {
       processes: Array.isArray(processes)
         ? processes.map((item) =>
-            normalizePortProcess(item as PortProcess & { isSystemService?: boolean }),
+            normalizePortProcess(
+              item as PortProcess & { isSystemService?: boolean },
+            ),
           )
         : [],
       error: typeof error === "string" ? error : null,
@@ -276,10 +273,7 @@ export function usePortScan() {
   const persistSettings = useCallback(
     (updater: AppSettings | ((current: AppSettings) => AppSettings)) => {
       setSettings((current) => {
-        const next =
-          typeof updater === "function"
-            ? updater(current)
-            : updater;
+        const next = typeof updater === "function" ? updater(current) : updater;
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
         return next;
       });
@@ -308,15 +302,14 @@ export function usePortScan() {
 
       setError(null);
       const normalized = result.map((item) =>
-        normalizePortProcess(item as PortProcess & { isSystemService?: boolean }),
+        normalizePortProcess(
+          item as PortProcess & { isSystemService?: boolean },
+        ),
       );
       const currentSettings = settingsRef.current;
       const prev = previousProcessesRef.current;
 
-      if (
-        !isInitialScanRef.current &&
-        processesUnchanged(prev, normalized)
-      ) {
+      if (!isInitialScanRef.current && processesUnchanged(prev, normalized)) {
         // Same processes and bindings, but uptime/name/cwd may have moved on:
         // still publish the fresh data, just skip the diff/toast/history work.
         previousProcessesRef.current = normalized;
@@ -397,11 +390,9 @@ export function usePortScan() {
                 ? `Port ${event.port} is now in use`
                 : `Port ${event.port} is free`;
             const message = `${event.processName} (PID ${event.pid})`;
-            void invoke("send_notification", { title, message }).catch(
-              () => {
-                // notifications may be unavailable
-              },
-            );
+            void invoke("send_notification", { title, message }).catch(() => {
+              // notifications may be unavailable
+            });
           }
         }
       }
@@ -800,7 +791,9 @@ export function usePortScan() {
     if (exactPortQuery === null) {
       return [];
     }
-    return processes.filter((process) => processHasPort(process, exactPortQuery));
+    return processes.filter((process) =>
+      processHasPort(process, exactPortQuery),
+    );
   }, [exactPortQuery, processes]);
 
   return {

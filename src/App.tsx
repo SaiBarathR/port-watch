@@ -152,9 +152,7 @@ function App() {
           }
         }}
         title={
-          freePortNumber !== null
-            ? `Free port ${freePortNumber}?`
-            : undefined
+          freePortNumber !== null ? `Free port ${freePortNumber}?` : undefined
         }
         description={
           freePortNumber !== null

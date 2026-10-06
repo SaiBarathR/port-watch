@@ -12,7 +12,8 @@ const badgeVariants = cva(
         secondary: "border-transparent bg-secondary text-secondary-foreground",
         destructive: "border-transparent bg-destructive text-white",
         outline: "text-foreground",
-        apple: "border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200",
+        apple:
+          "border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200",
         microsoft:
           "border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200",
         distro:
@@ -37,7 +38,11 @@ function Badge({
   VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
   const Comp = asChild ? Slot : "span";
   return (
-    <Comp data-slot="badge" className={cn(badgeVariants({ variant }), className)} {...props} />
+    <Comp
+      data-slot="badge"
+      className={cn(badgeVariants({ variant }), className)}
+      {...props}
+    />
   );
 }
 

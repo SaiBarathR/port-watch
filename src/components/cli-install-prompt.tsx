@@ -90,10 +90,14 @@ export function CliInstallPrompt() {
           <AlertDialogDescription>
             Add <span className="font-mono text-foreground">port-watch</span> to
             your PATH so you can run{" "}
-            <span className="font-mono text-foreground">port-watch check 3000</span>{" "}
-            from terminal and CI scripts. {cliInstallPrivilegeHint()}{" "}
-            Target:{" "}
-            <span className="font-mono text-foreground">{cliInstallPathHint()}</span>.
+            <span className="font-mono text-foreground">
+              port-watch check 3000
+            </span>{" "}
+            from terminal and CI scripts. {cliInstallPrivilegeHint()} Target:{" "}
+            <span className="font-mono text-foreground">
+              {cliInstallPathHint()}
+            </span>
+            .
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

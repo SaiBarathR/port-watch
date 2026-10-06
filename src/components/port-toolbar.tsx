@@ -186,11 +186,11 @@ export function PortToolbar({
         <div className="flex min-w-[280px] flex-1 items-stretch overflow-hidden rounded-xl border bg-muted/20 shadow-xs transition-[box-shadow,border-color] focus-within:border-ring/60 focus-within:ring-2 focus-within:ring-ring/30">
           <Select
             value={searchField}
-            onValueChange={(value) => handleSearchFieldChange(value as SearchField)}
+            onValueChange={(value) =>
+              handleSearchFieldChange(value as SearchField)
+            }
           >
-            <SelectTrigger
-              className="h-9 w-[118px] shrink-0 self-stretch rounded-none border-0 bg-transparent py-0 shadow-none focus-visible:ring-0"
-            >
+            <SelectTrigger className="h-9 w-[118px] shrink-0 self-stretch rounded-none border-0 bg-transparent py-0 shadow-none focus-visible:ring-0">
               <SelectValue placeholder="Field" />
             </SelectTrigger>
             <SelectContent align="start">
@@ -213,7 +213,11 @@ export function PortToolbar({
               ref={searchInputRef}
               className="h-9 w-full rounded-none border-0 bg-transparent py-0 pl-9 pr-16 shadow-none focus-visible:ring-0"
               placeholder={searchPlaceholder}
-              inputMode={searchField === "port" || searchField === "pid" ? "numeric" : "search"}
+              inputMode={
+                searchField === "port" || searchField === "pid"
+                  ? "numeric"
+                  : "search"
+              }
               value={search}
               onChange={(e) => {
                 const value = e.target.value;
@@ -353,7 +357,12 @@ export function PortToolbar({
           <AlertDescription className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               <span>No process is bound to this port right now.</span>
-              <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onRefresh}
+                disabled={loading}
+              >
                 Check again
               </Button>
             </div>
@@ -389,7 +398,6 @@ export function PortToolbar({
           </AlertDescription>
         </Alert>
       )}
-
     </div>
   );
 }

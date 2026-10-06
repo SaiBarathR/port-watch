@@ -61,10 +61,6 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
         if record.bindings.is_empty() {
             continue;
         }
-        // Prefer the kernel's own name, which is what the stop path checks a
-        // PID against: lsof escapes backslashes, and non-ASCII bytes too when
-        // the app runs without a locale (launched from Finder or the Dock).
-        let name = super::shell::current_process_name(pid).unwrap_or(name);
 
         let ps = ps_info.get(&pid).cloned().unwrap_or_default();
         let path_info = paths.get(&pid).cloned().unwrap_or_default();
@@ -170,7 +166,7 @@ fn parse_lsof_output(stdout: &str, protocol: &str) -> Vec<LsofRecord> {
                 current.pid = value.parse().ok();
             }
             "c" => {
-                current.name = Some(value.to_string());
+                current.name = Some(unescape_lsof(value));
             }
             "n" => {
                 if let Some(binding) = crate::platform::shared::parse_address_port(value, protocol)
@@ -187,6 +183,45 @@ fn parse_lsof_output(stdout: &str, protocol: &str) -> Vec<LsofRecord> {
     }
 
     records
+}
+
+// lsof escapes a backslash as `\\` and, when the app runs without a locale
+// (launched from Finder or the Dock), every non-ASCII byte as `\xNN`. Undoing
+// both yields the kernel's own name for the process, which is what the stop
+// path checks a PID against.
+fn unescape_lsof(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut unescaped = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            match bytes.get(index + 1) {
+                Some(b'\\') => {
+                    unescaped.push(b'\\');
+                    index += 2;
+                    continue;
+                }
+                Some(b'x') => {
+                    let byte = bytes
+                        .get(index + 2..index + 4)
+                        .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+                        .and_then(|hex| std::str::from_utf8(hex).ok())
+                        .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+                    if let Some(byte) = byte {
+                        unescaped.push(byte);
+                        index += 4;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+        }
+        unescaped.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8_lossy(&unescaped).into_owned()
 }
 
 fn merge_by_pid(records: Vec<LsofRecord>) -> Vec<LsofRecord> {
@@ -356,6 +391,28 @@ mod tests {
     #[test]
     fn scan_listening_ports_live() {
         scan_listening_ports(false).expect("scan should succeed on macOS");
+    }
+
+    #[test]
+    fn unescape_lsof_restores_the_kernel_name() {
+        assert_eq!(unescape_lsof("node"), "node");
+        assert_eq!(
+            unescape_lsof("Caf\\xc3\\xa9 S\\xc3\\xabrver"),
+            "Café Sërver"
+        );
+        assert_eq!(unescape_lsof("back\\\\slash name"), "back\\slash name");
+        // An escaped backslash followed by `x41` is not the byte 0x41.
+        assert_eq!(unescape_lsof("a\\\\x41"), "a\\x41");
+        // Not escapes lsof produces: left as they are.
+        assert_eq!(unescape_lsof("a\\xzz"), "a\\xzz");
+        assert_eq!(unescape_lsof("trailing\\"), "trailing\\");
+    }
+
+    #[test]
+    fn parse_lsof_output_unescapes_command_names() {
+        let records = parse_lsof_output("p42\ncCaf\\xc3\\xa9\nn127.0.0.1:8080\n", "TCP");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].name.as_deref(), Some("Café"));
     }
 
     #[test]

@@ -1,18 +1,18 @@
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::platform;
 use crate::platform::path_validation::DeleteRules;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PortBinding {
     pub address: String,
     pub port: u16,
     pub protocol: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PortProcess {
     pub pid: u32,
     pub name: String,

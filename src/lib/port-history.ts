@@ -104,10 +104,6 @@ if (typeof window !== "undefined") {
   });
 }
 
-export function getPortHistory(): PortHistoryEvent[] {
-  return loadRaw().slice().reverse();
-}
-
 export function getPortTimeline(port: number): PortHistoryEvent[] {
   return loadRaw()
     .filter((event) => event.port === port)
@@ -256,12 +252,6 @@ export function formatHistorySeen(timestamp: string, now = new Date()): string {
     return `yesterday ${time}`;
   }
   return `${formatHistoryDayLabel(timestamp, now)} ${time}`;
-}
-
-export function formatHistoryEvent(event: PortHistoryEvent): string {
-  const time = new Date(event.timestamp).toLocaleString();
-  const action = event.kind === "occupied" ? "occupied by" : "freed from";
-  return `${time} — Port ${event.port}/${event.protocol.toLowerCase()} ${action} ${event.processName} (PID ${event.pid})`;
 }
 
 export function formatHistoryEventShort(event: PortHistoryEvent): string {

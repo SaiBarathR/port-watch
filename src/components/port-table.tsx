@@ -54,12 +54,7 @@ import {
 import { portHintsLabel } from "@/lib/port-hints";
 import { filterPortProcesses } from "@/lib/port-filter";
 import { sortForTable, withGroupHeaders } from "@/lib/table-rows";
-import type {
-  AppSettings,
-  PortProcess,
-  RowChangeKind,
-  SystemKind,
-} from "@/lib/types";
+import type { AppSettings, PortProcess, RowChangeKind } from "@/lib/types";
 import {
   formatPorts,
   formatUptime,
@@ -101,12 +96,6 @@ function changeBadge(change: RowChangeKind | undefined) {
       {change}
     </Badge>
   );
-}
-
-function kindBadgeVariant(
-  kind: SystemKind,
-): "apple" | "microsoft" | "distro" | "system" | "user" {
-  return kind;
 }
 
 function stickyCellClass(
@@ -321,7 +310,7 @@ const columns: ColumnDef<PortProcess>[] = [
     maxSize: 180,
     enableResizing: false,
     cell: ({ row }) => (
-      <Badge variant={kindBadgeVariant(row.original.system_kind)}>
+      <Badge variant={row.original.system_kind}>
         {systemKindLabel(row.original.system_kind)}
       </Badge>
     ),

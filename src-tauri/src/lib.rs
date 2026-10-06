@@ -24,7 +24,7 @@ use poller::{
     get_listening_ports, set_refresh_paused, set_scan_settings, start_poller, trigger_port_scan,
     PortPoller,
 };
-use tray::{set_menu_bar_mode, setup_tray, show_full_window_command, update_tray_count};
+use tray::{set_menu_bar_mode, setup_tray};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -66,9 +66,7 @@ pub fn run() {
             open_url,
             open_in_terminal,
             open_in_editor,
-            update_tray_count,
             set_menu_bar_mode,
-            show_full_window_command,
             send_notification,
             get_cli_install_status,
             install_cli_to_path,

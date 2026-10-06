@@ -12,7 +12,6 @@ use crate::scanner::PortProcess;
 
 #[derive(Default)]
 pub struct TrayState {
-    pub user_listener_count: u32,
     pub menu_bar_mode_enabled: bool,
     pub last_menu_signature: Option<String>,
 }
@@ -26,7 +25,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("Missing application icon for tray")?;
 
     // Initial menu (no scan yet) — the poller rebuilds it as soon as it has data.
-    let menu = build_menu(app, &[], false, false)?;
+    let menu = build_menu(app, &[], false)?;
 
     TrayIconBuilder::with_id("main")
         .icon(icon)
@@ -52,15 +51,10 @@ fn localhost_url(port: u16, use_https: bool) -> String {
     format!("{scheme}://localhost:{port}")
 }
 
-fn build_port_submenu(
-    app: &AppHandle,
-    process: &PortProcess,
-    allow_system: bool,
-) -> tauri::Result<Submenu<Wry>> {
+fn build_port_submenu(app: &AppHandle, process: &PortProcess) -> tauri::Result<Submenu<Wry>> {
     let pid = process.pid;
     let port = primary_port(process);
     let has_dir = !process.project_dir().is_empty();
-    let can_stop = !process.is_system_service || allow_system;
 
     let title = match port {
         Some(p) => format!("{p}  ·  {}", process.name),
@@ -109,7 +103,7 @@ fn build_port_submenu(
         app,
         format!("pw-stop:{pid}"),
         "Stop process",
-        can_stop,
+        true,
         None::<&str>,
     )?;
     let sep_open = PredefinedMenuItem::separator(app)?;
@@ -128,7 +122,6 @@ fn build_port_submenu(
 fn build_menu(
     app: &AppHandle,
     processes: &[PortProcess],
-    allow_system: bool,
     menu_bar_enabled: bool,
 ) -> tauri::Result<Menu<Wry>> {
     let mut user: Vec<&PortProcess> = processes
@@ -160,7 +153,7 @@ fn build_menu(
         menu.append(&empty)?;
     } else {
         for process in &user {
-            let submenu = build_port_submenu(app, process, allow_system)?;
+            let submenu = build_port_submenu(app, process)?;
             menu.append(&submenu)?;
         }
     }
@@ -194,7 +187,7 @@ fn build_menu(
     Ok(menu)
 }
 
-fn menu_signature(processes: &[PortProcess], allow_system: bool, menu_bar_enabled: bool) -> String {
+fn menu_signature(processes: &[PortProcess], menu_bar_enabled: bool) -> String {
     let mut parts: Vec<String> = processes
         .iter()
         .filter(|process| !process.is_system_service)
@@ -215,12 +208,7 @@ fn menu_signature(processes: &[PortProcess], allow_system: bool, menu_bar_enable
         })
         .collect();
     parts.sort();
-    format!(
-        "{}|allow={}|mbm={}",
-        parts.join(";"),
-        allow_system,
-        menu_bar_enabled
-    )
+    format!("{}|mbm={}", parts.join(";"), menu_bar_enabled)
 }
 
 /// Rebuild the native tray menu from the poller's latest scan. Cheap to call on
@@ -228,22 +216,17 @@ fn menu_signature(processes: &[PortProcess], allow_system: bool, menu_bar_enable
 /// the menu shows actually changed. The menu must be mutated on the main thread.
 pub fn rebuild_tray_menu(app: &AppHandle) {
     let processes = app.state::<PortPoller>().snapshot();
-    let allow_system = app.state::<AppSettings>().allow_system_process_actions();
     let menu_bar_enabled = is_menu_bar_mode_enabled(app);
 
-    let signature = menu_signature(&processes, allow_system, menu_bar_enabled);
+    let signature = menu_signature(&processes, menu_bar_enabled);
     if let Some(state) = app.try_state::<Mutex<TrayState>>() {
-        let mut guard = match state.lock() {
+        let guard = match state.lock() {
             Ok(guard) => guard,
             Err(_) => return,
         };
         if guard.last_menu_signature.as_deref() == Some(signature.as_str()) {
             return;
         }
-        guard.user_listener_count = processes
-            .iter()
-            .filter(|process| !process.is_system_service)
-            .count() as u32;
     }
 
     let user_count = processes
@@ -253,7 +236,7 @@ pub fn rebuild_tray_menu(app: &AppHandle) {
 
     let app_main = app.clone();
     let _ = app.run_on_main_thread(move || {
-        match build_menu(&app_main, &processes, allow_system, menu_bar_enabled) {
+        match build_menu(&app_main, &processes, menu_bar_enabled) {
             Ok(menu) => {
                 if let Some(tray) = app_main.tray_by_id("main") {
                     let _ = tray.set_menu(Some(menu));
@@ -287,7 +270,7 @@ pub fn rebuild_tray_menu(app: &AppHandle) {
 
 fn handle_menu_event(app: &AppHandle, id: &str) {
     match id {
-        "tray-open-window" => show_full_window(app),
+        "tray-open-window" => show_main_window(app),
         "tray-refresh" => {
             let _ = crate::poller::trigger_port_scan(app.clone());
         }
@@ -451,10 +434,6 @@ pub fn show_main_window(app: &AppHandle) {
     }
 }
 
-pub fn show_full_window(app: &AppHandle) {
-    show_main_window(app);
-}
-
 fn apply_menu_bar_mode(app: &AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -486,30 +465,6 @@ fn apply_menu_bar_mode(app: &AppHandle, enabled: bool) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn update_tray_count(app: AppHandle, user_count: u32) -> Result<(), String> {
-    if let Some(tray) = app.tray_by_id("main") {
-        let label = if user_count == 1 {
-            "1 listener".to_string()
-        } else {
-            format!("{user_count} listeners")
-        };
-        let _ = tray.set_tooltip(Some(&label));
-    }
-
-    if let Ok(mut state) = app.state::<Mutex<TrayState>>().lock() {
-        state.user_listener_count = user_count;
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
 pub fn set_menu_bar_mode(app: AppHandle, enabled: bool) -> Result<(), String> {
     apply_menu_bar_mode(&app, enabled)
-}
-
-#[tauri::command]
-pub fn show_full_window_command(app: AppHandle) -> Result<(), String> {
-    show_full_window(&app);
-    Ok(())
 }

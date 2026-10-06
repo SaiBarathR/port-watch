@@ -134,10 +134,6 @@ export function systemKindLabel(kind: SystemKind): string {
   }
 }
 
-export function isVendorSystemKind(kind: SystemKind): boolean {
-  return kind === "apple" || kind === "microsoft" || kind === "distro";
-}
-
 export function primaryPath(process: PortProcess): string {
   return (
     process.script_path || process.working_directory || process.executable_path

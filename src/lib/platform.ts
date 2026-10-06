@@ -20,14 +20,6 @@ export function isMacOS(): boolean {
   return getPlatform() === "macos";
 }
 
-export function isLinux(): boolean {
-  return getPlatform() === "linux";
-}
-
-export function isWindows(): boolean {
-  return getPlatform() === "windows";
-}
-
 export function platformLabel(): string {
   switch (getPlatform()) {
     case "macos":

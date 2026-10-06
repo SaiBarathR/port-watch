@@ -89,15 +89,6 @@ export function stopMultipleProcessDescription(): string {
   }
 }
 
-export function protectedPathsDescription(): string {
-  switch (getPlatform()) {
-    case "macos":
-      return "Protected system paths under /System, /usr, /bin, /sbin, and /Library cannot be deleted. Paths under /usr/local are allowed.";
-    case "linux":
-      return "Protected system paths under /usr, /bin, /sbin, /lib, /lib64, and /opt cannot be deleted. Paths under /usr/local are allowed.";
-    case "windows":
-      return "Protected system paths under Windows, Program Files, and ProgramData cannot be deleted.";
-    default:
-      return "Protected system paths cannot be deleted.";
-  }
+export function deletableFoldersDescription(): string {
+  return "Only project folders inside your home folder can be deleted. Your home folder, its standard folders (Desktop, Documents, Downloads, …) and anything holding app data or settings are protected.";
 }

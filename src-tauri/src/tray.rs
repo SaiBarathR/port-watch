@@ -47,17 +47,6 @@ fn primary_port(process: &PortProcess) -> Option<u16> {
     process.ports.first().map(|binding| binding.port)
 }
 
-/// Directory used by the Finder/Terminal/Editor actions. Matches the main
-/// window's table actions, which prefer `project_root` over `working_directory`
-/// (see `port-table-actions-cell.tsx`).
-fn directory_for(process: &PortProcess) -> String {
-    if !process.project_root.is_empty() {
-        process.project_root.clone()
-    } else {
-        process.working_directory.clone()
-    }
-}
-
 fn localhost_url(port: u16, use_https: bool) -> String {
     let scheme = if use_https { "https" } else { "http" };
     format!("{scheme}://localhost:{port}")
@@ -70,7 +59,7 @@ fn build_port_submenu(
 ) -> tauri::Result<Submenu<Wry>> {
     let pid = process.pid;
     let port = primary_port(process);
-    let has_dir = !directory_for(process).is_empty();
+    let has_dir = !process.project_dir().is_empty();
     let can_stop = !process.is_system_service || allow_system;
 
     let title = match port {
@@ -221,7 +210,7 @@ fn menu_signature(processes: &[PortProcess], allow_system: bool, menu_bar_enable
                 process.pid,
                 process.name,
                 bindings.join(","),
-                directory_for(process)
+                process.project_dir()
             )
         })
         .collect();
@@ -372,16 +361,18 @@ fn run_port_action(
             )
         }
         "pw-stop" => {
+            // The menu can be older than the latest scan. Without the scan's
+            // entry there is no name to confirm or to check the PID against.
+            let Some(process) = process else {
+                let _ = crate::poller::trigger_port_scan(app.clone());
+                return Err(format!(
+                    "PID {pid} is no longer listening, so it was not stopped."
+                ));
+            };
             if !confirm_stop(app, process) {
                 return Ok(());
             }
-            let expected_name = process.map(|p| p.name.clone());
-            crate::commands::process::stop_process_blocking(
-                app,
-                pid,
-                false,
-                expected_name.as_deref(),
-            )?;
+            crate::process_actions::stop_process(app, pid, false, Some(&process.name))?;
             // Nothing else rescans after a tray stop, so with manual refresh
             // the stopped process would stay listed indefinitely.
             crate::poller::trigger_port_scan(app.clone())
@@ -393,12 +384,11 @@ fn run_port_action(
 /// Native confirmation before terminating a process — restores the safety the
 /// removed popover's StopDialog provided. Runs on a background thread (the
 /// caller is `spawn_blocking`), so blocking on the user's response is fine.
-fn confirm_stop(app: &AppHandle, process: Option<&PortProcess>) -> bool {
+fn confirm_stop(app: &AppHandle, process: &PortProcess) -> bool {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-    let name = process.map(|p| p.name.as_str()).unwrap_or("this process");
-    let is_system = process.map(|p| p.is_system_service).unwrap_or(false);
-    let message = if is_system {
+    let name = &process.name;
+    let message = if process.is_system_service {
         format!(
             "{name} is a system service. Stopping it may affect your system.\n\nStop it anyway?"
         )
@@ -419,7 +409,7 @@ fn confirm_stop(app: &AppHandle, process: Option<&PortProcess>) -> bool {
 
 fn require_directory(process: Option<&PortProcess>) -> Result<String, String> {
     process
-        .map(directory_for)
+        .map(|process| process.project_dir().to_string())
         .filter(|dir| !dir.is_empty())
         .ok_or_else(|| "No folder available for this process".to_string())
 }

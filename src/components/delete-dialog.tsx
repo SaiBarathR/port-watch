@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { protectedPathsDescription } from "@/lib/platform";
+import { deletableFoldersDescription } from "@/lib/platform";
 import type { PortProcess } from "@/lib/types";
 import { formatPorts, pinPath } from "@/lib/types";
 import { basename } from "@/lib/utils";
@@ -42,13 +42,13 @@ export function DeleteDialog({
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const path = target
-    ? pinPath(target.process) || target.process.working_directory
-    : "";
+  const path = target ? pinPath(target.process) : "";
   const folderBasename = basename(path);
+  const blockedReason = target?.process.delete_blocked ?? null;
   const canDelete =
     !!target &&
     !!path &&
+    blockedReason === null &&
     (!target.process.is_system_service || allowSystemProcessActions);
 
   const handleOpenChange = (next: boolean) => {
@@ -63,32 +63,27 @@ export function DeleteDialog({
 
     setBusy(true);
     try {
-      await invoke("stop_process", {
+      // One command: the backend checks the folder before it stops anything.
+      await invoke("delete_project", {
         pid: target.process.pid,
         expectedName: target.process.name,
+        path,
+        mode: target.mode,
+        confirmation: target.mode === "permanent" ? confirmation : null,
       });
-
-      if (target.mode === "trash") {
-        await invoke("move_to_trash", {
-          path,
-          pid: target.process.pid,
-        });
-        toast.success("Moved folder to Trash");
-      } else {
-        await invoke("delete_permanently", {
-          path,
-          confirmation,
-          pid: target.process.pid,
-        });
-        toast.success("Folder deleted permanently");
-      }
-
+      toast.success(
+        target.mode === "trash"
+          ? "Moved folder to Trash"
+          : "Folder deleted permanently",
+      );
       handleOpenChange(false);
-      onComplete();
     } catch (err) {
       toast.error(String(err));
     } finally {
       setBusy(false);
+      // Also after a failure: the process may have been stopped even though
+      // its folder could not be deleted.
+      onComplete();
     }
   };
 
@@ -124,8 +119,14 @@ export function DeleteDialog({
 
         <Alert variant="destructive">
           <AlertTriangleIcon />
-          <AlertTitle>Destructive action</AlertTitle>
-          <AlertDescription>{protectedPathsDescription()}</AlertDescription>
+          <AlertTitle>
+            {blockedReason
+              ? "This folder cannot be deleted"
+              : "Destructive action"}
+          </AlertTitle>
+          <AlertDescription>
+            {blockedReason ?? deletableFoldersDescription()}
+          </AlertDescription>
         </Alert>
 
         {isPermanent && (

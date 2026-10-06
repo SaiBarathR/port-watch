@@ -91,7 +91,9 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
 
   const { openMenuPid, setOpenMenuPid } = menu;
   const isOpen = openMenuPid === process.pid;
-  const folderPath = pinPath(process) || process.working_directory;
+  const folderPath = pinPath(process);
+  const canDeleteFolder =
+    !!folderPath && handlers.canStop(process) && !process.delete_blocked;
   const editorPath = process.project_root || process.working_directory;
   const port = primaryPort(process);
   const pinnedPath = pinPath(process);
@@ -281,7 +283,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
           <DropdownMenuGroup>
             <DropdownMenuItem
               variant="destructive"
-              disabled={!folderPath || !handlers.canStop(process)}
+              disabled={!canDeleteFolder}
               onClick={() => {
                 setOpenMenuPid(null);
                 handlers.setDeleteTarget({ process, mode: "trash" });
@@ -292,7 +294,7 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
             </DropdownMenuItem>
             <DropdownMenuItem
               variant="destructive"
-              disabled={!folderPath || !handlers.canStop(process)}
+              disabled={!canDeleteFolder}
               onClick={() => {
                 setOpenMenuPid(null);
                 handlers.setDeleteTarget({ process, mode: "permanent" });
@@ -301,6 +303,11 @@ export const PortTableActionsCell = memo(function PortTableActionsCell({
               <Trash2Icon data-icon="inline-start" />
               Delete Permanently
             </DropdownMenuItem>
+            {process.delete_blocked && (
+              <p className="max-w-56 px-2 pt-0.5 pb-1.5 text-xs text-muted-foreground">
+                {process.delete_blocked}
+              </p>
+            )}
           </DropdownMenuGroup>
         </DropdownMenuContent>
       )}

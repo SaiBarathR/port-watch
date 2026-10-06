@@ -1,5 +1,12 @@
 pub fn open_in_file_manager(path: &str) -> Result<(), String> {
-    let status = std::process::Command::new("open")
+    let mut command = std::process::Command::new("open");
+    // `open` launches a bundle (Foo.app) rather than showing what is in it,
+    // and any folder with an extension may be one: reveal those in their
+    // parent folder instead.
+    if std::path::Path::new(path).extension().is_some() {
+        command.arg("-R");
+    }
+    let status = command
         .arg(path)
         .status()
         .map_err(|e| format!("Failed to open Finder: {e}"))?;

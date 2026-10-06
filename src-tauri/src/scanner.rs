@@ -1,6 +1,9 @@
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use crate::platform;
+use crate::platform::path_validation::DeleteRules;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortBinding {
@@ -23,10 +26,41 @@ pub struct PortProcess {
     pub system_kind: crate::classifier::SystemKind,
     pub is_system_service: bool,
     pub uptime_seconds: u64,
+    /// Why the app will not delete this process's project folder, if it will
+    /// not. The UI disables the action and shows the reason.
+    pub delete_blocked: Option<String>,
+}
+
+impl PortProcess {
+    /// The folder the reveal, terminal, editor and delete actions work on:
+    /// the project root when one was found, else the working directory.
+    pub fn project_dir(&self) -> &str {
+        if self.project_root.is_empty() {
+            &self.working_directory
+        } else {
+            &self.project_root
+        }
+    }
 }
 
 pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, String> {
-    platform::scan_listening_ports(include_udp)
+    let mut processes = platform::scan_listening_ports(include_udp)?;
+    mark_undeletable_folders(&mut processes, DeleteRules::for_current_user());
+    Ok(processes)
+}
+
+// A platform scanner may already have blocked a folder for a reason only it
+// knows; that is kept.
+fn mark_undeletable_folders(processes: &mut [PortProcess], rules: Result<DeleteRules, String>) {
+    for process in processes {
+        if process.delete_blocked.is_some() {
+            continue;
+        }
+        process.delete_blocked = match &rules {
+            Ok(rules) => rules.resolve(Path::new(process.project_dir())).err(),
+            Err(err) => Some(err.clone()),
+        };
+    }
 }
 
 #[cfg(test)]

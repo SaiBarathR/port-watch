@@ -16,6 +16,7 @@ function sampleProcess(overrides: Partial<PortProcess> = {}): PortProcess {
     system_kind: "user",
     is_system_service: false,
     uptime_seconds: 10,
+    delete_blocked: null,
     ...overrides,
   };
 }

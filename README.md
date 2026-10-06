@@ -157,13 +157,19 @@ flowchart LR
 
 ## Safety
 
-Destructive actions (move to trash, delete permanently) are blocked for protected system paths:
+Deleting a project folder (move to trash, delete permanently) is one backend step that checks the folder before it stops the process. A folder can be deleted only if all of these hold:
 
-- **macOS:** `/System`, `/usr`, `/bin`, `/sbin`, `/Library`
-- **Linux:** `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/opt` (not `/usr/local`)
-- **Windows:** `C:\Windows`, `Program Files`, `Program Files (x86)`, `ProgramData`
+- It is the project folder the latest scan recorded for that process. The window cannot name any other path.
+- It is a real folder (not a symlink or a file) inside your home folder.
+- It is not your home folder itself, one of its standard folders (`Desktop`, `Documents`, `Downloads`, …), or anywhere inside app data and settings (`Library`, `Applications`, `AppData`, and hidden folders such as `.config` or `.ssh`).
+- It is not under a protected system path:
+  - **macOS:** `/System`, `/usr`, `/bin`, `/sbin`, `/Library`
+  - **Linux:** `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/opt` (not `/usr/local`)
+  - **Windows:** `C:\Windows`, `Program Files`, `Program Files (x86)`, `ProgramData`
 
-System process stop/delete requires an explicit opt-in in Settings.
+On Windows the folder is inferred rather than read from the process, so delete is offered only when it comes from a script path, never from where the program is installed.
+
+Stop refuses a PID that is not in the latest scan or that the scan knows under a different name. System process stop/delete requires an explicit opt-in in Settings, and "Stop all visible user processes" never includes system services.
 
 ## Tech stack
 

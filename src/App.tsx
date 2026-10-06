@@ -68,7 +68,7 @@ function App() {
             portLookupEmpty={portLookupEmpty}
             exactPortQuery={exactPortQuery}
             portLookupOccupants={portLookupOccupants}
-            exportProcesses={shown}
+            shownProcesses={shown}
             settings={settings}
             theme={theme}
             onThemeChange={setTheme}
@@ -77,8 +77,6 @@ function App() {
             firstScanPending={loading}
             userCount={userCount}
             systemCount={systemCount}
-            hiddenSystemCount={settings.hideSystemServices ? systemCount : 0}
-            hiddenUserCount={settings.hideUserServices ? userCount : 0}
           />
 
           {error && (

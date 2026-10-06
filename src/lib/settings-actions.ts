@@ -3,23 +3,30 @@ import {
   dismissPortChangeToasts,
 } from "@/lib/change-toasts";
 import { updateSettings } from "@/lib/settings-store";
+import type { AppSettings } from "@/lib/types";
 
 // The settings changes that do more than replace one value.
 
-// Hiding both user and system services would blank the table, so turning
-// one hide-toggle on always releases the other.
-export function setHideSystemServices(hide: boolean) {
-  updateSettings((current) => ({
-    hideSystemServices: hide,
-    hideUserServices: hide ? false : current.hideUserServices,
-  }));
+/** Which listeners the table shows. */
+export type ListenerScope = "user" | "system" | "all";
+
+// Stored as two "hide" switches, which is how earlier versions asked. They
+// were never two choices: hiding both left an empty table, so turning one on
+// turned the other off.
+export function listenerScope(
+  settings: Pick<AppSettings, "hideSystemServices" | "hideUserServices">,
+): ListenerScope {
+  if (settings.hideSystemServices) {
+    return "user";
+  }
+  return settings.hideUserServices ? "system" : "all";
 }
 
-export function setHideUserServices(hide: boolean) {
-  updateSettings((current) => ({
-    hideUserServices: hide,
-    hideSystemServices: hide ? false : current.hideSystemServices,
-  }));
+export function setListenerScope(scope: ListenerScope) {
+  updateSettings({
+    hideSystemServices: scope === "user",
+    hideUserServices: scope === "system",
+  });
 }
 
 export function setShowChangeToasts(showChangeToasts: boolean) {

@@ -84,24 +84,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
   useHttpsForLocalhost: false,
 };
 
+/** A process's ports as text, each once: "3000, 9229" or "53/tcp, 53/udp". */
 export function formatPorts(
   ports: PortBinding[],
   includeProtocol = false,
 ): string {
-  return ports
-    .map((p) => {
-      let label: string;
-      if (p.address === "*" || p.address === "0.0.0.0") {
-        label = String(p.port);
-      } else {
-        label = `${p.address}:${p.port}`;
-      }
-      if (includeProtocol) {
-        return `${label}/${p.protocol.toLowerCase()}`;
-      }
-      return label;
-    })
-    .join(", ");
+  const labels = ports.map((binding) =>
+    includeProtocol
+      ? `${binding.port}/${binding.protocol.toLowerCase()}`
+      : String(binding.port),
+  );
+  return [...new Set(labels)].join(", ");
 }
 
 /** Seconds a process has been running; 0 when its start time is unknown. */

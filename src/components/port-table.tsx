@@ -7,12 +7,6 @@ import {
   type RowSelectionState,
 } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { OpenMenuProvider } from "@/components/port-table-actions-cell";
 import { columns, type PortTableMeta } from "@/components/port-table-columns";
@@ -25,12 +19,7 @@ import { useProcessActions } from "@/components/process-actions";
 import { loadColumnSizing, saveColumnSizing } from "@/lib/column-sizing";
 import { useRefreshPause } from "@/lib/refresh-pause";
 import { sortForTable, withGroupHeaders } from "@/lib/table-rows";
-import {
-  userProcesses,
-  type AppSettings,
-  type PortProcess,
-  type RowChangeKind,
-} from "@/lib/types";
+import type { AppSettings, PortProcess, RowChangeKind } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface PortTableProps {
@@ -102,20 +91,25 @@ export function PortTable({
   );
 
   const meta = useMemo<PortTableMeta>(
+    () => ({ rowChanges, canStop, actionSettings }),
+    [actionSettings, canStop, rowChanges],
+  );
+
+  // With system services hidden every row is the current user's own
+  // process: two columns that would say the same thing on every line.
+  const columnVisibility = useMemo(
     () => ({
-      includeUdp: settings.includeUdp,
-      rowChanges,
-      canStop,
-      actionSettings,
+      user: !settings.hideSystemServices,
+      type: !settings.hideSystemServices,
     }),
-    [actionSettings, canStop, rowChanges, settings.includeUdp],
+    [settings.hideSystemServices],
   );
 
   const table = useReactTable({
     data: tableData,
     columns,
     meta,
-    state: { columnSizing, rowSelection },
+    state: { columnSizing, columnVisibility, rowSelection },
     onColumnSizingChange: setColumnSizing,
     onRowSelectionChange: setRowSelection,
     enableRowSelection: (row) => canStop(row.original),
@@ -153,11 +147,7 @@ export function PortTable({
     .getSelectedRowModel()
     .rows.map((row) => row.original);
 
-  const visibleUserProcesses = userProcesses(
-    table.getRowModel().rows.map((row) => row.original),
-  );
-
-  const columnCount = columns.length;
+  const columnCount = table.getVisibleLeafColumns().length;
 
   const tableRows = withGroupHeaders(
     table.getRowModel().rows,
@@ -170,58 +160,10 @@ export function PortTable({
       <TooltipProvider>
         <div
           className={cn(
-            "flex h-full min-h-0 flex-col",
+            "relative flex h-full min-h-0 flex-col",
             resizing && "cursor-col-resize select-none",
           )}
         >
-          {selectedProcesses.length > 0 && (
-            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
-              <span className="text-sm text-muted-foreground">
-                {selectedProcesses.length} selected
-              </span>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() =>
-                  stop(
-                    selectedProcesses,
-                    `Stop ${selectedProcesses.length} selected processes?`,
-                  )
-                }
-              >
-                Stop selected
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="outline">
-                    Batch actions
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem
-                    disabled={visibleUserProcesses.length === 0}
-                    onClick={() =>
-                      stop(
-                        visibleUserProcesses,
-                        `Stop all ${visibleUserProcesses.length} visible user processes?`,
-                        "This stops every visible user process in the current table view.",
-                      )
-                    }
-                  >
-                    Stop all visible user processes
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setRowSelection({})}
-              >
-                Clear selection
-              </Button>
-            </div>
-          )}
-
           <div className="min-h-0 flex-1 overflow-auto rounded-md border">
             <table
               className="caption-bottom text-sm"
@@ -232,7 +174,7 @@ export function PortTable({
               }}
             >
               <colgroup>
-                {table.getAllLeafColumns().map((column) => (
+                {table.getVisibleLeafColumns().map((column) => (
                   <col key={column.id} style={{ width: column.getSize() }} />
                 ))}
               </colgroup>
@@ -332,7 +274,46 @@ export function PortTable({
                 )}
               </tbody>
             </table>
+            {/* Room to scroll the last rows clear of the bar below. */}
+            {selectedProcesses.length > 0 && <div className="h-14" />}
           </div>
+
+          {/* Over the table, not above it: ticking the first checkbox used
+              to push every row down under the pointer. */}
+          {selectedProcesses.length > 0 && (
+            <div
+              role="toolbar"
+              aria-label="Selected processes"
+              className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full border bg-popover py-1 pr-1 pl-4 text-sm text-popover-foreground shadow-lg"
+            >
+              <span className="mr-2 whitespace-nowrap tabular-nums">
+                {selectedProcesses.length} selected
+              </span>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7 rounded-full"
+                onClick={() =>
+                  stop(
+                    selectedProcesses,
+                    selectedProcesses.length === 1
+                      ? undefined
+                      : `Stop ${selectedProcesses.length} selected processes?`,
+                  )
+                }
+              >
+                Stop
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 rounded-full"
+                onClick={() => setRowSelection({})}
+              >
+                Clear
+              </Button>
+            </div>
+          )}
         </div>
       </TooltipProvider>
     </OpenMenuProvider>

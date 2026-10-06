@@ -25,7 +25,9 @@ function UpdatedAgo({ at }: { at: number }) {
 
 interface RefreshStateProps {
   intervalMs: RefreshInterval;
-  /** When the list was last confirmed by a scan, in ms; null before the first. */
+  /** True until the first scan has come back, whether or not it worked. */
+  firstScanPending: boolean;
+  /** When a scan last confirmed the list, in ms; null if none has yet. */
   lastScanAt: number | null;
   includeUdp: boolean;
 }
@@ -36,18 +38,20 @@ interface RefreshStateProps {
  */
 export function RefreshState({
   intervalMs,
+  firstScanPending,
   lastScanAt,
   includeUdp,
 }: RefreshStateProps) {
   const paused = useRefreshPaused();
-  const state =
-    lastScanAt === null
-      ? "scanning"
-      : paused
-        ? "paused"
-        : intervalMs === 0
-          ? "off"
-          : "live";
+  // "Scanning" only while a scan is actually awaited: a first scan that
+  // failed is over, and the banner above the table says what went wrong.
+  const state = firstScanPending
+    ? "scanning"
+    : paused
+      ? "paused"
+      : intervalMs === 0
+        ? "off"
+        : "live";
 
   return (
     <span className="flex min-w-0 items-center gap-1.5">
@@ -64,9 +68,11 @@ export function RefreshState({
         {state === "scanning" && "Scanning ports…"}
         {state === "paused" && "Paused while a menu or dialog is open"}
         {state === "live" && `Live · every ${intervalMs / 1000} s`}
+        {state === "off" && "Auto-refresh off"}
         {state === "off" && lastScanAt !== null && (
           <>
-            Auto-refresh off · <UpdatedAgo at={lastScanAt} />
+            {" · "}
+            <UpdatedAgo at={lastScanAt} />
           </>
         )}
         {includeUdp && state !== "scanning" && " · TCP and UDP"}

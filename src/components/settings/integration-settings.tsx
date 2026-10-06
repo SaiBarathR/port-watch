@@ -9,7 +9,11 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { SettingRow, SettingSection } from "@/components/settings/setting-row";
-import { useCliInstall } from "@/hooks/use-cli-install";
+import {
+  installCli,
+  uninstallCli,
+  useCliInstall,
+} from "@/hooks/use-cli-install";
 import { cliInstallPrivilegeHint } from "@/lib/platform";
 import { updateSettings } from "@/lib/settings-store";
 import type { AppSettings } from "@/lib/types";
@@ -85,7 +89,7 @@ export function IntegrationSettings({ settings }: { settings: AppSettings }) {
             variant="outline"
             className="min-w-[8.5rem]"
             disabled={cli.busy || cli.status === null}
-            onClick={() => void (installed ? cli.uninstall() : cli.install())}
+            onClick={() => void (installed ? uninstallCli() : installCli())}
           >
             {!installed && <TerminalIcon />}
             {cli.busy ? "Working…" : installed ? "Uninstall" : "Install"}

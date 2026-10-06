@@ -65,7 +65,9 @@ interface PortToolbarProps {
   onThemeChange: (theme: ThemeMode) => void;
   onRefresh: () => void;
   loading: boolean;
-  /** When the list was last confirmed by a scan, in ms; null before the first. */
+  /** True until the first scan has come back, whether or not it worked. */
+  firstScanPending: boolean;
+  /** When a scan last confirmed the list, in ms; null if none has yet. */
   lastScanAt: number | null;
   userCount: number;
   systemCount: number;
@@ -91,6 +93,7 @@ export function PortToolbar({
   onThemeChange,
   onRefresh,
   loading,
+  firstScanPending,
   lastScanAt,
   userCount,
   systemCount,
@@ -412,6 +415,7 @@ export function PortToolbar({
           ) : (
             <RefreshState
               intervalMs={settings.refreshIntervalMs}
+              firstScanPending={firstScanPending}
               lastScanAt={lastScanAt}
               includeUdp={settings.includeUdp}
             />

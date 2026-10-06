@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { TerminalIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useCliInstall } from "@/hooks/use-cli-install";
+import { installCli, useCliInstall } from "@/hooks/use-cli-install";
 import {
   dismissCliInstallPrompt,
   isCliInstallPromptDismissed,
@@ -52,7 +52,7 @@ export function CliInstallBanner() {
         className="h-7 shrink-0"
         disabled={cli.busy}
         onClick={() =>
-          void cli.install().then((installed) => installed && dismiss())
+          void installCli().then((installed) => installed && dismiss())
         }
       >
         {cli.busy ? "Installing…" : "Install"}

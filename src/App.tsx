@@ -74,6 +74,7 @@ function App() {
             onThemeChange={setTheme}
             onRefresh={refreshNow}
             loading={refreshing}
+            firstScanPending={loading}
             lastScanAt={lastScanAt}
             userCount={userCount}
             systemCount={systemCount}

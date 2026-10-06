@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import {
   fetchCliInstallStatus,
@@ -7,75 +7,86 @@ import {
   type CliInstallStatus,
 } from "@/lib/cli-install";
 
-/**
- * Whether the `port-watch` command is on the PATH, and installing or
- * removing it. Settings and the first-launch banner both use this; each had
- * its own copy.
- */
-export function useCliInstall(active = true) {
-  const [status, setStatus] = useState<CliInstallStatus | null>(null);
-  const [busy, setBusy] = useState(false);
+// Whether the `port-watch` command is on the PATH. One copy, for Settings
+// and for the strip under the table: with a copy each, installing from one
+// left the other still offering to install.
+interface CliInstall {
+  /** Null until the backend has been asked. */
+  status: CliInstallStatus | null;
+  busy: boolean;
+}
 
-  useEffect(() => {
-    if (!active) {
-      return;
-    }
-    let cancelled = false;
-    void fetchCliInstallStatus().then((fetched) => {
-      if (!cancelled) {
-        setStatus(fetched);
-      }
+let state: CliInstall = { status: null, busy: false };
+const watchers = new Set<() => void>();
+
+function set(next: Partial<CliInstall>) {
+  state = { ...state, ...next };
+  for (const watcher of watchers) {
+    watcher();
+  }
+}
+
+function subscribe(watcher: () => void) {
+  watchers.add(watcher);
+  return () => watchers.delete(watcher);
+}
+
+async function refresh() {
+  set({ status: await fetchCliInstallStatus() });
+}
+
+async function change(
+  action: () => Promise<void>,
+  done: string,
+  hint: string | undefined,
+  failed: string,
+): Promise<boolean> {
+  set({ busy: true });
+  try {
+    await action();
+    await refresh();
+    toast.success(done, { description: hint });
+    return true;
+  } catch (err) {
+    toast.error(failed, {
+      description: err instanceof Error ? err.message : String(err),
     });
-    return () => {
-      cancelled = true;
-    };
+    return false;
+  } finally {
+    set({ busy: false });
+  }
+}
+
+/** Installs the command. Resolves to whether it worked. */
+export function installCli(): Promise<boolean> {
+  return change(
+    installCliToPath,
+    "Command-line tool installed",
+    "Run port-watch check 3000 from your terminal.",
+    "Could not install the command-line tool",
+  );
+}
+
+export function uninstallCli(): Promise<boolean> {
+  return change(
+    uninstallCliFromPath,
+    "Command-line tool removed",
+    undefined,
+    "Could not remove the command-line tool",
+  );
+}
+
+/**
+ * The command's install state. While `active`, the backend is asked afresh
+ * each time a component starts using it (the link can change outside the
+ * app).
+ */
+export function useCliInstall(active = true): CliInstall {
+  useEffect(() => {
+    if (active) {
+      void refresh();
+    }
   }, [active]);
 
-  const change = useCallback(
-    async (action: () => Promise<void>, done: string, failed: string) => {
-      setBusy(true);
-      try {
-        await action();
-        setStatus(await fetchCliInstallStatus());
-        toast.success(done, {
-          description:
-            action === installCliToPath
-              ? "Run port-watch check 3000 from your terminal."
-              : undefined,
-        });
-        return true;
-      } catch (err) {
-        toast.error(failed, {
-          description: err instanceof Error ? err.message : String(err),
-        });
-        return false;
-      } finally {
-        setBusy(false);
-      }
-    },
-    [],
-  );
-
-  return {
-    status,
-    busy,
-    install: useCallback(
-      () =>
-        change(
-          installCliToPath,
-          "Command-line tool installed",
-          "Could not install the command-line tool",
-        ),
-      [change],
-    ),
-    uninstall: useCallback(
-      () =>
-        change(
-          uninstallCliFromPath,
-          "Command-line tool removed",
-          "Could not remove the command-line tool",
-        ),
-      [change],
-    ),
-  };
+  return useSyncExternalStore(subscribe, () => state);
 }

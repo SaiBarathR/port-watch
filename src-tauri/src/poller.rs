@@ -199,20 +199,24 @@ impl PortPoller {
     /// The scan loop. It scans once at once, then whenever the interval
     /// elapses, a scan is requested, or a setting changes in a way that calls
     /// for one. `after_scan` runs after every scan and is told whether the
-    /// result differs from the one before it.
+    /// result differs from the one before it, and whether the scan was asked
+    /// for rather than due: someone is waiting to hear about that one even
+    /// when it found nothing new.
     pub async fn run(
         &self,
         scan: impl Fn(bool) -> ScanFuture,
-        after_scan: impl Fn(&Snapshot, bool),
+        after_scan: impl Fn(&Snapshot, bool, bool),
     ) {
         let mut config_rx = self.config.subscribe();
         let mut config = config_rx.borrow_and_update().clone();
+        // The first scan is the one the window is waiting for.
+        let mut asked = true;
 
         loop {
             let started = Instant::now();
             self.progress.send_modify(|progress| progress.started += 1);
             let result = scan(config.include_udp).await;
-            self.publish(result, &after_scan);
+            self.publish(result, asked, &after_scan);
             self.progress
                 .send_modify(|progress| progress.completed += 1);
 
@@ -229,8 +233,14 @@ impl PortPoller {
                 };
 
                 tokio::select! {
-                    _ = tick => break,
-                    _ = self.kick.notified() => break,
+                    _ = tick => {
+                        asked = false;
+                        break;
+                    }
+                    _ = self.kick.notified() => {
+                        asked = true;
+                        break;
+                    }
                     changed = config_rx.changed() => {
                         if changed.is_err() {
                             return;
@@ -239,6 +249,7 @@ impl PortPoller {
                         let scan_now = next.calls_for_scan(&config);
                         config = next;
                         if scan_now {
+                            asked = true;
                             break;
                         }
                     }
@@ -250,7 +261,8 @@ impl PortPoller {
     fn publish(
         &self,
         result: Result<Vec<PortProcess>, String>,
-        after_scan: &impl Fn(&Snapshot, bool),
+        asked: bool,
+        after_scan: &impl Fn(&Snapshot, bool, bool),
     ) {
         let previous = self.snapshot.borrow().clone();
         let (processes, error) = match result {
@@ -272,7 +284,7 @@ impl PortPoller {
         if changed {
             self.snapshot.send_replace(next.clone());
         }
-        after_scan(&next, changed);
+        after_scan(&next, changed, asked);
     }
 }
 
@@ -305,9 +317,11 @@ pub fn start_poller(app: AppHandle) {
                         .unwrap_or_else(|err| Err(format!("Scan task failed: {err}")))
                     })
                 },
-                |snapshot, changed| {
-                    // A scan that found nothing new is not announced.
-                    if changed {
+                |snapshot, changed, asked| {
+                    // A scan that was merely due and found nothing new is not
+                    // announced. One that was asked for is, so the window
+                    // can say the list has just been confirmed.
+                    if changed || asked {
                         let _ = app.emit(
                             "ports-updated",
                             PortsUpdatedEvent {
@@ -444,6 +458,8 @@ mod tests {
         scanner: Arc<FakeScanner>,
         published: Arc<Mutex<Vec<Snapshot>>>,
         reported: Arc<Mutex<usize>>,
+        /// For each scan, whether it was asked for rather than due.
+        asked: Arc<Mutex<Vec<bool>>>,
     }
 
     impl Running {
@@ -452,17 +468,20 @@ mod tests {
             let scanner = Arc::new(scanner);
             let published = Arc::new(Mutex::new(Vec::new()));
             let reported = Arc::new(Mutex::new(0));
+            let asked = Arc::new(Mutex::new(Vec::new()));
 
             tokio::spawn({
                 let poller = poller.clone();
                 let scanner = scanner.clone();
                 let published = published.clone();
                 let reported = reported.clone();
+                let asked = asked.clone();
                 async move {
                     poller
                         .run(
                             |include_udp| scanner.scan(include_udp),
-                            |snapshot, changed| {
+                            |snapshot, changed, was_asked| {
+                                asked.lock().unwrap().push(was_asked);
                                 *reported.lock().unwrap() += 1;
                                 if changed {
                                     published.lock().unwrap().push(snapshot.clone());
@@ -478,7 +497,12 @@ mod tests {
                 scanner,
                 published,
                 reported,
+                asked,
             }
+        }
+
+        fn asked(&self) -> Vec<bool> {
+            self.asked.lock().unwrap().clone()
         }
 
         fn scans(&self) -> usize {
@@ -507,6 +531,34 @@ mod tests {
     async fn advance(seconds: u64) {
         tokio::time::sleep(Duration::from_secs(seconds)).await;
         settle().await;
+    }
+
+    // The window shows when the list was last confirmed. A scan nobody asked
+    // for is only reported when it finds something new; one that was asked
+    // for (at startup, by a refresh, by a setting) is reported either way.
+    #[tokio::test(start_paused = true)]
+    async fn a_scan_knows_whether_it_was_asked_for_or_merely_due() {
+        let running = Running::start(
+            Config::default(),
+            FakeScanner::returning([Ok(vec![listener(1, 3000)])]),
+        );
+        running.poller.first_scan().await;
+        assert_eq!(running.asked(), vec![true]);
+
+        advance(3).await;
+        assert_eq!(running.asked(), vec![true, false]);
+
+        running.poller.request_scan();
+        settle().await;
+        assert_eq!(running.asked(), vec![true, false, true]);
+
+        // Turning auto-refresh off scans once more, and that one was asked
+        // for too.
+        running.poller.set_scan_settings(0, false, false);
+        settle().await;
+        assert_eq!(running.asked(), vec![true, false, true, true]);
+        // Only the first found anything new.
+        assert_eq!(running.published(), 1);
     }
 
     #[tokio::test(start_paused = true)]

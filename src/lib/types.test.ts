@@ -9,6 +9,7 @@ import {
 
 function sampleProcess(overrides: Partial<PortProcess> = {}): PortProcess {
   return {
+    id: `pid-${overrides.pid ?? 1}`,
     pid: 1,
     name: "node",
     user: "dev",

@@ -22,7 +22,7 @@ function matchesSearch(
   process: PortProcess,
   query: string,
   field: SearchField,
-  searchHaystacks: Map<number, string>,
+  searchHaystacks: Map<string, string>,
 ): boolean {
   const q = query.trim().toLowerCase();
   if (!q) {
@@ -62,7 +62,7 @@ function matchesSearch(
     case "command":
       return process.command_line.toLowerCase().includes(q);
     case "all":
-      return searchHaystacks.get(process.pid)?.includes(q) ?? false;
+      return searchHaystacks.get(process.id)?.includes(q) ?? false;
   }
 }
 
@@ -78,11 +78,11 @@ export function filterPortProcesses(
     trimmedSearch && searchField === "all"
       ? new Map(
           processes.map((process) => [
-            process.pid,
+            process.id,
             buildSearchHaystack(process),
           ]),
         )
-      : new Map<number, string>();
+      : new Map<string, string>();
 
   return processes.filter((process) => {
     if (hideSystemServices && process.is_system_service) {

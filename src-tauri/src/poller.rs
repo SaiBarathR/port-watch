@@ -382,6 +382,7 @@ mod tests {
 
     fn listener(pid: u32, port: u16) -> PortProcess {
         PortProcess {
+            id: String::new(),
             pid,
             name: "node".into(),
             user: "dev".into(),

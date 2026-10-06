@@ -70,7 +70,7 @@ interface PortTableProps {
   loading: boolean;
   search: string;
   settings: AppSettings;
-  rowChanges: Map<number, RowChangeKind>;
+  rowChanges: Map<string, RowChangeKind>;
   onRefresh: () => void;
   onRefreshPauseChange: (paused: boolean) => void;
   onTogglePinnedPath: (path: string) => void;
@@ -121,7 +121,7 @@ function stickyCellClass(
 // remount the cell, and an open row menu would lose its keyboard focus.
 interface PortTableMeta {
   includeUdp: boolean;
-  rowChanges: Map<number, RowChangeKind>;
+  rowChanges: Map<string, RowChangeKind>;
   canStop: (process: PortProcess) => boolean;
   actionSettings: Pick<
     AppSettings,
@@ -193,7 +193,7 @@ const columns: ColumnDef<PortProcess>[] = [
             <span className="flex min-w-0 flex-col truncate font-mono text-sm">
               <span className="flex items-center truncate">
                 <span className="truncate">{portsText}</span>
-                {changeBadge(rowChanges.get(row.original.pid))}
+                {changeBadge(rowChanges.get(row.original.id))}
               </span>
               {hint && (
                 <span className="truncate text-[10px] text-muted-foreground">
@@ -358,7 +358,7 @@ export function PortTable({
     liveSizing: ColumnSizingState;
     rafId: number | null;
   } | null>(null);
-  const [openMenuPid, setOpenMenuPid] = useState<number | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [stopTargets, setStopTargets] = useState<PortProcess[]>([]);
   const [stopDialogTitle, setStopDialogTitle] = useState<string | undefined>();
   const [stopDialogDescription, setStopDialogDescription] = useState<
@@ -381,14 +381,14 @@ export function PortTable({
 
   useEffect(() => {
     onRefreshPauseChange(
-      openMenuPid !== null ||
+      openMenuId !== null ||
         stopTargets.length > 0 ||
         deleteTarget !== null ||
         historyPort !== null ||
         isResizingRef.current,
     );
   }, [
-    openMenuPid,
+    openMenuId,
     stopTargets.length,
     deleteTarget,
     historyPort,
@@ -397,19 +397,19 @@ export function PortTable({
 
   useEffect(() => {
     setRowSelection((current) => {
-      const selectablePids = new Set(
+      const selectableIds = new Set(
         processes
           .filter(
             (process) =>
               !process.is_system_service || settings.allowSystemProcessActions,
           )
-          .map((process) => String(process.pid)),
+          .map((process) => process.id),
       );
       const next: RowSelectionState = {};
       let changed = false;
-      for (const [pid, selected] of Object.entries(current)) {
-        if (selectablePids.has(pid)) {
-          next[pid] = selected;
+      for (const [id, selected] of Object.entries(current)) {
+        if (selectableIds.has(id)) {
+          next[id] = selected;
         } else {
           changed = true;
         }
@@ -512,7 +512,7 @@ export function PortTable({
         document.body.style.userSelect = "";
         document.body.style.cursor = "";
         onRefreshPauseChange(
-          openMenuPid !== null ||
+          openMenuId !== null ||
             stopTargets.length > 0 ||
             deleteTarget !== null ||
             historyPort !== null,
@@ -562,7 +562,7 @@ export function PortTable({
       deleteTarget,
       historyPort,
       onRefreshPauseChange,
-      openMenuPid,
+      openMenuId,
       stopTargets.length,
     ],
   );
@@ -580,9 +580,12 @@ export function PortTable({
     [applyLiveSizing, columnSizing],
   );
 
+  // PID 0 is a listener whose owner the scan could not see (Linux, without
+  // root): there is no process to act on.
   const canStop = useCallback(
     (process: PortProcess) =>
-      !process.is_system_service || settings.allowSystemProcessActions,
+      process.pid !== 0 &&
+      (!process.is_system_service || settings.allowSystemProcessActions),
     [settings.allowSystemProcessActions],
   );
 
@@ -598,7 +601,7 @@ export function PortTable({
   const openFreePortDialog = useCallback(
     (process: PortProcess, port: number) => {
       const others = processesOnPort(processesRef.current, port).filter(
-        (occupant) => occupant.pid !== process.pid && canStop(occupant),
+        (occupant) => occupant.id !== process.id && canStop(occupant),
       );
       const targets = [process, ...others];
       openStopDialog(
@@ -690,7 +693,7 @@ export function PortTable({
     onColumnSizingChange: setColumnSizing,
     onRowSelectionChange: setRowSelection,
     enableRowSelection: (row) => canStop(row.original),
-    getRowId: (row) => String(row.pid),
+    getRowId: (row) => row.id,
     columnResizeMode: "onEnd",
     enableColumnResizing: true,
     getCoreRowModel: getCoreRowModel(),
@@ -716,7 +719,7 @@ export function PortTable({
   );
 
   return (
-    <OpenMenuProvider openMenuPid={openMenuPid} setOpenMenuPid={setOpenMenuPid}>
+    <OpenMenuProvider openMenuId={openMenuId} setOpenMenuId={setOpenMenuId}>
       <TooltipProvider>
         <div className="flex h-full min-h-0 flex-col">
           {selectedProcesses.length > 0 && (
@@ -860,7 +863,7 @@ export function PortTable({
                         meta={meta}
                         isSelected={item.row.getIsSelected()}
                         canSelect={item.row.getCanSelect()}
-                        change={rowChanges.get(item.row.original.pid)}
+                        change={rowChanges.get(item.row.original.id)}
                         columnCount={columnCount}
                       />
                     );

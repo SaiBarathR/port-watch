@@ -40,6 +40,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
         });
 
         let mut process = PortProcess {
+            id: String::new(),
             pid: record.pid,
             name: record.name,
             user: proc_info.user,

@@ -302,6 +302,7 @@ mod tests {
         fn process(&self, pid: u32, name: &str) -> PortProcess {
             let project = self.project.to_string_lossy().into_owned();
             PortProcess {
+                id: String::new(),
                 pid,
                 name: name.into(),
                 user: "dev".into(),

@@ -137,7 +137,7 @@ export function StopDialog({
         {processes.length > 1 && (
           <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md border bg-muted/20 p-3 text-sm">
             {processes.map((process) => (
-              <li key={process.pid} className="truncate font-mono">
+              <li key={process.id} className="truncate font-mono">
                 {formatPorts(process.ports)} — {process.name} (PID {process.pid}
                 )
               </li>

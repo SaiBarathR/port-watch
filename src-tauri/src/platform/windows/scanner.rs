@@ -74,6 +74,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
             })
             .or_insert_with(|| {
                 let mut process = PortProcess {
+                    id: String::new(),
                     pid: listener.pid,
                     name: listener.name.clone(),
                     user: listener.user.clone(),

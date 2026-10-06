@@ -11,6 +11,11 @@ export interface PortBinding {
 }
 
 export interface PortProcess {
+  /**
+   * Names this row across scans. The PID cannot: on Linux every listener
+   * whose owner is not visible is reported under PID 0.
+   */
+  id: string;
   pid: number;
   name: string;
   user: string;

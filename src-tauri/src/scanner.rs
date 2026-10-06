@@ -14,6 +14,9 @@ pub struct PortBinding {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PortProcess {
+    /// Names this row across scans. The PID cannot: on Linux every listener
+    /// whose owner is not visible is reported under PID 0.
+    pub id: String,
     pub pid: u32,
     pub name: String,
     pub user: String,
@@ -64,8 +67,34 @@ impl PortProcess {
 pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, String> {
     let mut processes = platform::scan_listening_ports(include_udp)?;
     sort_processes(&mut processes);
+    assign_ids(&mut processes);
     mark_undeletable_folders(&mut processes, DeleteRules::for_current_user());
     Ok(processes)
+}
+
+// `pid-<pid>` for a process, and the socket itself for a listener with no
+// visible owner. Run after sorting, so that two identical ownerless sockets
+// get the same suffixes on every scan.
+fn assign_ids(processes: &mut [PortProcess]) {
+    let mut seen = std::collections::HashMap::new();
+    for process in processes {
+        let base = match (process.pid, process.ports.first()) {
+            (0, Some(binding)) => format!(
+                "socket-{}-{}-{}",
+                binding.protocol.to_ascii_lowercase(),
+                binding.address,
+                binding.port
+            ),
+            (pid, _) => format!("pid-{pid}"),
+        };
+        let count = seen.entry(base.clone()).or_insert(0u32);
+        *count += 1;
+        process.id = if *count == 1 {
+            base
+        } else {
+            format!("{base}#{count}")
+        };
+    }
 }
 
 // By first port, as the table shows them. The platform scanners collect
@@ -107,6 +136,7 @@ mod tests {
 
     fn listener(pid: u32, address: &str, port: u16) -> PortProcess {
         PortProcess {
+            id: String::new(),
             pid,
             name: "nginx".into(),
             user: "dev".into(),
@@ -164,6 +194,37 @@ mod tests {
         ];
         assert_eq!(sorted(one_order), expected);
         assert_eq!(sorted(another_order), expected);
+    }
+
+    #[test]
+    fn every_row_gets_its_own_id() {
+        let mut processes = vec![
+            listener(0, "0.0.0.0", 22),
+            listener(0, "[::]", 22),
+            listener(0, "0.0.0.0", 443),
+            // Two sockets that cannot be told apart at all.
+            listener(0, "0.0.0.0", 443),
+            listener(100, "*", 80),
+            listener(200, "*", 80),
+        ];
+        sort_processes(&mut processes);
+        assign_ids(&mut processes);
+
+        let ids: Vec<&str> = processes
+            .iter()
+            .map(|process| process.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "socket-tcp-0.0.0.0-22",
+                "socket-tcp-[::]-22",
+                "pid-100",
+                "pid-200",
+                "socket-tcp-0.0.0.0-443",
+                "socket-tcp-0.0.0.0-443#2",
+            ]
+        );
     }
 
     #[test]

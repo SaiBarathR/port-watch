@@ -2,8 +2,8 @@ import type { PortProcess, RowChangeKind } from "@/lib/types";
 import { portSignature } from "@/lib/types";
 
 export interface ProcessChanges {
-  /** Rows to highlight, by PID. */
-  rowChanges: Map<number, RowChangeKind>;
+  /** Rows to highlight, by row id. */
+  rowChanges: Map<string, RowChangeKind>;
   /** One line per port taken or freed, for the port change toast. */
   messages: string[];
 }
@@ -17,26 +17,26 @@ export function diffProcesses(
   prev: PortProcess[],
   next: PortProcess[],
 ): ProcessChanges {
-  const prevByPid = new Map(prev.map((process) => [process.pid, process]));
-  const rowChanges = new Map<number, RowChangeKind>();
+  const prevById = new Map(prev.map((process) => [process.id, process]));
+  const rowChanges = new Map<string, RowChangeKind>();
   const messages: string[] = [];
 
   for (const process of next) {
-    const old = prevByPid.get(process.pid);
+    const old = prevById.get(process.id);
     if (!old) {
-      rowChanges.set(process.pid, "new");
+      rowChanges.set(process.id, "new");
       for (const binding of process.ports) {
         messages.push(
           `Port ${binding.port} is now in use by ${process.name} (PID ${process.pid})`,
         );
       }
     } else if (portSignature(old) !== portSignature(process)) {
-      rowChanges.set(process.pid, "changed");
+      rowChanges.set(process.id, "changed");
     }
-    prevByPid.delete(process.pid);
+    prevById.delete(process.id);
   }
 
-  for (const gone of prevByPid.values()) {
+  for (const gone of prevById.values()) {
     for (const binding of gone.ports) {
       messages.push(
         `Port ${binding.port} freed (${gone.name}, PID ${gone.pid})`,

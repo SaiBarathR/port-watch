@@ -92,6 +92,7 @@ mod tests {
 
     fn sample_process(executable: &str, user: &str, cwd: &str) -> PortProcess {
         PortProcess {
+            id: String::new(),
             pid: 1,
             name: "test".into(),
             user: user.into(),

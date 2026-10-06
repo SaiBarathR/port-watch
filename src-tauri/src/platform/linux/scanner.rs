@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::classifier::{classify as classify_process, SystemKind};
 use crate::home::infer_project_root;
-use crate::platform::shared::{extract_script_path, parse_address_port};
+use crate::platform::shared::{
+    extract_script_path, parse_address_port, run_with_timeout, SCAN_COMMAND_TIMEOUT,
+};
 use crate::scanner::{PortBinding, PortProcess};
 
 #[derive(Debug, Default, Clone)]
@@ -85,9 +88,7 @@ fn run_ss_udp() -> Result<Vec<SocketRecord>, String> {
 }
 
 fn run_ss(args: &[&str], protocol: &str) -> Result<Vec<SocketRecord>, String> {
-    let output = std::process::Command::new("ss")
-        .args(args)
-        .output()
+    let output = run_with_timeout(Command::new("ss").args(args), SCAN_COMMAND_TIMEOUT)
         .map_err(|e| format!("Failed to run ss: {e}"))?;
 
     if !output.status.success() && output.stdout.is_empty() {
@@ -298,10 +299,11 @@ fn resolve_uid_uncached(uid: u32) -> Option<String> {
     }
 
     // NSS-managed users (LDAP, SSSD, systemd-homed) aren't in /etc/passwd.
-    let output = std::process::Command::new("getent")
-        .args(["passwd", &uid.to_string()])
-        .output()
-        .ok()?;
+    let output = run_with_timeout(
+        Command::new("getent").args(["passwd", &uid.to_string()]),
+        SCAN_COMMAND_TIMEOUT,
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -319,9 +321,7 @@ fn read_proc_uptime(proc_dir: &Path) -> u64 {
 
     static CLOCK_TICKS: OnceLock<f64> = OnceLock::new();
     let clock_ticks = *CLOCK_TICKS.get_or_init(|| {
-        std::process::Command::new("getconf")
-            .arg("CLK_TCK")
-            .output()
+        run_with_timeout(Command::new("getconf").arg("CLK_TCK"), SCAN_COMMAND_TIMEOUT)
             .ok()
             .and_then(|output| String::from_utf8(output.stdout).ok())
             .and_then(|value| value.trim().parse().ok())

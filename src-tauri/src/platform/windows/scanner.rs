@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::classifier::{classify as classify_process, SystemKind};
 use crate::home::infer_project_root;
-use crate::platform::shared::extract_script_path;
+use crate::platform::shared::{extract_script_path, run_with_timeout};
 use crate::scanner::{PortBinding, PortProcess};
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +27,10 @@ struct WindowsListener {
     #[serde(rename = "uptimeSeconds")]
     uptime_seconds: i64,
 }
+
+// PowerShell alone can take seconds to start on a cold or busy machine, so it
+// gets far longer than the Unix tools before it counts as stuck.
+const POWERSHELL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, String> {
     let mut listeners = query_listeners("TCP")?;
@@ -139,11 +143,16 @@ fn query_listeners(protocol: &str) -> Result<Vec<WindowsListener>, String> {
     };
 
     use super::shell::NoWindow;
-    let output = std::process::Command::new("powershell")
-        .no_window()
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-        .map_err(|e| format!("Failed to run PowerShell: {e}"))?;
+    let output = run_with_timeout(
+        std::process::Command::new("powershell").no_window().args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ]),
+        POWERSHELL_TIMEOUT,
+    )
+    .map_err(|e| format!("Failed to run PowerShell: {e}"))?;
 
     if !output.status.success() {
         return Err(format!(

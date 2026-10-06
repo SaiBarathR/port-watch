@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::process::Command;
 
 use crate::classifier::{classify as classify_process, SystemKind};
 use crate::home::infer_project_root;
-use crate::platform::shared::extract_script_path;
+use crate::platform::shared::{extract_script_path, run_with_timeout, SCAN_COMMAND_TIMEOUT};
 use crate::scanner::{PortBinding, PortProcess};
 
 #[derive(Debug, Default, Clone)]
@@ -103,10 +104,11 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
 }
 
 fn run_lsof_tcp() -> Result<Vec<LsofRecord>, String> {
-    let output = std::process::Command::new("lsof")
-        .args(["-iTCP", "-sTCP:LISTEN", "-n", "-P", "-F", "pcn"])
-        .output()
-        .map_err(|e| format!("Failed to run lsof: {e}"))?;
+    let output = run_with_timeout(
+        Command::new("lsof").args(["-iTCP", "-sTCP:LISTEN", "-n", "-P", "-F", "pcn"]),
+        SCAN_COMMAND_TIMEOUT,
+    )
+    .map_err(|e| format!("Failed to run lsof: {e}"))?;
 
     if !output.status.success() && output.stdout.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -124,10 +126,11 @@ fn run_lsof_tcp() -> Result<Vec<LsofRecord>, String> {
 }
 
 fn run_lsof_udp() -> Result<Vec<LsofRecord>, String> {
-    let output = std::process::Command::new("lsof")
-        .args(["-iUDP", "-n", "-P", "-F", "pcn"])
-        .output()
-        .map_err(|e| format!("Failed to run lsof for UDP: {e}"))?;
+    let output = run_with_timeout(
+        Command::new("lsof").args(["-iUDP", "-n", "-P", "-F", "pcn"]),
+        SCAN_COMMAND_TIMEOUT,
+    )
+    .map_err(|e| format!("Failed to run lsof for UDP: {e}"))?;
 
     if !output.status.success() && output.stdout.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -265,10 +268,11 @@ fn fetch_ps_info_batch(pids: &[u32]) -> Result<HashMap<u32, PsInfo>, String> {
             .join(",");
 
         // BSD ps has no `etimes` keyword — only `etime` ([[dd-]hh:]mm:ss).
-        let output = std::process::Command::new("ps")
-            .args(["-ww", "-p", &pid_list, "-o", "pid=,user=,etime=,command="])
-            .output()
-            .map_err(|e| format!("Failed to run ps: {e}"))?;
+        let output = run_with_timeout(
+            Command::new("ps").args(["-ww", "-p", &pid_list, "-o", "pid=,user=,etime=,command="]),
+            SCAN_COMMAND_TIMEOUT,
+        )
+        .map_err(|e| format!("Failed to run ps: {e}"))?;
 
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             if let Some((pid, info)) = parse_ps_line(line) {
@@ -342,10 +346,10 @@ fn fetch_lsof_paths_batch(pids: &[u32]) -> HashMap<u32, ProcessPaths> {
             .collect::<Vec<_>>()
             .join(",");
 
-        let output = match std::process::Command::new("lsof")
-            .args(["-a", "-p", &pid_list, "-d", "cwd,txt", "-Fn"])
-            .output()
-        {
+        let output = match run_with_timeout(
+            Command::new("lsof").args(["-a", "-p", &pid_list, "-d", "cwd,txt", "-Fn"]),
+            SCAN_COMMAND_TIMEOUT,
+        ) {
             Ok(output) => output,
             Err(_) => continue,
         };

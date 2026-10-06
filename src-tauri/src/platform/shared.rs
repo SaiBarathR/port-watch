@@ -1,3 +1,86 @@
+use std::io::{self, Read};
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
+
+/// How long one scan tool (lsof, ps, ss, ...) may run. They normally finish in
+/// tens of milliseconds, so this only ends a tool that is stuck.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+pub const SCAN_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// `Command::output` with a deadline. A scan runs its tools one after another
+/// on one worker, so a tool that hangs (lsof on a dead network mount) would
+/// stall every scan after it. On timeout the child is killed and reaped.
+pub fn run_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<Output> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = read_in_background(child.stdout.take());
+    let stderr = read_in_background(child.stderr.take());
+    let deadline = Instant::now() + timeout;
+
+    // Both pipes closing is what a finished child looks like from here, and
+    // waiting for that takes no polling.
+    let finished = receive_by(&stdout, deadline)
+        .zip(receive_by(&stderr, deadline))
+        .and_then(|(stdout, stderr)| {
+            let status = wait_by(&mut child, deadline)?;
+            Some(Output {
+                status,
+                stdout,
+                stderr,
+            })
+        });
+
+    finished.ok_or_else(|| {
+        // The readers are left to end on their own: a grandchild may still
+        // hold the pipes open.
+        let _ = child.kill();
+        let _ = child.wait();
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "{} did not finish within {} s",
+                command.get_program().to_string_lossy(),
+                timeout.as_secs()
+            ),
+        )
+    })
+}
+
+fn read_in_background<R: Read + Send + 'static>(pipe: Option<R>) -> Receiver<Vec<u8>> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        let _ = sender.send(bytes);
+    });
+    receiver
+}
+
+fn receive_by(receiver: &Receiver<Vec<u8>>, deadline: Instant) -> Option<Vec<u8>> {
+    receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()
+}
+
+// The pipes are already closed, so the exit is normally immediate.
+fn wait_by(child: &mut std::process::Child, deadline: Instant) -> Option<ExitStatus> {
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Some(status);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 pub fn extract_script_path(command_line: &str, process_name: &str) -> Option<String> {
     if command_line.is_empty() {
         return None;
@@ -136,6 +219,89 @@ pub fn parse_address_port(value: &str, protocol: &str) -> Option<crate::scanner:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn run_with_timeout_returns_output_and_status() {
+        let output = run_with_timeout(
+            Command::new("sh").args(["-c", "printf out; printf err >&2; exit 3"]),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        assert_eq!(output.stdout, b"out");
+        assert_eq!(output.stderr, b"err");
+        assert_eq!(output.status.code(), Some(3));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn run_with_timeout_handles_more_output_than_a_pipe_holds() {
+        let output = run_with_timeout(
+            Command::new("sh").args(["-c", "head -c 1000000 /dev/zero"]),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        assert_eq!(output.stdout.len(), 1_000_000);
+        assert!(output.status.success());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn run_with_timeout_kills_and_reaps_a_hung_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+
+        let started = Instant::now();
+        let error = run_with_timeout(
+            Command::new("sh")
+                .args(["-c", "echo $$ > \"$0\"; exec sleep 60"])
+                .arg(&pid_file),
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        let elapsed = started.elapsed();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("sh did not finish"), "{error}");
+        assert!(elapsed < Duration::from_secs(10), "took {elapsed:?}");
+
+        // Neither running nor left behind as a zombie (`ps` would print Z).
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let ps = Command::new("ps")
+            .args(["-o", "stat=", "-p", pid.trim()])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&ps.stdout).trim(), "");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn run_with_timeout_kills_a_hung_child() {
+        let started = Instant::now();
+        let error = run_with_timeout(
+            Command::new("powershell").args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 60",
+            ]),
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(30));
+    }
+
+    #[test]
+    fn run_with_timeout_reports_a_missing_program() {
+        let error = run_with_timeout(
+            &mut Command::new("port-watch-no-such-program"),
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
 
     #[test]
     fn parse_ipv4() {

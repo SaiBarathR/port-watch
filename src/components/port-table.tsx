@@ -53,7 +53,7 @@ import {
   totalColumnWidth,
 } from "@/lib/column-sizing";
 import { portHintsLabel } from "@/lib/port-hints";
-import { filterPortProcesses } from "@/lib/port-filter";
+import { holdRefresh, useRefreshPause } from "@/lib/refresh-pause";
 import { sortForTable, withGroupHeaders } from "@/lib/table-rows";
 import type { AppSettings, PortProcess, RowChangeKind } from "@/lib/types";
 import {
@@ -65,14 +65,15 @@ import {
 import { cn } from "@/lib/utils";
 
 interface PortTableProps {
+  /** Every listener, for actions that reach past the filter. */
   processes: PortProcess[];
+  /** The ones the search and the filters let through, which are the rows. */
+  shownProcesses: PortProcess[];
   /** True until the first scan has come back. */
   loading: boolean;
-  search: string;
   settings: AppSettings;
   rowChanges: Map<string, RowChangeKind>;
   onRefresh: () => void;
-  onRefreshPauseChange: (paused: boolean) => void;
 }
 
 function changeBadge(change: RowChangeKind | undefined) {
@@ -332,19 +333,18 @@ const columns: ColumnDef<PortProcess>[] = [
 
 export function PortTable({
   processes,
+  shownProcesses,
   loading,
-  search,
   settings,
   rowChanges,
   onRefresh,
-  onRefreshPauseChange,
 }: PortTableProps) {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [columnSizing, setColumnSizing] =
     useState<ColumnSizingState>(loadColumnSizing);
   const tableRef = useRef<HTMLTableElement>(null);
   const colRefs = useRef<Record<string, HTMLTableColElement | null>>({});
-  const isResizingRef = useRef(false);
+  const releaseResizeHoldRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{
     columnId: string;
     startX: number;
@@ -375,21 +375,14 @@ export function PortTable({
     [],
   );
 
-  useEffect(() => {
-    onRefreshPauseChange(
-      openMenuId !== null ||
-        stopTargets.length > 0 ||
-        deleteTarget !== null ||
-        historyPort !== null ||
-        isResizingRef.current,
-    );
-  }, [
-    openMenuId,
-    stopTargets.length,
-    deleteTarget,
-    historyPort,
-    onRefreshPauseChange,
-  ]);
+  // Rows must not move under an open menu or behind a dialog about them.
+  useRefreshPause(
+    "port-table",
+    openMenuId !== null ||
+      stopTargets.length > 0 ||
+      deleteTarget !== null ||
+      historyPort !== null,
+  );
 
   useEffect(() => {
     setRowSelection((current) => {
@@ -416,6 +409,7 @@ export function PortTable({
 
   useEffect(() => {
     return () => {
+      releaseResizeHoldRef.current?.();
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
     };
@@ -460,8 +454,8 @@ export function PortTable({
         liveSizing: { ...columnSizing },
         rafId: null,
       };
-      isResizingRef.current = true;
-      onRefreshPauseChange(true);
+      releaseResizeHoldRef.current?.();
+      releaseResizeHoldRef.current = holdRefresh("column-resize");
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
 
@@ -504,15 +498,10 @@ export function PortTable({
         const nextSizing = { ...columnSizing, [columnId]: newWidth };
 
         dragRef.current = null;
-        isResizingRef.current = false;
+        releaseResizeHoldRef.current?.();
+        releaseResizeHoldRef.current = null;
         document.body.style.userSelect = "";
         document.body.style.cursor = "";
-        onRefreshPauseChange(
-          openMenuId !== null ||
-            stopTargets.length > 0 ||
-            deleteTarget !== null ||
-            historyPort !== null,
-        );
 
         setColumnSizing(nextSizing);
         saveColumnSizing(nextSizing);
@@ -552,15 +541,7 @@ export function PortTable({
       handle.addEventListener("pointerup", onPointerUp);
       handle.addEventListener("pointercancel", onPointerUp);
     },
-    [
-      applyLiveSizing,
-      columnSizing,
-      deleteTarget,
-      historyPort,
-      onRefreshPauseChange,
-      openMenuId,
-      stopTargets.length,
-    ],
+    [applyLiveSizing, columnSizing],
   );
 
   const handleResizeReset = useCallback(
@@ -635,31 +616,13 @@ export function PortTable({
     ],
   );
 
-  const visibleProcesses = useMemo(
-    () =>
-      filterPortProcesses(
-        processes,
-        settings.hideSystemServices,
-        settings.hideUserServices,
-        search,
-        settings.searchField,
-      ),
-    [
-      processes,
-      search,
-      settings.hideSystemServices,
-      settings.hideUserServices,
-      settings.searchField,
-    ],
-  );
-
   const tableData = useMemo(
     () =>
-      sortForTable(visibleProcesses, {
+      sortForTable(shownProcesses, {
         pinnedPaths: settings.pinnedPaths,
         groupByDirectory: settings.groupByDirectory,
       }),
-    [visibleProcesses, settings.groupByDirectory, settings.pinnedPaths],
+    [shownProcesses, settings.groupByDirectory, settings.pinnedPaths],
   );
 
   const meta = useMemo<PortTableMeta>(

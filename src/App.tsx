@@ -7,43 +7,44 @@ import { PortTable } from "@/components/port-table";
 import { PortToolbar } from "@/components/port-toolbar";
 import { CliInstallPrompt } from "@/components/cli-install-prompt";
 import { StopDialog } from "@/components/stop-dialog";
-import { usePortScan } from "@/hooks/use-port-scan";
+import { useChangeToastMuteExpiry } from "@/hooks/use-change-toast-mute";
+import { usePortQuery } from "@/hooks/use-port-query";
+import { useScanSideEffects } from "@/hooks/use-scan-side-effects";
+import { useScanStream } from "@/hooks/use-scan-stream";
 import { useTheme } from "@/hooks/use-theme";
+import { useRefreshPause } from "@/lib/refresh-pause";
+import { useSettings } from "@/lib/settings-store";
 import type { PortProcess } from "@/lib/types";
 
 function App() {
   const { theme, setTheme, resolvedTheme } = useTheme();
+  const settings = useSettings();
+  const { rowChanges, onScanChange } = useScanSideEffects();
+  const { processes, loading, refreshing, error, refresh } =
+    useScanStream(onScanChange);
   const {
-    processes,
-    allProcesses,
-    loading,
-    refreshing,
-    error,
-    refresh,
     search,
     setSearch,
-    portLookupEmpty,
+    shown,
     exactPortQuery,
     portLookupOccupants,
-    settings,
-    setRefreshPaused,
-    rowChanges,
-    userCount,
-    systemCount,
-    hiddenSystemCount,
-    hiddenUserCount,
-  } = usePortScan();
+    portLookupEmpty,
+  } = usePortQuery(processes, loading);
+  useChangeToastMuteExpiry();
+
+  const systemCount = processes.filter((p) => p.is_system_service).length;
+  const userCount = processes.length - systemCount;
 
   const [freePortTargets, setFreePortTargets] = useState<PortProcess[]>([]);
   const [freePortNumber, setFreePortNumber] = useState<number | null>(null);
+  useRefreshPause("free-port-dialog", freePortTargets.length > 0);
 
   const handleFreePort = useCallback(
     (port: number, occupants: PortProcess[]) => {
       setFreePortNumber(port);
       setFreePortTargets(occupants);
-      setRefreshPaused(true);
     },
-    [setRefreshPaused],
+    [],
   );
 
   useEffect(() => {
@@ -79,7 +80,7 @@ function App() {
           portLookupEmpty={portLookupEmpty}
           exactPortQuery={exactPortQuery}
           portLookupOccupants={portLookupOccupants}
-          exportProcesses={processes}
+          exportProcesses={shown}
           settings={settings}
           theme={theme}
           onThemeChange={setTheme}
@@ -89,8 +90,8 @@ function App() {
           firstScanPending={loading}
           userCount={userCount}
           systemCount={systemCount}
-          hiddenSystemCount={hiddenSystemCount}
-          hiddenUserCount={hiddenUserCount}
+          hiddenSystemCount={settings.hideSystemServices ? systemCount : 0}
+          hiddenUserCount={settings.hideUserServices ? userCount : 0}
         />
 
         {error && (
@@ -103,13 +104,12 @@ function App() {
 
         <div className="min-h-0 flex-1">
           <PortTable
-            processes={allProcesses}
+            processes={processes}
+            shownProcesses={shown}
             loading={loading}
-            search={search}
             settings={settings}
             rowChanges={rowChanges}
             onRefresh={() => void refresh()}
-            onRefreshPauseChange={setRefreshPaused}
           />
         </div>
       </main>
@@ -121,7 +121,6 @@ function App() {
           if (!open) {
             setFreePortTargets([]);
             setFreePortNumber(null);
-            setRefreshPaused(false);
           }
         }}
         title={
@@ -136,10 +135,7 @@ function App() {
           freePortTargets.some((process) => process.is_system_service) &&
           settings.allowSystemProcessActions
         }
-        onStopped={() => {
-          setRefreshPaused(false);
-          void refresh();
-        }}
+        onStopped={() => void refresh()}
       />
 
       <CliInstallPrompt />

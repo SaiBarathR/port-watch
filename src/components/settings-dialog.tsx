@@ -356,39 +356,33 @@ export function SettingsDialog({
                   : "Pause port change toasts for a while."
               }
             >
-              {toastsMuted ? (
-                <Button
-                  type="button"
+              {/* One control for both states: swapping it for a button would
+                  drop keyboard focus out of the row. */}
+              <Select
+                value=""
+                disabled={!settings.showChangeToasts}
+                onValueChange={(v) =>
+                  onChangeToastsMutedUntilChange(
+                    v === "unmute" ? null : Date.now() + Number(v),
+                  )
+                }
+              >
+                <SelectTrigger
                   size="sm"
-                  variant="outline"
-                  onClick={() => onChangeToastsMutedUntilChange(null)}
+                  className="w-full min-w-[8.5rem] sm:w-[8.5rem]"
+                  aria-label="Mute toasts"
                 >
-                  Unmute
-                </Button>
-              ) : (
-                <Select
-                  value=""
-                  disabled={!settings.showChangeToasts}
-                  onValueChange={(v) =>
-                    onChangeToastsMutedUntilChange(Date.now() + Number(v))
-                  }
-                >
-                  <SelectTrigger
-                    size="sm"
-                    className="w-full min-w-[8.5rem] sm:w-[8.5rem]"
-                    aria-label="Mute toasts"
-                  >
-                    <SelectValue placeholder="Not muted" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MUTE_DURATIONS.map((duration) => (
-                      <SelectItem key={duration.ms} value={String(duration.ms)}>
-                        {duration.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+                  <SelectValue placeholder={toastsMuted ? "Muted" : "Not muted"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {toastsMuted && <SelectItem value="unmute">Unmute</SelectItem>}
+                  {MUTE_DURATIONS.map((duration) => (
+                    <SelectItem key={duration.ms} value={String(duration.ms)}>
+                      {duration.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </SettingRow>
             <SettingRow
               htmlFor="settings-watched-port-notifications"

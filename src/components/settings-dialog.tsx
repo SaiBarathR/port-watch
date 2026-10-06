@@ -32,6 +32,11 @@ import { cliInstallPrivilegeHint, isMacOS } from "@/lib/platform";
 import { PortHistoryList } from "@/components/port-history-timeline";
 import { clearPortHistory } from "@/lib/port-history";
 import {
+  MUTE_DURATIONS,
+  changeToastStatus,
+  formatMutedUntil,
+} from "@/lib/change-toasts";
+import {
   fetchCliInstallStatus,
   installCliToPath,
   uninstallCliFromPath,
@@ -119,6 +124,7 @@ interface SettingsDialogProps {
   onPreferredEditorChange: (editor: AppSettings["preferredEditor"]) => void;
   onGroupByDirectoryChange: (group: boolean) => void;
   onShowChangeToastsChange: (show: boolean) => void;
+  onChangeToastsMutedUntilChange: (mutedUntil: number | null) => void;
   onWatchedPortNotificationsChange: (enabled: boolean) => void;
   onWatchedPortsChange: (ports: number[]) => void;
   onIncludeUdpChange: (include: boolean) => void;
@@ -135,6 +141,7 @@ export function SettingsDialog({
   onPreferredEditorChange,
   onGroupByDirectoryChange,
   onShowChangeToastsChange,
+  onChangeToastsMutedUntilChange,
   onWatchedPortNotificationsChange,
   onWatchedPortsChange,
   onIncludeUdpChange,
@@ -147,6 +154,7 @@ export function SettingsDialog({
   const [selectedHistoryPort, setSelectedHistoryPort] = useState<number | null>(null);
   const [cliStatus, setCliStatus] = useState<CliInstallStatus | null>(null);
   const [cliBusy, setCliBusy] = useState(false);
+  const toastsMuted = changeToastStatus(settings, Date.now()) === "muted";
 
   useEffect(() => {
     if (!open) {
@@ -339,6 +347,48 @@ export function SettingsDialog({
                 checked={settings.showChangeToasts}
                 onCheckedChange={onShowChangeToastsChange}
               />
+            </SettingRow>
+            <SettingRow
+              label="Mute toasts"
+              description={
+                toastsMuted && settings.changeToastsMutedUntil !== null
+                  ? `Muted until ${formatMutedUntil(settings.changeToastsMutedUntil)}.`
+                  : "Pause port change toasts for a while."
+              }
+            >
+              {toastsMuted ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onChangeToastsMutedUntilChange(null)}
+                >
+                  Unmute
+                </Button>
+              ) : (
+                <Select
+                  value=""
+                  disabled={!settings.showChangeToasts}
+                  onValueChange={(v) =>
+                    onChangeToastsMutedUntilChange(Date.now() + Number(v))
+                  }
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full min-w-[8.5rem] sm:w-[8.5rem]"
+                    aria-label="Mute toasts"
+                  >
+                    <SelectValue placeholder="Not muted" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MUTE_DURATIONS.map((duration) => (
+                      <SelectItem key={duration.ms} value={String(duration.ms)}>
+                        {duration.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </SettingRow>
             <SettingRow
               htmlFor="settings-watched-port-notifications"

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertCircleIcon } from "lucide-react";
-import { Toaster } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AppToaster } from "@/components/app-toaster";
 import { PortTable } from "@/components/port-table";
 import { PortToolbar } from "@/components/port-toolbar";
 import { CliInstallPrompt } from "@/components/cli-install-prompt";
@@ -33,6 +33,7 @@ function App() {
     setPreferredEditor,
     setGroupByDirectory,
     setShowChangeToasts,
+    setChangeToastsMutedUntil,
     togglePinnedPath,
     setWatchedPorts,
     setWatchedPortNotifications,
@@ -104,6 +105,7 @@ function App() {
           onPreferredEditorChange={setPreferredEditor}
           onGroupByDirectoryChange={setGroupByDirectory}
           onShowChangeToastsChange={setShowChangeToasts}
+          onChangeToastsMutedUntilChange={setChangeToastsMutedUntil}
           onWatchedPortNotificationsChange={setWatchedPortNotifications}
           onWatchedPortsChange={setWatchedPorts}
           onIncludeUdpChange={setIncludeUdp}
@@ -171,14 +173,10 @@ function App() {
 
       <CliInstallPrompt />
 
-      <Toaster
-        richColors
-        closeButton
-        expand
-        position="bottom-right"
-        duration={8000}
-        visibleToasts={5}
+      <AppToaster
         theme={resolvedTheme === "light" ? "light" : "dark"}
+        onShowChangeToastsChange={setShowChangeToasts}
+        onChangeToastsMutedUntilChange={setChangeToastsMutedUntil}
       />
     </div>
   );

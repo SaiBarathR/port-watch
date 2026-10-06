@@ -53,7 +53,8 @@ fn refusal(verdict: &Verdict, pid: u32, expected: Option<&ProcessIdentity>) -> S
 enum Wait {
     Exited,
     StillRunning,
-    /// The process could no longer be told apart from another; says why.
+    /// Something still runs under the PID and it is no longer confirmed to
+    /// be what the first signal was sent to; says why.
     Unconfirmed(String),
 }
 
@@ -62,7 +63,8 @@ enum Wait {
 //
 // Exited means gone, or provably replaced by another process. The same
 // process under a new name has not exited: a server may rename itself while
-// it shuts down, and it still holds its port.
+// it shuts down, and it still holds its port. It is not signalled again
+// either, since a first signal under that name would have been refused.
 fn wait_for_exit(
     probe: &Probe,
     pid: u32,
@@ -74,10 +76,10 @@ fn wait_for_exit(
         let now = verdict(probe, pid, expected);
         let unconfirmed = match &now {
             Verdict::Gone | Verdict::Other { certain: true, .. } => return Wait::Exited,
-            Verdict::Same | Verdict::Renamed(_) => None,
-            Verdict::Other { certain: false, .. } | Verdict::Unconfirmed(_) => {
-                Some(refusal(&now, pid, expected))
-            }
+            Verdict::Same => None,
+            Verdict::Renamed(_)
+            | Verdict::Other { certain: false, .. }
+            | Verdict::Unconfirmed(_) => Some(refusal(&now, pid, expected)),
         };
         if Instant::now() >= deadline {
             return match unconfirmed {
@@ -351,7 +353,8 @@ mod tests {
             ..real_probe()
         };
 
-        // Renamed, same start time: still the same process, still running.
+        // Renamed, same start time: still the same process, still running,
+        // and not something a second signal may be sent to.
         assert!(matches!(
             verdict(&probe, child.id(), Some(&identity)),
             Verdict::Renamed(_)
@@ -363,7 +366,7 @@ mod tests {
                 Some(&identity),
                 Duration::from_millis(200)
             ),
-            Wait::StillRunning
+            Wait::Unconfirmed(_)
         ));
         // And it is not signalled under a name the user never confirmed.
         let result = stop_process(&probe, child.id(), true, Some(&identity));
@@ -375,6 +378,40 @@ mod tests {
             .unwrap_err()
             .contains("now belongs to \"shutting-down\""));
         assert!(still_running);
+    }
+
+    // A process that answers SIGTERM by becoming another program keeps its
+    // PID and start time. It is reported as still running, and the SIGKILL
+    // that follows an ignored SIGTERM is not sent to a program the user was
+    // never shown.
+    #[test]
+    fn a_program_that_replaces_itself_on_sigterm_is_not_escalated() {
+        let mut child = Command::new("sh")
+            .args([
+                "-c",
+                "trap 'exec sleep 60' TERM; echo ready; while :; do sleep 0.05; done",
+            ])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+        let mut ready = String::new();
+        BufReader::new(child.stdout.take().expect("stdout"))
+            .read_line(&mut ready)
+            .expect("read ready line");
+        let identity = identity_of(child.id());
+
+        let result = stop_process(&real_probe(), child.id(), false, Some(&identity));
+        let now = (real_probe().live)(child.id());
+        let still_running = child.try_wait().expect("try_wait").is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(
+            result.unwrap_err().contains("now belongs to \"sleep\""),
+            "the stop should have been refused part-way"
+        );
+        assert!(still_running, "the replacement program must not be killed");
+        assert!(matches!(now, LiveProcess::Running { name: Some(name), .. } if name == "sleep"));
     }
 
     // Nothing is signalled, and nothing escalated, on a check that could not

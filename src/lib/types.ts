@@ -22,7 +22,8 @@ export interface PortProcess {
   project_root: string;
   system_kind: SystemKind;
   is_system_service: boolean;
-  uptime_seconds: number;
+  /** When the process started, in Unix seconds; 0 when that is unknown. */
+  started_at: number;
   /** Why the project folder cannot be deleted from the app, if it cannot. */
   delete_blocked: string | null;
 }
@@ -96,6 +97,11 @@ export function formatPorts(
       return label;
     })
     .join(", ");
+}
+
+/** Seconds a process has been running; 0 when its start time is unknown. */
+export function uptimeSeconds(startedAt: number, nowSeconds: number): number {
+  return startedAt > 0 ? Math.max(0, nowSeconds - startedAt) : 0;
 }
 
 export function formatUptime(seconds: number): string {
@@ -175,6 +181,17 @@ export function portSignature(process: PortProcess): string {
     .map((p) => `${p.address}:${p.port}/${p.protocol}`)
     .sort()
     .join(",");
+}
+
+/**
+ * Oldest first, a process with an unknown start time last. A parent predates
+ * its children, and stopping it first keeps it from respawning a worker that
+ * was stopped a moment earlier.
+ */
+export function oldestFirst(processes: PortProcess[]): PortProcess[] {
+  const startedAt = (process: PortProcess) =>
+    process.started_at > 0 ? process.started_at : Number.POSITIVE_INFINITY;
+  return [...processes].sort((a, b) => startedAt(a) - startedAt(b));
 }
 
 /**

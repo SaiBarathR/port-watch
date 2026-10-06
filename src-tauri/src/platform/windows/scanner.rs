@@ -22,10 +22,10 @@ struct WindowsListener {
     #[serde(rename = "commandLine")]
     command_line: Option<String>,
     protocol: String,
-    // Signed because CreationDate rounding/clock skew can produce a slightly
-    // negative value; clamped when building PortProcess.
-    #[serde(rename = "uptimeSeconds")]
-    uptime_seconds: i64,
+    // Unix seconds, 0 when unknown. Signed so a clock far in the past cannot
+    // fail the whole parse; clamped when building PortProcess.
+    #[serde(rename = "startedAt")]
+    started_at: i64,
 }
 
 // PowerShell alone can take seconds to start on a cold or busy machine, so it
@@ -33,10 +33,7 @@ struct WindowsListener {
 const POWERSHELL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, String> {
-    let mut listeners = query_listeners("TCP")?;
-    if include_udp {
-        listeners.extend(query_listeners("UDP")?);
-    }
+    let listeners = query_listeners(include_udp)?;
 
     let mut by_pid: HashMap<u32, PortProcess> = HashMap::new();
 
@@ -88,7 +85,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
                     project_root: project_root.clone(),
                     system_kind: SystemKind::User,
                     is_system_service: false,
-                    uptime_seconds: listener.uptime_seconds.max(0) as u64,
+                    started_at: listener.started_at.max(0) as u64,
                     delete_blocked: delete_blocked.clone(),
                 };
                 classify_process(&mut process);
@@ -135,12 +132,17 @@ fn infer_working_directory(executable_path: &str, script_path: &Option<String>) 
     String::new()
 }
 
-fn query_listeners(protocol: &str) -> Result<Vec<WindowsListener>, String> {
-    let script = if protocol == "TCP" {
-        include_str!("scan_tcp.ps1")
-    } else {
-        include_str!("scan_udp.ps1")
-    };
+// One PowerShell start per scan, with or without UDP: starting it costs far
+// more than either query.
+fn scan_script(include_udp: bool) -> String {
+    include_str!("scan.ps1").replace(
+        "__INCLUDE_UDP__",
+        if include_udp { "$true" } else { "$false" },
+    )
+}
+
+fn query_listeners(include_udp: bool) -> Result<Vec<WindowsListener>, String> {
+    let script = scan_script(include_udp);
 
     use super::shell::NoWindow;
     let output = run_with_timeout(
@@ -148,7 +150,7 @@ fn query_listeners(protocol: &str) -> Result<Vec<WindowsListener>, String> {
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            script,
+            &script,
         ]),
         POWERSHELL_TIMEOUT,
     )
@@ -188,6 +190,23 @@ mod tests {
             ),
             "C:\\Users\\dev\\app"
         );
+    }
+
+    #[test]
+    fn scan_script_switches_udp_on_and_off() {
+        assert!(scan_script(true).contains("$includeUdp = $true"));
+        assert!(scan_script(false).contains("$includeUdp = $false"));
+        assert!(!scan_script(true).contains("__INCLUDE_UDP__"));
+    }
+
+    #[test]
+    fn parses_the_scan_scripts_output() {
+        let json = r#"[{"pid":4242,"name":"node.exe","user":"PC\\dev","localAddress":"::","localPort":3000,"executablePath":"C:\\Program Files\\nodejs\\node.exe","commandLine":"node C:\\Users\\dev\\app\\server.js","protocol":"TCP","startedAt":1790000000},{"pid":4,"name":"System","user":"","localAddress":"0.0.0.0","localPort":445,"executablePath":"","commandLine":"","protocol":"TCP","startedAt":0}]"#;
+        let listeners: Vec<WindowsListener> = serde_json::from_str(json).unwrap();
+        assert_eq!(listeners.len(), 2);
+        assert_eq!(listeners[0].pid, 4242);
+        assert_eq!(listeners[0].started_at, 1_790_000_000);
+        assert_eq!(listeners[1].started_at, 0);
     }
 
     #[test]

@@ -10,7 +10,6 @@ use crate::scanner::{PortBinding, PortProcess};
 struct PsInfo {
     user: String,
     command_line: String,
-    uptime_seconds: u64,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -84,7 +83,7 @@ pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, Strin
             project_root,
             system_kind: SystemKind::User,
             is_system_service: false,
-            uptime_seconds: ps.uptime_seconds,
+            started_at: super::shell::process_started_at(pid).unwrap_or(0),
             delete_blocked: None,
         };
 
@@ -267,9 +266,8 @@ fn fetch_ps_info_batch(pids: &[u32]) -> Result<HashMap<u32, PsInfo>, String> {
             .collect::<Vec<_>>()
             .join(",");
 
-        // BSD ps has no `etimes` keyword — only `etime` ([[dd-]hh:]mm:ss).
         let output = run_with_timeout(
-            Command::new("ps").args(["-ww", "-p", &pid_list, "-o", "pid=,user=,etime=,command="]),
+            Command::new("ps").args(["-ww", "-p", &pid_list, "-o", "pid=,user=,command="]),
             SCAN_COMMAND_TIMEOUT,
         )
         .map_err(|e| format!("Failed to run ps: {e}"))?;
@@ -284,7 +282,7 @@ fn fetch_ps_info_batch(pids: &[u32]) -> Result<HashMap<u32, PsInfo>, String> {
     Ok(result)
 }
 
-// ps pads columns with runs of spaces, so grab the first three tokens and
+// ps pads columns with runs of spaces, so grab the first two tokens and
 // keep the remainder verbatim as the command line.
 fn split_token(input: &str) -> (&str, &str) {
     let trimmed = input.trim_start();
@@ -298,39 +296,14 @@ fn parse_ps_line(line: &str) -> Option<(u32, PsInfo)> {
     let (pid_str, rest) = split_token(line);
     let pid = pid_str.parse::<u32>().ok()?;
     let (user, rest) = split_token(rest);
-    let (etime, rest) = split_token(rest);
 
     Some((
         pid,
         PsInfo {
             user: user.to_string(),
             command_line: rest.trim().to_string(),
-            uptime_seconds: parse_etime(etime),
         },
     ))
-}
-
-fn parse_etime(value: &str) -> u64 {
-    let (days, clock) = match value.split_once('-') {
-        Some((days, clock)) => (days.parse::<u64>().unwrap_or(0), clock),
-        None => (0, value),
-    };
-
-    let mut parts = clock.split(':').rev();
-    let seconds = parts
-        .next()
-        .and_then(|p| p.parse::<u64>().ok())
-        .unwrap_or(0);
-    let minutes = parts
-        .next()
-        .and_then(|p| p.parse::<u64>().ok())
-        .unwrap_or(0);
-    let hours = parts
-        .next()
-        .and_then(|p| p.parse::<u64>().ok())
-        .unwrap_or(0);
-
-    days * 86_400 + hours * 3_600 + minutes * 60 + seconds
 }
 
 fn fetch_lsof_paths_batch(pids: &[u32]) -> HashMap<u32, ProcessPaths> {
@@ -426,27 +399,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_etime_formats() {
-        assert_eq!(parse_etime("05"), 5);
-        assert_eq!(parse_etime("04:05"), 245);
-        assert_eq!(parse_etime("03:04:05"), 11_045);
-        assert_eq!(parse_etime("2-03:04:05"), 183_845);
-        assert_eq!(parse_etime(""), 0);
-    }
-
-    #[test]
     fn parse_ps_line_with_padded_columns() {
-        let (pid, info) = parse_ps_line("  501 root      1-02:03:04 node server.js --port 3000")
-            .expect("line should parse");
+        let (pid, info) =
+            parse_ps_line("  501 root      node server.js --port 3000").expect("line should parse");
         assert_eq!(pid, 501);
         assert_eq!(info.user, "root");
-        assert_eq!(info.uptime_seconds, 93_784);
         assert_eq!(info.command_line, "node server.js --port 3000");
     }
 
     #[test]
     fn parse_ps_line_rejects_garbage() {
-        assert!(parse_ps_line("ps: etimes: keyword not found").is_none());
+        assert!(parse_ps_line("ps: illegal process id: x").is_none());
         assert!(parse_ps_line("").is_none());
     }
 }

@@ -107,7 +107,7 @@ mod tests {
             project_root: String::new(),
             system_kind: SystemKind::User,
             is_system_service: false,
-            uptime_seconds: 0,
+            started_at: 0,
             delete_blocked: None,
         }
     }

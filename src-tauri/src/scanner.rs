@@ -5,14 +5,14 @@ use serde::Serialize;
 use crate::platform;
 use crate::platform::path_validation::DeleteRules;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PortBinding {
     pub address: String,
     pub port: u16,
     pub protocol: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PortProcess {
     pub pid: u32,
     pub name: String,
@@ -25,7 +25,10 @@ pub struct PortProcess {
     pub project_root: String,
     pub system_kind: crate::classifier::SystemKind,
     pub is_system_service: bool,
-    pub uptime_seconds: u64,
+    /// When the process started, in Unix seconds; 0 when that is unknown.
+    /// A start time rather than an uptime, so a process that has not changed
+    /// compares equal from one scan to the next.
+    pub started_at: u64,
     /// Why the app will not delete this process's project folder, if it will
     /// not. The UI disables the action and shows the reason.
     pub delete_blocked: Option<String>,

@@ -15,7 +15,7 @@ export function focusRow(id: string): boolean {
  * else has it by then. A menu also closes when the search box is clicked or
  * a dialog opens, and those must keep the focus they were given.
  */
-export function returnFocusToRow(id: string): void {
+export function returnFocusToRow(id: string, closingMenu: Element): void {
   const row = document.querySelector<HTMLElement>(
     `tr[data-row-id="${CSS.escape(id)}"]`,
   );
@@ -23,7 +23,9 @@ export function returnFocusToRow(id: string): void {
   const nobodyHasIt =
     active === null ||
     active === document.body ||
-    active.closest('[role="menu"]') !== null ||
+    // Still in the menu that is closing. Another row's menu, opened by the
+    // click that closed this one, has the focus by right.
+    closingMenu.contains(active) ||
     // The row's own menu button, when it was used to close the menu.
     (row?.contains(active) ?? false);
   if (nobodyHasIt) {

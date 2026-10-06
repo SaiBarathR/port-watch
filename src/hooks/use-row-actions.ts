@@ -23,33 +23,34 @@ import {
 let alternateHeld = false;
 const alternateListeners = new Set<() => void>();
 
-function trackAlternateKey(listener: () => void) {
-  const update = (event: KeyboardEvent) => {
-    const held = getPlatform() === "macos" ? event.altKey : event.shiftKey;
-    if (held !== alternateHeld) {
-      alternateHeld = held;
-      for (const notify of alternateListeners) {
-        notify();
-      }
+function noteAlternateKey(event: KeyboardEvent | MouseEvent | null) {
+  const held =
+    event !== null &&
+    (getPlatform() === "macos" ? event.altKey : event.shiftKey);
+  if (held !== alternateHeld) {
+    alternateHeld = held;
+    for (const notify of alternateListeners) {
+      notify();
     }
-  };
-  const release = () => update(new KeyboardEvent("keyup"));
-
-  if (alternateListeners.size === 0) {
-    window.addEventListener("keydown", update);
-    window.addEventListener("keyup", update);
-    window.addEventListener("blur", release);
   }
+}
+
+// Watched from the start, not only while a menu is open: the key is usually
+// down before the click that opens the menu. The clicks are read too, for a
+// key that went down while another window had the keyboard.
+if (typeof window !== "undefined") {
+  window.addEventListener("keydown", noteAlternateKey, true);
+  window.addEventListener("keyup", noteAlternateKey, true);
+  // pointerdown, not mousedown: a menu button cancels the press, and then no
+  // mousedown follows it.
+  window.addEventListener("pointerdown", noteAlternateKey, true);
+  window.addEventListener("contextmenu", noteAlternateKey, true);
+  window.addEventListener("blur", () => noteAlternateKey(null));
+}
+
+function trackAlternateKey(listener: () => void) {
   alternateListeners.add(listener);
-  return () => {
-    alternateListeners.delete(listener);
-    if (alternateListeners.size === 0) {
-      window.removeEventListener("keydown", update);
-      window.removeEventListener("keyup", update);
-      window.removeEventListener("blur", release);
-      alternateHeld = false;
-    }
-  };
+  return () => alternateListeners.delete(listener);
 }
 
 /** Whether the key that shows alternate menu items is held right now. */

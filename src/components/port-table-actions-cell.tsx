@@ -113,7 +113,7 @@ function RowDropdownContent({
       align="end"
       onCloseAutoFocus={(event) => {
         event.preventDefault();
-        returnFocusToRow(process.id);
+        returnFocusToRow(process.id, event.currentTarget as Element);
       }}
     >
       <MenuHeading process={process} />
@@ -140,7 +140,7 @@ export function RowContextMenuContent({ process, portIsShared }: RowMenuProps) {
     <ContextMenuContent
       onCloseAutoFocus={(event) => {
         event.preventDefault();
-        returnFocusToRow(process.id);
+        returnFocusToRow(process.id, event.currentTarget as Element);
       }}
     >
       <MenuHeading process={process} />

@@ -74,14 +74,20 @@ export function RowMenuItems({
   Item,
   Separator,
 }: RowMenuItemsProps) {
+  // "Delete Permanently" takes the place of "Move to Trash" while a key is
+  // held. Keyed as one item, it is the same element with new words, and the
+  // keyboard focus on it stays where it is.
+  const slot = (action: RowAction) =>
+    action.id === "delete" ? "trash" : action.id;
+
   return groups.map((group, index) => (
-    <Fragment key={group[0].id}>
+    <Fragment key={slot(group[0])}>
       {index > 0 && <Separator />}
       {group.map((action) => {
         const Icon = iconFor(action);
         return (
           <Item
-            key={action.id}
+            key={slot(action)}
             variant={action.destructive ? "destructive" : "default"}
             disabled={!!action.disabledReason}
             onSelect={() => onRun(action.id)}

@@ -30,6 +30,10 @@ let newest: { revision: number; settings: AppSettings } | null = null;
 // one change, and showing it while a later change is on its way would undo
 // that later one on screen for a moment.
 let unanswered = 0;
+// Updates reach the backend one at a time, in the order they were made. Two
+// sent together could be handled in either order, and the earlier choice
+// would then be the one that is kept.
+let lastWrite: Promise<unknown> = Promise.resolve();
 const listeners = new Set<() => void>();
 
 function publish(next: AppSettings) {
@@ -200,7 +204,11 @@ export function updateSettings(change: Change): void {
   }
 
   unanswered += 1;
-  invoke<Snapshot>("update_settings", { patch }).then(
+  const write = lastWrite.then(() =>
+    invoke<Snapshot>("update_settings", { patch }),
+  );
+  lastWrite = write.catch(() => {});
+  write.then(
     (snapshot) => {
       unanswered -= 1;
       receive(snapshot);

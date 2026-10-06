@@ -178,12 +178,13 @@ export function primaryPort(process: PortProcess): number | null {
 }
 
 /**
- * A port number typed by the user, or null. Digits only: "3000abc" and
- * "3000.5" are not ports, though parseInt would read 3000 from either.
+ * A port number typed by the user, or null. A plain number only: "3000abc"
+ * and "3000.5" are not ports, though parseInt would read 3000 from either,
+ * and "080" is the start of 8080 as much as it is port 80.
  */
 export function parsePort(text: string): number | null {
   const trimmed = text.trim();
-  if (!/^\d{1,5}$/.test(trimmed)) {
+  if (!/^[1-9]\d{0,4}$/.test(trimmed)) {
     return null;
   }
   const port = Number(trimmed);

@@ -73,6 +73,8 @@ describe("parsePort", () => {
       "1e3",
       "0x50",
       "30 00",
+      "080",
+      "0080",
     ]) {
       expect(parsePort(text), text).toBeNull();
     }

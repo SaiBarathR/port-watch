@@ -157,6 +157,13 @@ function readLegacySettings(): AppSettings | null {
  */
 export async function initSettings(): Promise<void> {
   try {
+    // Listening first: the tray changes settings too, and a change made
+    // between the reply below and a later subscription would be missed.
+    // Revisions sort out whichever arrives first.
+    await listen<Snapshot>("settings-changed", (event) =>
+      receive(event.payload),
+    );
+
     const reply = await invoke<Snapshot & { adopted: boolean }>("get_settings");
     connected = true;
     receive(reply);
@@ -171,11 +178,6 @@ export async function initSettings(): Promise<void> {
         }),
       );
     }
-
-    // The tray changes settings too.
-    void listen<Snapshot>("settings-changed", (event) =>
-      receive(event.payload),
-    );
   } catch {
     // not inside the app
   }

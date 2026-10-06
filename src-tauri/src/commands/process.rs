@@ -14,7 +14,7 @@ pub async fn stop_process(
     expected_name: Option<String>,
     expected_started_at: Option<u64>,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking("Stop", move || {
         process_actions::stop_process(
             &app,
             pid,
@@ -26,5 +26,4 @@ pub async fn stop_process(
         )
     })
     .await
-    .map_err(|e| format!("Stop task failed: {e}"))?
 }

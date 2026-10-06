@@ -20,9 +20,7 @@ pub fn open_in_finder_blocking(path: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn open_in_finder(path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || open_in_finder_blocking(&path))
-        .await
-        .map_err(|e| format!("Open task failed: {e}"))?
+    super::blocking("Open", move || open_in_finder_blocking(&path)).await
 }
 
 // Stops a process and deletes its project folder as one step, so the folder
@@ -39,7 +37,7 @@ pub async fn delete_project(
     mode: DeleteMode,
     confirmation: Option<String>,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking("Delete", move || {
         process_actions::delete_project(
             &app,
             pid,
@@ -53,5 +51,4 @@ pub async fn delete_project(
         )
     })
     .await
-    .map_err(|e| format!("Delete task failed: {e}"))?
 }

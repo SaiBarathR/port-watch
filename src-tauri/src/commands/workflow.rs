@@ -34,9 +34,7 @@ pub fn open_in_terminal_blocking(cwd: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn open_in_terminal(cwd: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || open_in_terminal_blocking(&cwd))
-        .await
-        .map_err(|e| format!("Terminal task failed: {e}"))?
+    super::blocking("Terminal", move || open_in_terminal_blocking(&cwd)).await
 }
 
 pub fn open_in_editor_blocking(cwd: &str, editor: &str) -> Result<(), String> {
@@ -92,9 +90,7 @@ fn launch_editor(binary: &str, cwd: &str) -> std::io::Result<std::process::ExitS
 
 #[tauri::command]
 pub async fn open_in_editor(cwd: String, editor: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || open_in_editor_blocking(&cwd, &editor))
-        .await
-        .map_err(|e| format!("Editor task failed: {e}"))?
+    super::blocking("Editor", move || open_in_editor_blocking(&cwd, &editor)).await
 }
 
 #[cfg(test)]

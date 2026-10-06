@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use tauri::{
@@ -12,7 +13,48 @@ use crate::settings::SettingsStore;
 
 #[derive(Default)]
 pub struct TrayState {
-    pub last_menu_signature: Option<String>,
+    /// The menus that have been applied, newest last, each with its number.
+    /// More than one, because a menu that is open stays on screen after a
+    /// scan has replaced it, and a click on it must still find what it
+    /// showed.
+    menus: VecDeque<(u64, Shown)>,
+    /// The last number given to a menu. A number is never used twice, even
+    /// for a menu that failed to build.
+    numbered: u64,
+}
+
+/// How many applied menus are remembered. One can be open while the next is
+/// applied; the third is slack.
+const MENUS_KEPT: usize = 3;
+
+/// Everything a tray menu shows. A click acts on the process its item was
+/// built from, not on whatever holds that PID by the time of the click.
+#[derive(Clone, PartialEq)]
+struct Shown {
+    /// The user's listeners, in menu order.
+    processes: Vec<PortProcess>,
+    menu_bar_mode: bool,
+    editor: String,
+}
+
+impl Shown {
+    fn now(app: &AppHandle) -> Self {
+        let settings = app.state::<SettingsStore>().get();
+        let mut processes: Vec<PortProcess> = app
+            .state::<PortPoller>()
+            .processes()
+            .iter()
+            .filter(|process| !process.is_system_service)
+            .cloned()
+            .collect();
+        processes.sort_by_key(|process| primary_port(process).unwrap_or(u16::MAX));
+
+        Self {
+            processes,
+            menu_bar_mode: settings.menu_bar_mode,
+            editor: settings.preferred_editor,
+        }
+    }
 }
 
 pub fn setup_tray(app: &AppHandle, menu_bar_mode: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -23,8 +65,17 @@ pub fn setup_tray(app: &AppHandle, menu_bar_mode: bool) -> Result<(), Box<dyn st
         .cloned()
         .ok_or("Missing application icon for tray")?;
 
-    // Initial menu (no scan yet) — the poller rebuilds it as soon as it has data.
-    let menu = build_menu(app, &[], menu_bar_mode)?;
+    // Before the first scan there is nothing to list; the poller rebuilds
+    // the menu as soon as there is.
+    let menu = build_menu(
+        app,
+        0,
+        &Shown {
+            processes: Vec::new(),
+            menu_bar_mode,
+            editor: String::new(),
+        },
+    )?;
 
     TrayIconBuilder::with_id("main")
         .icon(icon)
@@ -35,6 +86,95 @@ pub fn setup_tray(app: &AppHandle, menu_bar_mode: bool) -> Result<(), Box<dyn st
         .build(app)?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// What a menu item does
+// ---------------------------------------------------------------------------
+
+/// What a menu item does. An item's id is one of these, written out, so a
+/// click is read back into the same type that built the item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TrayAction {
+    OpenWindow,
+    Refresh,
+    ToggleMenuBarMode,
+    Quit,
+    /// Something done to one listed process: the number of the menu the
+    /// item is in, and the process's row id in that menu.
+    Port(PortAction, u64, String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PortAction {
+    Open,
+    CopyUrl,
+    Reveal,
+    Terminal,
+    Editor,
+    Stop,
+}
+
+impl PortAction {
+    const ALL: [PortAction; 6] = [
+        PortAction::Open,
+        PortAction::CopyUrl,
+        PortAction::Reveal,
+        PortAction::Terminal,
+        PortAction::Editor,
+        PortAction::Stop,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            PortAction::Open => "open",
+            PortAction::CopyUrl => "copy-url",
+            PortAction::Reveal => "reveal",
+            PortAction::Terminal => "terminal",
+            PortAction::Editor => "editor",
+            PortAction::Stop => "stop",
+        }
+    }
+}
+
+impl TrayAction {
+    fn id(&self) -> String {
+        match self {
+            TrayAction::OpenWindow => "window".into(),
+            TrayAction::Refresh => "refresh".into(),
+            TrayAction::ToggleMenuBarMode => "menu-bar-mode".into(),
+            TrayAction::Quit => "quit".into(),
+            TrayAction::Port(action, menu, row) => {
+                format!("port:{menu}:{}:{row}", action.name())
+            }
+        }
+    }
+
+    /// None for an id that is not an action's: the menu's heading, or
+    /// anything this version did not write.
+    fn parse(id: &str) -> Option<Self> {
+        match id {
+            "window" => return Some(TrayAction::OpenWindow),
+            "refresh" => return Some(TrayAction::Refresh),
+            "menu-bar-mode" => return Some(TrayAction::ToggleMenuBarMode),
+            "quit" => return Some(TrayAction::Quit),
+            _ => {}
+        }
+
+        // A row id can hold colons itself ("socket-tcp-[::1]-3000"), so it
+        // is whatever follows the third one.
+        let mut parts = id.splitn(4, ':');
+        if parts.next()? != "port" {
+            return None;
+        }
+        let menu = parts.next()?.parse().ok()?;
+        let name = parts.next()?;
+        let action = PortAction::ALL
+            .into_iter()
+            .find(|action| action.name() == name)?;
+        let row = parts.next().filter(|row| !row.is_empty())?;
+        Some(TrayAction::Port(action, menu, row.to_string()))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -50,61 +190,58 @@ fn localhost_url(port: u16, use_https: bool) -> String {
     format!("{scheme}://localhost:{port}")
 }
 
-fn build_port_submenu(app: &AppHandle, process: &PortProcess) -> tauri::Result<Submenu<Wry>> {
-    let pid = process.pid;
+#[cfg(target_os = "macos")]
+const REVEAL_LABEL: &str = "Show in Finder";
+#[cfg(target_os = "windows")]
+const REVEAL_LABEL: &str = "Show in Explorer";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const REVEAL_LABEL: &str = "Show in File Manager";
+
+fn editor_label(editor: &str) -> &'static str {
+    match editor {
+        "code" => "Open in VS Code",
+        "cursor" => "Open in Cursor",
+        _ => "Open in Editor",
+    }
+}
+
+fn build_port_submenu(
+    app: &AppHandle,
+    menu: u64,
+    process: &PortProcess,
+    editor: &str,
+) -> tauri::Result<Submenu<Wry>> {
     let port = primary_port(process);
     let has_dir = !process.project_dir().is_empty();
-
-    let title = match port {
-        Some(p) => format!("{p}  ·  {}", process.name),
-        None => process.name.clone(),
+    let item = |action: PortAction, label: &str, enabled: bool| {
+        MenuItem::with_id(
+            app,
+            TrayAction::Port(action, menu, process.id.clone()).id(),
+            label,
+            enabled,
+            None::<&str>,
+        )
     };
 
-    let open = MenuItem::with_id(
-        app,
-        format!("pw-open:{pid}:{}", port.unwrap_or(0)),
-        match port {
-            Some(p) => format!("Open localhost:{p}"),
-            None => "Open in browser".to_string(),
+    let title = match port {
+        Some(port) => format!("{port}  ·  {}", process.name),
+        None => process.name.clone(),
+    };
+    let open = item(
+        PortAction::Open,
+        &match port {
+            Some(port) => format!("Open localhost:{port}"),
+            None => "Open in Browser".to_string(),
         },
         port.is_some(),
-        None::<&str>,
     )?;
-    let copy = MenuItem::with_id(
-        app,
-        format!("pw-copy:{pid}:{}", port.unwrap_or(0)),
-        "Copy URL",
-        port.is_some(),
-        None::<&str>,
-    )?;
-    let finder = MenuItem::with_id(
-        app,
-        format!("pw-finder:{pid}"),
-        "Show in Finder",
-        has_dir,
-        None::<&str>,
-    )?;
-    let terminal = MenuItem::with_id(
-        app,
-        format!("pw-terminal:{pid}"),
-        "Open in Terminal",
-        has_dir,
-        None::<&str>,
-    )?;
-    let editor = MenuItem::with_id(
-        app,
-        format!("pw-editor:{pid}"),
-        "Open in Editor",
-        has_dir,
-        None::<&str>,
-    )?;
-    let stop = MenuItem::with_id(
-        app,
-        format!("pw-stop:{pid}"),
-        "Stop process",
-        true,
-        None::<&str>,
-    )?;
+    let copy = item(PortAction::CopyUrl, "Copy URL", port.is_some())?;
+    let reveal = item(PortAction::Reveal, REVEAL_LABEL, has_dir)?;
+    let terminal = item(PortAction::Terminal, "Open in Terminal", has_dir)?;
+    let editor = item(PortAction::Editor, editor_label(editor), has_dir)?;
+    // PID 0 is a listener whose owner the scan could not see: there is no
+    // process to stop.
+    let stop = item(PortAction::Stop, "Stop…", process.pid != 0)?;
     let sep_open = PredefinedMenuItem::separator(app)?;
     let sep_stop = PredefinedMenuItem::separator(app)?;
 
@@ -113,47 +250,38 @@ fn build_port_submenu(app: &AppHandle, process: &PortProcess) -> tauri::Result<S
         title,
         true,
         &[
-            &open, &copy, &sep_open, &finder, &terminal, &editor, &sep_stop, &stop,
+            &open, &copy, &sep_open, &reveal, &terminal, &editor, &sep_stop, &stop,
         ],
     )
 }
 
-fn build_menu(
-    app: &AppHandle,
-    processes: &[PortProcess],
-    menu_bar_enabled: bool,
-) -> tauri::Result<Menu<Wry>> {
-    let mut user: Vec<&PortProcess> = processes
-        .iter()
-        .filter(|process| !process.is_system_service)
-        .collect();
-    user.sort_by_key(|process| primary_port(process).unwrap_or(u16::MAX));
-
-    let count = user.len();
+// `number` goes into the id of every item that acts on a process, and is
+// how a click finds the processes this menu was built from.
+fn build_menu(app: &AppHandle, number: u64, shown: &Shown) -> tauri::Result<Menu<Wry>> {
+    let count = shown.processes.len();
     let header_label = if count == 1 {
         "Port Watch — 1 listener".to_string()
     } else {
         format!("Port Watch — {count} listeners")
     };
-    let header = MenuItem::with_id(app, "pw-header", header_label, false, None::<&str>)?;
+    let header = MenuItem::with_id(app, "heading", header_label, false, None::<&str>)?;
 
     let menu = Menu::new(app)?;
     menu.append(&header)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
-    if user.is_empty() {
+    if shown.processes.is_empty() {
         let empty = MenuItem::with_id(
             app,
-            "pw-empty",
+            "nothing-listening",
             "No dev servers listening",
             false,
             None::<&str>,
         )?;
         menu.append(&empty)?;
     } else {
-        for process in &user {
-            let submenu = build_port_submenu(app, process)?;
-            menu.append(&submenu)?;
+        for process in &shown.processes {
+            menu.append(&build_port_submenu(app, number, process, &shown.editor)?)?;
         }
     }
 
@@ -161,21 +289,21 @@ fn build_menu(
 
     let open_window = MenuItem::with_id(
         app,
-        "tray-open-window",
+        TrayAction::OpenWindow.id(),
         "Open Full Window",
         true,
         None::<&str>,
     )?;
-    let refresh = MenuItem::with_id(app, "tray-refresh", "Refresh", true, None::<&str>)?;
+    let refresh = MenuItem::with_id(app, TrayAction::Refresh.id(), "Refresh", true, None::<&str>)?;
     let menu_bar_mode = CheckMenuItem::with_id(
         app,
-        "tray-menu-bar-mode",
+        TrayAction::ToggleMenuBarMode.id(),
         "Menu bar mode",
         true,
-        menu_bar_enabled,
+        shown.menu_bar_mode,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, TrayAction::Quit.id(), "Quit", true, None::<&str>)?;
 
     menu.append(&open_window)?;
     menu.append(&refresh)?;
@@ -186,81 +314,75 @@ fn build_menu(
     Ok(menu)
 }
 
-fn menu_signature(processes: &[PortProcess], menu_bar_enabled: bool) -> String {
-    let mut parts: Vec<String> = processes
-        .iter()
-        .filter(|process| !process.is_system_service)
-        .map(|process| {
-            let mut bindings: Vec<String> = process
-                .ports
-                .iter()
-                .map(|binding| format!("{}:{}/{}", binding.address, binding.port, binding.protocol))
-                .collect();
-            bindings.sort();
-            format!(
-                "{}|{}|{}|{}",
-                process.pid,
-                process.name,
-                bindings.join(","),
-                process.project_dir()
-            )
-        })
-        .collect();
-    parts.sort();
-    format!("{}|mbm={}", parts.join(";"), menu_bar_enabled)
-}
-
-/// Rebuild the native tray menu from the poller's latest scan. Cheap to call on
-/// every scan — it diffs a signature and only touches the menu when something
-/// the menu shows actually changed. The menu must be mutated on the main thread.
+/// Rebuilds the native tray menu from the poller's latest scan and the
+/// settings. Cheap to call after every scan: it only touches the menu when
+/// something the menu shows has changed. The menu must be changed on the
+/// main thread.
 pub fn rebuild_tray_menu(app: &AppHandle) {
-    let processes = app.state::<PortPoller>().processes();
-    let menu_bar_enabled = is_menu_bar_mode_enabled(app);
-
-    let signature = menu_signature(&processes, menu_bar_enabled);
-    if let Some(state) = app.try_state::<Mutex<TrayState>>() {
-        let guard = match state.lock() {
-            Ok(guard) => guard,
-            Err(_) => return,
+    let shown = Shown::now(app);
+    let Some(state) = app.try_state::<Mutex<TrayState>>() else {
+        return;
+    };
+    let number = {
+        let Ok(mut state) = state.lock() else {
+            return;
         };
-        if guard.last_menu_signature.as_deref() == Some(signature.as_str()) {
+        if state
+            .menus
+            .back()
+            .is_some_and(|(_, latest)| *latest == shown)
+        {
             return;
         }
-    }
-
-    let user_count = processes
-        .iter()
-        .filter(|process| !process.is_system_service)
-        .count() as u32;
+        state.numbered += 1;
+        state.numbered
+    };
 
     let app_main = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        match build_menu(&app_main, &processes, menu_bar_enabled) {
-            Ok(menu) => {
-                if let Some(tray) = app_main.tray_by_id("main") {
-                    let _ = tray.set_menu(Some(menu));
-                    let label = if user_count == 1 {
-                        "1 listener".to_string()
-                    } else {
-                        format!("{user_count} listeners")
-                    };
-                    let _ = tray.set_tooltip(Some(&label));
+    let _ = app.run_on_main_thread(move || match build_menu(&app_main, number, &shown) {
+        Ok(menu) => {
+            let Some(tray) = app_main.tray_by_id("main") else {
+                return;
+            };
+            let _ = tray.set_menu(Some(menu));
+            let count = shown.processes.len();
+            let label = if count == 1 {
+                "1 listener".to_string()
+            } else {
+                format!("{count} listeners")
+            };
+            let _ = tray.set_tooltip(Some(&label));
 
-                    // Commit the signature only after the menu is actually
-                    // applied — a failed build/dispatch must retry on the next
-                    // scan instead of being recorded as "up to date". Serialized
-                    // on the main thread, so the stored signature always matches
-                    // the last applied menu.
-                    if let Some(state) = app_main.try_state::<Mutex<TrayState>>() {
-                        if let Ok(mut guard) = state.lock() {
-                            guard.last_menu_signature = Some(signature);
-                        }
-                    }
+            // Recorded only once the menu is in place: a build that failed
+            // must be tried again after the next scan, not taken as done.
+            if let Some(state) = app_main.try_state::<Mutex<TrayState>>() {
+                if let Ok(mut state) = state.lock() {
+                    remember(&mut state.menus, number, shown);
                 }
             }
-            Err(error) => eprintln!("Failed to build tray menu: {error}"),
         }
+        Err(error) => eprintln!("Failed to build tray menu: {error}"),
     });
+}
+
+fn remember(menus: &mut VecDeque<(u64, Shown)>, number: u64, shown: Shown) {
+    menus.push_back((number, shown));
+    while menus.len() > MENUS_KEPT {
+        menus.pop_front();
+    }
+}
+
+/// The process a menu item was built from, and the editor that menu named
+/// in its "Open in …" items. None for an item of a menu too old to be
+/// remembered, which then does nothing.
+fn shown_process(
+    menus: &VecDeque<(u64, Shown)>,
+    number: u64,
+    row: &str,
+) -> Option<(PortProcess, String)> {
+    let (_, shown) = menus.iter().find(|(kept, _)| *kept == number)?;
+    let process = shown.processes.iter().find(|process| process.id == row)?;
+    Some((process.clone(), shown.editor.clone()))
 }
 
 // ---------------------------------------------------------------------------
@@ -268,106 +390,91 @@ pub fn rebuild_tray_menu(app: &AppHandle) {
 // ---------------------------------------------------------------------------
 
 fn handle_menu_event(app: &AppHandle, id: &str) {
-    match id {
-        "tray-open-window" => show_main_window(app),
-        "tray-refresh" => app.state::<PortPoller>().request_scan(),
-        "tray-menu-bar-mode" => {
-            let enabled = !is_menu_bar_mode_enabled(app);
+    match TrayAction::parse(id) {
+        Some(TrayAction::OpenWindow) => show_main_window(app),
+        Some(TrayAction::Refresh) => app.state::<PortPoller>().request_scan(),
+        Some(TrayAction::ToggleMenuBarMode) => {
+            let enabled = !app.state::<SettingsStore>().get().menu_bar_mode;
             let patch = serde_json::Map::from_iter([("menuBarMode".to_string(), enabled.into())]);
             if let Err(error) = crate::settings::update(app, patch) {
                 eprintln!("Failed to change menu bar mode: {error}");
             }
         }
-        "tray-quit" => app.exit(0),
-        other => handle_port_action(app, other),
-    }
-}
-
-fn handle_port_action(app: &AppHandle, id: &str) {
-    let Some((action, rest)) = id.split_once(':') else {
-        return;
-    };
-    if !action.starts_with("pw-") {
-        return;
-    }
-
-    let mut fields = rest.split(':');
-    let Some(pid) = fields.next().and_then(|value| value.parse::<u32>().ok()) else {
-        return;
-    };
-    let port = fields.next().and_then(|value| value.parse::<u16>().ok());
-
-    let process = app.state::<PortPoller>().find_by_pid(pid);
-    let app = app.clone();
-    let action = action.to_string();
-
-    // Run off the main thread: stop_process can block for seconds and the launch
-    // helpers wait on a child process — neither should freeze the UI thread.
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Err(error) = run_port_action(&app, &action, pid, port, process.as_ref()) {
-            notify_error(&app, &error);
+        Some(TrayAction::Quit) => app.exit(0),
+        Some(TrayAction::Port(action, menu, row)) => {
+            // The process the item was built from. The menu on screen can be
+            // older than the latest scan, or than the latest menu, and the
+            // item said what it would act on.
+            let clicked = app.try_state::<Mutex<TrayState>>().and_then(|state| {
+                let state = state.lock().ok()?;
+                shown_process(&state.menus, menu, &row)
+            });
+            let Some((process, editor)) = clicked else {
+                app.state::<PortPoller>().request_scan();
+                return;
+            };
+            let app = app.clone();
+            // Off the main thread: a stop can wait for seconds, and the
+            // launchers wait on a child process.
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = run_port_action(&app, action, &process, &editor) {
+                    notify_error(&app, &error);
+                }
+            });
         }
-    });
+        None => {}
+    }
 }
 
+// `editor` is the one the clicked menu named, which the setting may have
+// moved on from while that menu was open.
 fn run_port_action(
     app: &AppHandle,
-    action: &str,
-    pid: u32,
-    port: Option<u16>,
-    process: Option<&PortProcess>,
+    action: PortAction,
+    process: &PortProcess,
+    editor: &str,
 ) -> Result<(), String> {
+    let url = || {
+        let use_https = app.state::<SettingsStore>().get().use_https_for_localhost;
+        primary_port(process)
+            .map(|port| localhost_url(port, use_https))
+            .ok_or("No port available")
+    };
+
     match action {
-        "pw-open" => {
-            let port = port.ok_or("No port available")?;
-            let use_https = app.state::<SettingsStore>().get().use_https_for_localhost;
-            crate::commands::workflow::open_url(app.clone(), localhost_url(port, use_https))
-        }
-        "pw-copy" => {
-            let port = port.ok_or("No port available")?;
-            let use_https = app.state::<SettingsStore>().get().use_https_for_localhost;
-            crate::platform::shell::copy_to_clipboard(&localhost_url(port, use_https))
-        }
-        "pw-finder" => {
+        PortAction::Open => crate::commands::workflow::open_url(app.clone(), url()?),
+        PortAction::CopyUrl => crate::platform::shell::copy_to_clipboard(&url()?),
+        PortAction::Reveal => {
             crate::commands::filesystem::open_in_finder_blocking(&require_directory(process)?)
         }
-        "pw-terminal" => {
+        PortAction::Terminal => {
             crate::commands::workflow::open_in_terminal_blocking(&require_directory(process)?)
         }
-        "pw-editor" => {
-            let editor = app.state::<SettingsStore>().get().preferred_editor;
-            crate::commands::workflow::open_in_editor_blocking(
-                &require_directory(process)?,
-                &editor,
-            )
+        PortAction::Editor => {
+            crate::commands::workflow::open_in_editor_blocking(&require_directory(process)?, editor)
         }
-        "pw-stop" => {
-            // The menu can be older than the latest scan. Without the scan's
-            // entry there is no name to confirm or to check the PID against.
-            let Some(process) = process else {
-                app.state::<PortPoller>().request_scan();
-                return Err(format!(
-                    "PID {pid} is no longer listening, so it was not stopped."
-                ));
-            };
+        PortAction::Stop => {
             if !confirm_stop(app, process) {
                 return Ok(());
             }
-            crate::process_actions::stop_process(
+            // Checked against the latest scan by name and start time: if the
+            // PID has gone to another process since the menu was built, the
+            // stop is refused.
+            let stopped = crate::process_actions::stop_process(
                 app,
-                pid,
+                process.pid,
                 false,
                 crate::process_actions::SeenProcess {
                     name: Some(&process.name),
                     started_at: Some(process.started_at),
                 },
-            )?;
-            // Nothing else rescans after a tray stop, so with manual refresh
-            // the stopped process would stay listed indefinitely.
+            );
+            // Nothing else rescans after a tray stop, so with auto-refresh
+            // off a stopped process would stay listed, and a refused stop
+            // would leave the stale menu in place.
             app.state::<PortPoller>().request_scan();
-            Ok(())
+            stopped
         }
-        _ => Ok(()),
     }
 }
 
@@ -397,9 +504,8 @@ fn confirm_stop(app: &AppHandle, process: &PortProcess) -> bool {
         .blocking_show()
 }
 
-fn require_directory(process: Option<&PortProcess>) -> Result<String, String> {
-    process
-        .map(|process| process.project_dir().to_string())
+fn require_directory(process: &PortProcess) -> Result<String, String> {
+    Some(process.project_dir().to_string())
         .filter(|dir| !dir.is_empty())
         .ok_or_else(|| "No folder available for this process".to_string())
 }
@@ -418,10 +524,6 @@ fn notify_error(app: &AppHandle, message: &str) {
 // ---------------------------------------------------------------------------
 // Window / menu-bar-mode helpers
 // ---------------------------------------------------------------------------
-
-fn is_menu_bar_mode_enabled(app: &AppHandle) -> bool {
-    app.state::<SettingsStore>().get().menu_bar_mode
-}
 
 pub fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -465,8 +567,6 @@ pub fn apply_menu_bar_mode(app: &AppHandle, enabled: bool) -> Result<(), String>
     } else {
         show_main_window(app);
     }
-
-    rebuild_tray_menu(app);
     Ok(())
 }
 
@@ -483,4 +583,147 @@ fn set_dock_icon_hidden(app: &AppHandle, hidden: bool) -> Result<(), String> {
             .map_err(|e| format!("Failed to set activation policy: {e}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_action_reads_back_from_its_id() {
+        let mut actions = vec![
+            TrayAction::OpenWindow,
+            TrayAction::Refresh,
+            TrayAction::ToggleMenuBarMode,
+            TrayAction::Quit,
+        ];
+        for action in PortAction::ALL {
+            actions.push(TrayAction::Port(action, 1, "pid-4242".into()));
+            // A listener with no visible owner is named by its socket, and
+            // an IPv6 address brings colons of its own.
+            actions.push(TrayAction::Port(
+                action,
+                18_446_744_073_709_551_615,
+                "socket-tcp-[::1]-3000#2".into(),
+            ));
+        }
+
+        for action in actions {
+            assert_eq!(TrayAction::parse(&action.id()), Some(action));
+        }
+    }
+
+    #[test]
+    fn ids_that_are_not_actions_do_nothing() {
+        for id in [
+            "",
+            "heading",
+            "nothing-listening",
+            "port",
+            "port:1",
+            "port:1:stop",
+            "port:1:stop:",
+            "port:1:explode:pid-1",
+            // No menu number.
+            "port:stop:pid-1",
+            // What earlier versions wrote; a menu is never that old, but the
+            // ids must not be read as something else.
+            "pw-stop:4242",
+            "tray-quit",
+        ] {
+            assert_eq!(TrayAction::parse(id), None, "{id:?}");
+        }
+    }
+
+    fn listener(pid: u32, port: u16) -> PortProcess {
+        PortProcess {
+            id: format!("pid-{pid}"),
+            pid,
+            name: "node".into(),
+            user: "dev".into(),
+            ports: vec![crate::scanner::PortBinding {
+                address: "*".into(),
+                port,
+                protocol: "TCP".into(),
+            }],
+            executable_path: String::new(),
+            script_path: None,
+            command_line: String::new(),
+            working_directory: String::new(),
+            project_root: String::new(),
+            system_kind: crate::classifier::SystemKind::User,
+            is_system_service: false,
+            started_at: 1_790_000_000,
+            delete_blocked: None,
+        }
+    }
+
+    fn showing(processes: Vec<PortProcess>) -> Shown {
+        showing_with_editor(processes, "cursor")
+    }
+
+    fn showing_with_editor(processes: Vec<PortProcess>, editor: &str) -> Shown {
+        Shown {
+            processes,
+            menu_bar_mode: false,
+            editor: editor.into(),
+        }
+    }
+
+    // A menu stays open on screen after a scan has replaced it. The same
+    // PID is then in both, listening on a different port in each, and a
+    // click on "Open localhost:3000" must not open 4000.
+    #[test]
+    fn a_click_finds_the_process_as_its_own_menu_showed_it() {
+        let mut menus = VecDeque::new();
+        remember(&mut menus, 1, showing(vec![listener(42, 3000)]));
+        remember(&mut menus, 2, showing(vec![listener(42, 4000)]));
+
+        let port = |number| {
+            shown_process(&menus, number, "pid-42").map(|(process, _)| process.ports[0].port)
+        };
+        assert_eq!(port(1), Some(3000));
+        assert_eq!(port(2), Some(4000));
+        assert_eq!(shown_process(&menus, 2, "pid-7"), None);
+    }
+
+    // The same for the setting an item was labelled from: "Open in Cursor"
+    // opens Cursor, even if the editor was changed while that menu was open.
+    #[test]
+    fn a_click_gets_the_editor_its_own_menu_named() {
+        let mut menus = VecDeque::new();
+        remember(
+            &mut menus,
+            1,
+            showing_with_editor(vec![listener(42, 3000)], "cursor"),
+        );
+        remember(
+            &mut menus,
+            2,
+            showing_with_editor(vec![listener(42, 3000)], "code"),
+        );
+
+        let editor = |number| shown_process(&menus, number, "pid-42").map(|(_, editor)| editor);
+        assert_eq!(editor(1).as_deref(), Some("cursor"));
+        assert_eq!(editor(2).as_deref(), Some("code"));
+    }
+
+    #[test]
+    fn a_menu_too_old_to_be_remembered_does_nothing() {
+        let mut menus = VecDeque::new();
+        for number in 1..=5 {
+            remember(&mut menus, number, showing(vec![listener(42, 3000)]));
+        }
+
+        assert_eq!(menus.len(), MENUS_KEPT);
+        assert_eq!(shown_process(&menus, 1, "pid-42"), None);
+        assert!(shown_process(&menus, 5, "pid-42").is_some());
+    }
+
+    #[test]
+    fn the_editor_item_names_the_editor() {
+        assert_eq!(editor_label("cursor"), "Open in Cursor");
+        assert_eq!(editor_label("code"), "Open in VS Code");
+        assert_eq!(editor_label(""), "Open in Editor");
+    }
 }

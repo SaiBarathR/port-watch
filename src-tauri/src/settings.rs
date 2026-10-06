@@ -247,6 +247,8 @@ fn follow(app: &AppHandle, change: Change) -> Snapshot {
             eprintln!("Failed to apply menu bar mode: {error}");
         }
     }
+    // The tray menu names the editor and ticks menu bar mode.
+    crate::tray::rebuild_tray_menu(app);
     let _ = app.emit("settings-changed", &after);
     after
 }

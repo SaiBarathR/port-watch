@@ -374,10 +374,14 @@ export function usePortScan() {
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      // Resolves when a scan that started after this call has finished. An
-      // event only follows if that scan found something new, so the spinner
-      // cannot wait for one.
-      await invoke("trigger_port_scan");
+      // Resolves with the result when a scan that started after this call
+      // has finished. An event only follows if that scan found something
+      // new, so applying the result here is what ends the spinner and clears
+      // an error left by an earlier failed refresh.
+      const payload = parsePortsPayload(
+        await invoke<PortsUpdatedPayload>("trigger_port_scan"),
+      );
+      applyScanResultRef.current(payload.processes, payload.error);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);

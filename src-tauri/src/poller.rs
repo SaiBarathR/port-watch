@@ -132,10 +132,10 @@ impl PortPoller {
         self.kick.notify_one();
     }
 
-    /// Asks for a scan and waits for one that started after the request, so
-    /// the caller sees the effect of whatever it just did. A scan already in
-    /// flight does not count.
-    pub async fn scan_now(&self) -> Result<(), String> {
+    /// Asks for a scan, waits for one that started after the request, and
+    /// returns what there is then, so the caller sees the effect of whatever
+    /// it just did. A scan already in flight does not count.
+    pub async fn scan_now(&self) -> Result<Snapshot, String> {
         let mut progress = self.progress.subscribe();
         let target = progress.borrow().started + 1;
         self.request_scan();
@@ -146,7 +146,7 @@ impl PortPoller {
         )
         .await;
         match waited {
-            Ok(Ok(_)) => Ok(()),
+            Ok(Ok(_)) => Ok(self.snapshot.borrow().clone()),
             _ => Err("Scan timed out before completing".into()),
         }
     }
@@ -194,9 +194,13 @@ impl PortPoller {
 
     /// The scan loop. It scans once at once, then whenever the interval
     /// elapses, a scan is requested, or a setting changes in a way that calls
-    /// for one. `on_change` runs after a scan whose result differs from the
-    /// one before it; a scan that found nothing new is silent.
-    pub async fn run(&self, scan: impl Fn(bool) -> ScanFuture, on_change: impl Fn(&Snapshot)) {
+    /// for one. `after_scan` runs after every scan and is told whether the
+    /// result differs from the one before it.
+    pub async fn run(
+        &self,
+        scan: impl Fn(bool) -> ScanFuture,
+        after_scan: impl Fn(&Snapshot, bool),
+    ) {
         let mut config_rx = self.config.subscribe();
         let mut config = config_rx.borrow_and_update().clone();
 
@@ -204,7 +208,7 @@ impl PortPoller {
             let started = Instant::now();
             self.progress.send_modify(|progress| progress.started += 1);
             let result = scan(config.include_udp).await;
-            self.publish(result, &on_change);
+            self.publish(result, &after_scan);
             self.progress
                 .send_modify(|progress| progress.completed += 1);
 
@@ -239,7 +243,11 @@ impl PortPoller {
         }
     }
 
-    fn publish(&self, result: Result<Vec<PortProcess>, String>, on_change: &impl Fn(&Snapshot)) {
+    fn publish(
+        &self,
+        result: Result<Vec<PortProcess>, String>,
+        after_scan: &impl Fn(&Snapshot, bool),
+    ) {
         let previous = self.snapshot.borrow().clone();
         let next = match result {
             Ok(processes) => Snapshot {
@@ -264,8 +272,8 @@ impl PortPoller {
             || !Arc::ptr_eq(&next.processes, &previous.processes);
         if changed {
             self.snapshot.send_replace(next.clone());
-            on_change(&next);
         }
+        after_scan(&next, changed);
     }
 }
 
@@ -296,14 +304,19 @@ pub fn start_poller(app: AppHandle) {
                         .unwrap_or_else(|err| Err(format!("Scan task failed: {err}")))
                     })
                 },
-                |snapshot| {
-                    let _ = app.emit(
-                        "ports-updated",
-                        PortsUpdatedEvent {
-                            processes: &snapshot.processes,
-                            error: snapshot.error.as_deref(),
-                        },
-                    );
+                |snapshot, changed| {
+                    // A scan that found nothing new is not announced.
+                    if changed {
+                        let _ = app.emit(
+                            "ports-updated",
+                            PortsUpdatedEvent {
+                                processes: &snapshot.processes,
+                                error: snapshot.error.as_deref(),
+                            },
+                        );
+                    }
+                    // Every scan, though: the tray compares for itself, and
+                    // retries a menu it failed to apply last time.
                     crate::tray::rebuild_tray_menu(&app);
                 },
             )
@@ -311,13 +324,18 @@ pub fn start_poller(app: AppHandle) {
     });
 }
 
+impl From<Snapshot> for PortsUpdatedPayload {
+    fn from(snapshot: Snapshot) -> Self {
+        Self {
+            processes: snapshot.processes.to_vec(),
+            error: snapshot.error,
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_listening_ports(app: AppHandle) -> Result<PortsUpdatedPayload, String> {
-    let snapshot = app.state::<PortPoller>().first_scan().await;
-    Ok(PortsUpdatedPayload {
-        processes: snapshot.processes.to_vec(),
-        error: snapshot.error,
-    })
+    Ok(app.state::<PortPoller>().first_scan().await.into())
 }
 
 #[tauri::command]
@@ -341,11 +359,12 @@ pub fn set_refresh_paused(app: AppHandle, paused: bool) -> Result<(), String> {
     Ok(())
 }
 
-// Resolves once a scan that started after the call has finished, so the
-// caller can stop its spinner even when that scan found nothing new.
+// Resolves with the result once a scan that started after the call has
+// finished. A scan that found nothing new sends no event, so this is how the
+// caller learns it is done, and that an earlier error is over.
 #[tauri::command]
-pub async fn trigger_port_scan(app: AppHandle) -> Result<(), String> {
-    app.state::<PortPoller>().scan_now().await
+pub async fn trigger_port_scan(app: AppHandle) -> Result<PortsUpdatedPayload, String> {
+    Ok(app.state::<PortPoller>().scan_now().await?.into())
 }
 
 #[cfg(test)]
@@ -434,6 +453,7 @@ mod tests {
         poller: Arc<PortPoller>,
         scanner: Arc<FakeScanner>,
         published: Arc<Mutex<Vec<Snapshot>>>,
+        reported: Arc<Mutex<usize>>,
     }
 
     impl Running {
@@ -441,16 +461,23 @@ mod tests {
             let poller = Arc::new(PortPoller::with_config(config));
             let scanner = Arc::new(scanner);
             let published = Arc::new(Mutex::new(Vec::new()));
+            let reported = Arc::new(Mutex::new(0));
 
             tokio::spawn({
                 let poller = poller.clone();
                 let scanner = scanner.clone();
                 let published = published.clone();
+                let reported = reported.clone();
                 async move {
                     poller
                         .run(
                             |include_udp| scanner.scan(include_udp),
-                            |snapshot| published.lock().unwrap().push(snapshot.clone()),
+                            |snapshot, changed| {
+                                *reported.lock().unwrap() += 1;
+                                if changed {
+                                    published.lock().unwrap().push(snapshot.clone());
+                                }
+                            },
                         )
                         .await;
                 }
@@ -460,6 +487,7 @@ mod tests {
                 poller,
                 scanner,
                 published,
+                reported,
             }
         }
 
@@ -522,6 +550,9 @@ mod tests {
 
         assert!(running.scans() >= 10, "{} scans", running.scans());
         assert_eq!(running.published(), 1);
+        // Every scan is still reported, changed or not: the tray uses that to
+        // retry a menu it could not apply.
+        assert_eq!(*running.reported.lock().unwrap(), running.scans());
     }
 
     #[tokio::test(start_paused = true)]
@@ -628,7 +659,28 @@ mod tests {
         assert_eq!(running.scans(), 2);
 
         running.scanner.finish_one_scan();
-        assert_eq!(waiter.await.unwrap(), Ok(()));
+        let snapshot = waiter.await.unwrap().expect("the follow-up scan");
+        assert!(snapshot.scanned);
+        assert_eq!(snapshot.error, None);
+    }
+
+    // A refresh that fails in the webview (a timeout) leaves an error there
+    // that no event will clear if the next scan finds nothing new. The
+    // result handed back by the request is what clears it.
+    #[tokio::test(start_paused = true)]
+    async fn scan_now_returns_the_result_even_when_nothing_changed() {
+        let running = Running::start(
+            manual(),
+            FakeScanner::returning([Ok(vec![listener(1, 3000)])]),
+        );
+        settle().await;
+        assert_eq!(running.published(), 1);
+
+        let snapshot = running.poller.scan_now().await.expect("scan");
+
+        assert_eq!(running.published(), 1, "nothing new to announce");
+        assert_eq!(*snapshot.processes, vec![listener(1, 3000)]);
+        assert_eq!(snapshot.error, None);
     }
 
     #[tokio::test(start_paused = true)]

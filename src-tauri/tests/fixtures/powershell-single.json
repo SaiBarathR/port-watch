@@ -1,0 +1,1 @@
+{"pid":9120,"name":"python.exe","user":"DESKTOP-7Q2\\dev","localAddress":"127.0.0.1","localPort":8000,"executablePath":"C:\\Users\\dev\\AppData\\Local\\Programs\\Python\\Python312\\python.exe","commandLine":"python -m http.server 8000 --bind 127.0.0.1","protocol":"TCP","startedAt":1790001234}

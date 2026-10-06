@@ -1,0 +1,19 @@
+p1006
+fcwd
+n/
+ftxt
+n/usr/libexec/rapportd
+ftxt
+n/usr/lib/dyld
+p4310
+fcwd
+n/Users/dev/projects/caf\xc3\xa9 app
+ftxt
+n/opt/homebrew/Cellar/postgresql@16/16.4/bin/postgres
+ftxt
+n/opt/homebrew/Cellar/icu4c/74.2/lib/libicudata.74.2.dylib
+ftxt
+n/usr/lib/dyld
+p7777
+ftxt
+n/Users/dev/bin/back\\slash

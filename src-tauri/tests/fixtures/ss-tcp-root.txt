@@ -1,0 +1,4 @@
+LISTEN 0      128      0.0.0.0:80   0.0.0.0:* users:(("python3",pid=23,fd=3),("python3",pid=21,fd=3))
+LISTEN 0      5        0.0.0.0:9000 0.0.0.0:*                                                        
+LISTEN 0      5      127.0.0.1:8000 0.0.0.0:* users:(("python3",pid=14,fd=3))                        
+LISTEN 0      5              *:8080       *:* users:(("python3",pid=16,fd=3))                        

@@ -1,10 +1,5 @@
 import { memo } from "react";
-import {
-  flexRender,
-  type Cell,
-  type ColumnDef,
-  type Row,
-} from "@tanstack/react-table";
+import { flexRender, type Cell, type Row } from "@tanstack/react-table";
 import type { RowChangeKind } from "@/lib/types";
 import type { PortProcess } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -33,10 +28,10 @@ function stickyCellClass(position: "first" | "last") {
 
 interface PortTableDataRowProps {
   row: Row<PortProcess>;
-  // Not read here: the cells are rendered by `columns`, whose renderers close
-  // over settings. TanStack keeps `row` when only the columns change, so
-  // without this prop an open row menu kept showing the old settings.
-  columns: ColumnDef<PortProcess>[];
+  // Not read here: the cells take settings from the table's `meta`, and
+  // TanStack keeps `row` when only that changes. Without this prop an open
+  // row menu kept showing the old settings until the next scan.
+  meta: object;
   change: RowChangeKind | undefined;
   columnCount: number;
   // isSelected/canSelect are passed as primitives so this memoized row re-renders

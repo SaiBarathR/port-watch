@@ -10,6 +10,7 @@ vi.mock("sonner", () => ({ toast: sonner }));
 
 import {
   MUTE_DURATIONS,
+  VISIBLE_TOASTS,
   changeToastStatus,
   isChangeToastsMuted,
   addPortChanges,
@@ -173,6 +174,40 @@ describe("showPortChanges", () => {
 
     expect(lastCall().id).toBe(second.id);
     expect(lastCall().title).toBe("2 port changes detected");
+  });
+
+  // Updating a toast leaves it where it is in the stack, which shows only
+  // the newest few.
+  it("moves to a new toast, keeping the count, when newer toasts buried it", () => {
+    showPortChanges(["a", "b"]);
+    const first = lastCall();
+    const newer = Array.from({ length: VISIBLE_TOASTS }, (_, n) => ({ id: n }));
+    sonner.getToasts.mockReturnValueOnce([{ id: first.id }, ...newer]);
+
+    showPortChanges(["c"]);
+
+    expect(lastCall().id).not.toBe(first.id);
+    expect(lastCall().title).toBe("3 port changes detected");
+    expect(sonner.dismiss.mock.calls).toEqual([[first.id]]);
+
+    // The buried toast reporting its dismissal does not reset the new one.
+    first.onDismiss();
+    showPortChanges(["d"]);
+    expect(lastCall().title).toBe("4 port changes detected");
+  });
+
+  it("stays in place while it is still among the visible toasts", () => {
+    showPortChanges(["a"]);
+    const first = lastCall();
+    const newer = Array.from({ length: VISIBLE_TOASTS - 1 }, (_, n) => ({
+      id: n,
+    }));
+    sonner.getToasts.mockReturnValueOnce([{ id: first.id }, ...newer]);
+
+    showPortChanges(["b"]);
+
+    expect(lastCall().id).toBe(first.id);
+    expect(sonner.dismiss).not.toHaveBeenCalled();
   });
 
   it("starts a new toast after the port change toasts are dismissed", () => {

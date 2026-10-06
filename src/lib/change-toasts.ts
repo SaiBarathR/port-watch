@@ -14,6 +14,9 @@ const MAX_MUTE_MS =
 const PORT_CHANGE_TOAST_ID_PREFIX = "port-change-";
 const PORT_CHANGE_PREVIEW_LINES = 5;
 
+/** How many toasts the stack shows at once; older ones wait behind them. */
+export const VISIBLE_TOASTS = 5;
+
 let confirmationToastId: number | string | null = null;
 
 export type ChangeToastStatus = "on" | "muted" | "off";
@@ -94,20 +97,34 @@ export function portChangeToastContent(shown: ShownPortChanges): {
   };
 }
 
+function nextPortChangeToastId(): string {
+  portChangeToastCount += 1;
+  return `${PORT_CHANGE_TOAST_ID_PREFIX}${portChangeToastCount}`;
+}
+
+// Active toasts come back oldest first, and the stack shows the newest few.
+function isBuried(id: string): boolean {
+  const active = toast.getToasts();
+  const index = active.findIndex((item) => item.id === id);
+  return index !== -1 && active.length - 1 - index >= VISIBLE_TOASTS;
+}
+
 /**
  * Announces port changes in a single toast. While that toast is on screen,
  * later changes are added to it, instead of every scan stacking a new one.
  */
 export function showPortChanges(messages: string[]) {
-  // A toast that has started to leave gets no more updates: sonner removes
-  // it by id a moment later, and would take the update with it. The next
-  // change starts a new toast under a new id.
+  // Updating a toast does not move it up the stack. If newer toasts have
+  // pushed this one out of view, a new toast takes over its count.
+  if (liveToast !== null && isBuried(liveToast.id)) {
+    const buried = liveToast;
+    liveToast = { id: nextPortChangeToastId(), shown: buried.shown };
+    toast.dismiss(buried.id);
+  }
+  // A toast that has started to leave gets no more updates either: sonner
+  // removes it by id a moment later, and would take the update with it.
   if (liveToast === null) {
-    portChangeToastCount += 1;
-    liveToast = {
-      id: `${PORT_CHANGE_TOAST_ID_PREFIX}${portChangeToastCount}`,
-      shown: NO_PORT_CHANGES,
-    };
+    liveToast = { id: nextPortChangeToastId(), shown: NO_PORT_CHANGES };
   }
   const current = liveToast;
   current.shown = addPortChanges(current.shown, messages);

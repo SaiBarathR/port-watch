@@ -1,71 +1,40 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   flexRender,
   getCoreRowModel,
   useReactTable,
-  type ColumnDef,
   type ColumnSizingState,
-  type Header,
   type RowSelectionState,
-  type Table,
 } from "@tanstack/react-table";
-import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { DeleteDialog } from "@/components/delete-dialog";
-import { Uptime } from "@/components/uptime";
-import {
-  OpenMenuProvider,
-  PortTableActionsCell,
-  type PortTableActionsHandlers,
-} from "@/components/port-table-actions-cell";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { OpenMenuProvider } from "@/components/port-table-actions-cell";
+import { columns, type PortTableMeta } from "@/components/port-table-columns";
 import {
   PortTableDataRow,
   PortTableGroupRow,
+  stickyCellClass,
 } from "@/components/port-table-row";
-import { PortHistoryTimeline } from "@/components/port-history-timeline";
-import { StopDialog } from "@/components/stop-dialog";
-import {
-  DEFAULT_COLUMN_SIZING,
-  clampColumnWidth,
-  loadColumnSizing,
-  saveColumnSizing,
-  totalColumnWidth,
-} from "@/lib/column-sizing";
-import { portHintsLabel } from "@/lib/port-hints";
-import { holdRefresh, useRefreshPause } from "@/lib/refresh-pause";
+import { useProcessActions } from "@/components/process-actions";
+import { loadColumnSizing, saveColumnSizing } from "@/lib/column-sizing";
+import { useRefreshPause } from "@/lib/refresh-pause";
 import { sortForTable, withGroupHeaders } from "@/lib/table-rows";
-import type { AppSettings, PortProcess, RowChangeKind } from "@/lib/types";
 import {
-  formatPorts,
-  processesOnPort,
-  systemKindLabel,
   userProcesses,
+  type AppSettings,
+  type PortProcess,
+  type RowChangeKind,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface PortTableProps {
-  /** Every listener, for actions that reach past the filter. */
+  /** Every listener, to tell "nothing listening" from "nothing matches". */
   processes: PortProcess[];
   /** The ones the search and the filters let through, which are the rows. */
   shownProcesses: PortProcess[];
@@ -73,263 +42,7 @@ interface PortTableProps {
   loading: boolean;
   settings: AppSettings;
   rowChanges: Map<string, RowChangeKind>;
-  onRefresh: () => void;
 }
-
-function changeBadge(change: RowChangeKind | undefined) {
-  if (!change) {
-    return null;
-  }
-
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "ml-2 text-[10px] uppercase",
-        change === "new" &&
-          "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
-        change === "changed" &&
-          "border-amber-500/40 text-amber-600 dark:text-amber-400",
-      )}
-    >
-      {change}
-    </Badge>
-  );
-}
-
-function stickyCellClass(
-  position: "first" | "last" | "corner-left" | "corner-right",
-) {
-  const base =
-    "bg-background group-hover:bg-[color-mix(in_oklch,var(--muted)_50%,var(--background))]";
-  switch (position) {
-    case "first":
-      return cn(base, "sticky left-0 z-10");
-    case "last":
-      return cn(base, "sticky right-0 z-10");
-    case "corner-left":
-      return cn("bg-background", "sticky left-0 top-0 z-30");
-    case "corner-right":
-      return cn("bg-background", "sticky right-0 top-0 z-30");
-  }
-}
-
-// What the cell renderers need besides their row. It reaches them through the
-// table's `meta` instead of closures, so the column definitions never change.
-// flexRender mounts each cell renderer as a component: a new function would
-// remount the cell, and an open row menu would lose its keyboard focus.
-interface PortTableMeta {
-  includeUdp: boolean;
-  rowChanges: Map<string, RowChangeKind>;
-  canStop: (process: PortProcess) => boolean;
-  actionSettings: Pick<
-    AppSettings,
-    "pinnedPaths" | "preferredEditor" | "useHttpsForLocalhost"
-  >;
-  actionHandlers: PortTableActionsHandlers;
-}
-
-function metaOf(table: Table<PortProcess>): PortTableMeta {
-  return table.options.meta as PortTableMeta;
-}
-
-async function openFolder(path: string) {
-  try {
-    await invoke("open_in_finder", { path });
-  } catch (err) {
-    toast.error(String(err));
-  }
-}
-
-const columns: ColumnDef<PortProcess>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <input
-        type="checkbox"
-        className="size-4 accent-primary"
-        checked={table.getIsAllPageRowsSelected()}
-        ref={(element) => {
-          if (element) {
-            element.indeterminate =
-              table.getIsSomePageRowsSelected() &&
-              !table.getIsAllPageRowsSelected();
-          }
-        }}
-        onChange={table.getToggleAllPageRowsSelectedHandler()}
-        aria-label="Select all visible processes"
-      />
-    ),
-    size: DEFAULT_COLUMN_SIZING.select,
-    minSize: 40,
-    maxSize: 40,
-    enableResizing: false,
-    cell: ({ row, table }) => (
-      <input
-        type="checkbox"
-        className="size-4 accent-primary"
-        checked={row.getIsSelected()}
-        disabled={!metaOf(table).canStop(row.original)}
-        onChange={row.getToggleSelectedHandler()}
-        aria-label={`Select ${row.original.name}`}
-      />
-    ),
-  },
-  {
-    id: "ports",
-    accessorFn: (row) => row.ports[0]?.port ?? 0,
-    header: "Port(s)",
-    size: DEFAULT_COLUMN_SIZING.ports,
-    minSize: 72,
-    maxSize: 400,
-    cell: ({ row, table }) => {
-      const { includeUdp, rowChanges } = metaOf(table);
-      const hint = portHintsLabel(row.original.ports);
-      const portsText = formatPorts(row.original.ports, includeUdp);
-      return (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="flex min-w-0 flex-col truncate font-mono text-sm">
-              <span className="flex items-center truncate">
-                <span className="truncate">{portsText}</span>
-                {changeBadge(rowChanges.get(row.original.id))}
-              </span>
-              {hint && (
-                <span className="truncate text-[10px] text-muted-foreground">
-                  {hint}
-                </span>
-              )}
-            </span>
-          </TooltipTrigger>
-          {hint && <TooltipContent side="bottom">{hint}</TooltipContent>}
-        </Tooltip>
-      );
-    },
-  },
-  {
-    accessorKey: "name",
-    id: "name",
-    header: "Process",
-    size: DEFAULT_COLUMN_SIZING.name,
-    minSize: 72,
-    maxSize: 240,
-    cell: ({ row }) => (
-      <span className="block truncate font-medium">{row.original.name}</span>
-    ),
-  },
-  {
-    accessorKey: "pid",
-    id: "pid",
-    header: "PID",
-    size: DEFAULT_COLUMN_SIZING.pid,
-    minSize: 56,
-    maxSize: 120,
-    cell: ({ row }) => (
-      <span className="block truncate font-mono">{row.original.pid}</span>
-    ),
-  },
-  {
-    accessorKey: "user",
-    header: "User",
-    size: DEFAULT_COLUMN_SIZING.user,
-    minSize: 72,
-    maxSize: 160,
-    cell: ({ row }) => (
-      <span className="block truncate">{row.original.user}</span>
-    ),
-  },
-  {
-    id: "script",
-    header: "Script / Command",
-    size: DEFAULT_COLUMN_SIZING.script,
-    minSize: 120,
-    maxSize: 600,
-    cell: ({ row }) => {
-      const display =
-        row.original.script_path ||
-        row.original.command_line ||
-        row.original.executable_path;
-      return (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="block truncate text-sm">{display}</span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-md">
-            {row.original.command_line || display}
-          </TooltipContent>
-        </Tooltip>
-      );
-    },
-  },
-  {
-    id: "directory",
-    header: "Directory",
-    size: DEFAULT_COLUMN_SIZING.directory,
-    minSize: 120,
-    maxSize: 500,
-    cell: ({ row }) => {
-      const cwd = row.original.working_directory;
-      if (!cwd) return <span className="text-muted-foreground">—</span>;
-      return (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className="block w-full truncate text-left text-sm text-primary hover:underline"
-              onClick={() => void openFolder(cwd)}
-            >
-              {cwd}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-md">
-            {cwd}
-          </TooltipContent>
-        </Tooltip>
-      );
-    },
-  },
-  {
-    id: "uptime",
-    accessorKey: "started_at",
-    header: "Uptime",
-    size: DEFAULT_COLUMN_SIZING.uptime,
-    minSize: 72,
-    maxSize: 160,
-    cell: ({ row }) => (
-      <span className="block truncate font-mono text-sm">
-        <Uptime startedAt={row.original.started_at} />
-      </span>
-    ),
-  },
-  {
-    id: "type",
-    header: "Type",
-    size: DEFAULT_COLUMN_SIZING.type,
-    minSize: 96,
-    maxSize: 180,
-    enableResizing: false,
-    cell: ({ row }) => (
-      <Badge variant={row.original.system_kind}>
-        {systemKindLabel(row.original.system_kind)}
-      </Badge>
-    ),
-  },
-  {
-    id: "actions",
-    header: "",
-    size: DEFAULT_COLUMN_SIZING.actions,
-    minSize: 52,
-    maxSize: 52,
-    enableResizing: false,
-    cell: ({ row, table }) => (
-      <PortTableActionsCell
-        process={row.original}
-        settings={metaOf(table).actionSettings}
-        handlers={metaOf(table).actionHandlers}
-      />
-    ),
-  },
-];
 
 export function PortTable({
   processes,
@@ -337,62 +50,21 @@ export function PortTable({
   loading,
   settings,
   rowChanges,
-  onRefresh,
 }: PortTableProps) {
+  const { canStop, stop } = useProcessActions();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [columnSizing, setColumnSizing] =
     useState<ColumnSizingState>(loadColumnSizing);
-  const tableRef = useRef<HTMLTableElement>(null);
-  const colRefs = useRef<Record<string, HTMLTableColElement | null>>({});
-  const releaseResizeHoldRef = useRef<(() => void) | null>(null);
-  const dragRef = useRef<{
-    columnId: string;
-    startX: number;
-    startWidth: number;
-    minSize: number;
-    maxSize: number;
-    liveSizing: ColumnSizingState;
-    rafId: number | null;
-  } | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [stopTargets, setStopTargets] = useState<PortProcess[]>([]);
-  const [stopDialogTitle, setStopDialogTitle] = useState<string | undefined>();
-  const [stopDialogDescription, setStopDialogDescription] = useState<
-    string | undefined
-  >();
-  const [deleteTarget, setDeleteTarget] = useState<{
-    process: PortProcess;
-    mode: "trash" | "permanent";
-  } | null>(null);
-  const [historyPort, setHistoryPort] = useState<number | null>(null);
 
-  const openStopDialog = useCallback(
-    (targets: PortProcess[], title?: string, description?: string) => {
-      setStopDialogTitle(title);
-      setStopDialogDescription(description);
-      setStopTargets(targets);
-    },
-    [],
-  );
+  // Rows must not move under an open menu.
+  useRefreshPause("row-menu", openMenuId !== null);
 
-  // Rows must not move under an open menu or behind a dialog about them.
-  useRefreshPause(
-    "port-table",
-    openMenuId !== null ||
-      stopTargets.length > 0 ||
-      deleteTarget !== null ||
-      historyPort !== null,
-  );
-
+  // A process that is gone, or can no longer be stopped, leaves the selection.
   useEffect(() => {
     setRowSelection((current) => {
       const selectableIds = new Set(
-        processes
-          .filter(
-            (process) =>
-              !process.is_system_service || settings.allowSystemProcessActions,
-          )
-          .map((process) => process.id),
+        processes.filter(canStop).map((process) => process.id),
       );
       const next: RowSelectionState = {};
       let changed = false;
@@ -405,203 +77,7 @@ export function PortTable({
       }
       return changed ? next : current;
     });
-  }, [processes, settings.allowSystemProcessActions]);
-
-  useEffect(() => {
-    return () => {
-      releaseResizeHoldRef.current?.();
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    };
-  }, []);
-
-  const applyLiveSizing = useCallback((sizing: ColumnSizingState) => {
-    for (const [columnId, width] of Object.entries(sizing)) {
-      colRefs.current[columnId]?.style.setProperty("width", `${width}px`);
-    }
-    if (tableRef.current) {
-      tableRef.current.style.width = `${totalColumnWidth(sizing)}px`;
-    }
-  }, []);
-
-  const handleResizePointerDown = useCallback(
-    (
-      event: React.PointerEvent<HTMLDivElement>,
-      header: Header<PortProcess, unknown>,
-    ) => {
-      if (!header.column.getCanResize()) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      const handle = event.currentTarget;
-      handle.setPointerCapture(event.pointerId);
-
-      const columnId = header.column.id;
-      const startWidth = header.getSize();
-      const minSize = header.column.columnDef.minSize ?? 20;
-      const maxSize =
-        header.column.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER;
-
-      dragRef.current = {
-        columnId,
-        startX: event.clientX,
-        startWidth,
-        minSize,
-        maxSize,
-        liveSizing: { ...columnSizing },
-        rafId: null,
-      };
-      releaseResizeHoldRef.current?.();
-      releaseResizeHoldRef.current = holdRefresh("column-resize");
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "col-resize";
-
-      const scheduleApply = (width: number) => {
-        const drag = dragRef.current;
-        if (!drag) {
-          return;
-        }
-
-        drag.liveSizing = { ...drag.liveSizing, [columnId]: width };
-        if (drag.rafId !== null) {
-          return;
-        }
-
-        drag.rafId = requestAnimationFrame(() => {
-          const active = dragRef.current;
-          if (!active) {
-            return;
-          }
-          active.rafId = null;
-          applyLiveSizing(active.liveSizing);
-        });
-      };
-
-      const finishResize = (clientX: number) => {
-        const drag = dragRef.current;
-        if (!drag) {
-          return;
-        }
-
-        if (drag.rafId !== null) {
-          cancelAnimationFrame(drag.rafId);
-        }
-
-        const newWidth = clampColumnWidth(
-          drag.startWidth + (clientX - drag.startX),
-          drag.minSize,
-          drag.maxSize,
-        );
-        const nextSizing = { ...columnSizing, [columnId]: newWidth };
-
-        dragRef.current = null;
-        releaseResizeHoldRef.current?.();
-        releaseResizeHoldRef.current = null;
-        document.body.style.userSelect = "";
-        document.body.style.cursor = "";
-
-        setColumnSizing(nextSizing);
-        saveColumnSizing(nextSizing);
-        applyLiveSizing(nextSizing);
-      };
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        if (!dragRef.current || moveEvent.pointerId !== event.pointerId) {
-          return;
-        }
-
-        scheduleApply(
-          clampColumnWidth(
-            dragRef.current.startWidth +
-              (moveEvent.clientX - dragRef.current.startX),
-            dragRef.current.minSize,
-            dragRef.current.maxSize,
-          ),
-        );
-      };
-
-      const onPointerUp = (upEvent: PointerEvent) => {
-        if (upEvent.pointerId !== event.pointerId) {
-          return;
-        }
-
-        handle.removeEventListener("pointermove", onPointerMove);
-        handle.removeEventListener("pointerup", onPointerUp);
-        handle.removeEventListener("pointercancel", onPointerUp);
-        if (handle.hasPointerCapture(upEvent.pointerId)) {
-          handle.releasePointerCapture(upEvent.pointerId);
-        }
-        finishResize(upEvent.clientX);
-      };
-
-      handle.addEventListener("pointermove", onPointerMove);
-      handle.addEventListener("pointerup", onPointerUp);
-      handle.addEventListener("pointercancel", onPointerUp);
-    },
-    [applyLiveSizing, columnSizing],
-  );
-
-  const handleResizeReset = useCallback(
-    (columnId: string) => {
-      const nextSizing = {
-        ...columnSizing,
-        [columnId]: DEFAULT_COLUMN_SIZING[columnId],
-      };
-      setColumnSizing(nextSizing);
-      saveColumnSizing(nextSizing);
-      applyLiveSizing(nextSizing);
-    },
-    [applyLiveSizing, columnSizing],
-  );
-
-  // PID 0 is a listener whose owner the scan could not see (Linux, without
-  // root): there is no process to act on.
-  const canStop = useCallback(
-    (process: PortProcess) =>
-      process.pid !== 0 &&
-      (!process.is_system_service || settings.allowSystemProcessActions),
-    [settings.allowSystemProcessActions],
-  );
-
-  // Read through a ref so the row action handlers keep their identity across
-  // scans instead of re-rendering every row.
-  const processesRef = useRef(processes);
-  useEffect(() => {
-    processesRef.current = processes;
-  }, [processes]);
-
-  // A listening socket can be shared by several processes (a reloader and its
-  // worker, a pre-forked server), so freeing the port means stopping them all.
-  const openFreePortDialog = useCallback(
-    (process: PortProcess, port: number) => {
-      const others = processesOnPort(processesRef.current, port).filter(
-        (occupant) => occupant.id !== process.id && canStop(occupant),
-      );
-      const targets = [process, ...others];
-      openStopDialog(
-        targets,
-        `Free port ${port}?`,
-        others.length === 0
-          ? `Stop ${process.name} (PID ${process.pid}) to free port ${port}.`
-          : `Stop ${targets.length} processes to free port ${port}.`,
-      );
-    },
-    [canStop, openStopDialog],
-  );
-
-  const actionHandlers = useMemo<PortTableActionsHandlers>(
-    () => ({
-      canStop,
-      openStopDialog,
-      openFreePortDialog,
-      setHistoryPort,
-      setDeleteTarget,
-    }),
-    [canStop, openStopDialog, openFreePortDialog],
-  );
+  }, [processes, canStop]);
 
   const actionSettings = useMemo(
     () => ({
@@ -631,9 +107,8 @@ export function PortTable({
       rowChanges,
       canStop,
       actionSettings,
-      actionHandlers,
     }),
-    [actionHandlers, actionSettings, canStop, rowChanges, settings.includeUdp],
+    [actionSettings, canStop, rowChanges, settings.includeUdp],
   );
 
   const table = useReactTable({
@@ -645,10 +120,22 @@ export function PortTable({
     onRowSelectionChange: setRowSelection,
     enableRowSelection: (row) => canStop(row.original),
     getRowId: (row) => row.id,
-    columnResizeMode: "onEnd",
+    columnResizeMode: "onChange",
     enableColumnResizing: true,
     getCoreRowModel: getCoreRowModel(),
   });
+
+  // Rows must not move while a column is being dragged either, and the
+  // widths are saved when the drag ends, not on every pixel of it.
+  const resizing = table.getState().columnSizingInfo.isResizingColumn !== false;
+  useRefreshPause("column-resize", resizing);
+  const savedSizingRef = useRef(columnSizing);
+  useEffect(() => {
+    if (!resizing && savedSizingRef.current !== columnSizing) {
+      savedSizingRef.current = columnSizing;
+      saveColumnSizing(columnSizing);
+    }
+  }, [resizing, columnSizing]);
 
   // Derived on every render: `table` keeps its identity across state changes,
   // so it cannot serve as a memo dependency.
@@ -661,7 +148,6 @@ export function PortTable({
   );
 
   const columnCount = columns.length;
-  const tableWidth = totalColumnWidth(columnSizing);
 
   const tableRows = withGroupHeaders(
     table.getRowModel().rows,
@@ -672,7 +158,12 @@ export function PortTable({
   return (
     <OpenMenuProvider openMenuId={openMenuId} setOpenMenuId={setOpenMenuId}>
       <TooltipProvider>
-        <div className="flex h-full min-h-0 flex-col">
+        <div
+          className={cn(
+            "flex h-full min-h-0 flex-col",
+            resizing && "cursor-col-resize select-none",
+          )}
+        >
           {selectedProcesses.length > 0 && (
             <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
               <span className="text-sm text-muted-foreground">
@@ -682,7 +173,7 @@ export function PortTable({
                 size="sm"
                 variant="destructive"
                 onClick={() =>
-                  openStopDialog(
+                  stop(
                     selectedProcesses,
                     `Stop ${selectedProcesses.length} selected processes?`,
                   )
@@ -700,7 +191,7 @@ export function PortTable({
                   <DropdownMenuItem
                     disabled={visibleUserProcesses.length === 0}
                     onClick={() =>
-                      openStopDialog(
+                      stop(
                         visibleUserProcesses,
                         `Stop all ${visibleUserProcesses.length} visible user processes?`,
                         "This stops every visible user process in the current table view.",
@@ -723,23 +214,16 @@ export function PortTable({
 
           <div className="min-h-0 flex-1 overflow-auto rounded-md border">
             <table
-              ref={tableRef}
               className="caption-bottom text-sm"
               style={{
-                width: tableWidth,
+                width: table.getTotalSize(),
                 minWidth: "100%",
                 tableLayout: "fixed",
               }}
             >
               <colgroup>
                 {table.getAllLeafColumns().map((column) => (
-                  <col
-                    key={column.id}
-                    ref={(element) => {
-                      colRefs.current[column.id] = element;
-                    }}
-                    style={{ width: column.getSize() }}
-                  />
+                  <col key={column.id} style={{ width: column.getSize() }} />
                 ))}
               </colgroup>
               <thead className="sticky top-0 z-20 bg-background [&_tr]:border-b">
@@ -770,12 +254,9 @@ export function PortTable({
                               )}
                           {header.column.getCanResize() && (
                             <div
-                              onPointerDown={(event) =>
-                                handleResizePointerDown(event, header)
-                              }
-                              onDoubleClick={() =>
-                                handleResizeReset(header.column.id)
-                              }
+                              onMouseDown={header.getResizeHandler()}
+                              onTouchStart={header.getResizeHandler()}
+                              onDoubleClick={() => header.column.resetSize()}
                               className="group/resize absolute top-0 -right-1 z-40 h-full w-2 cursor-col-resize touch-none select-none"
                             >
                               <div
@@ -843,51 +324,6 @@ export function PortTable({
             </table>
           </div>
         </div>
-
-        <StopDialog
-          processes={stopTargets}
-          open={stopTargets.length > 0}
-          onOpenChange={(open) => {
-            if (!open) {
-              setStopTargets([]);
-              setStopDialogTitle(undefined);
-              setStopDialogDescription(undefined);
-            }
-          }}
-          title={stopDialogTitle}
-          description={stopDialogDescription}
-          requireDoubleConfirm={
-            stopTargets.some((process) => process.is_system_service) &&
-            settings.allowSystemProcessActions
-          }
-          onStopped={() => {
-            setRowSelection({});
-            onRefresh();
-          }}
-        />
-
-        <DeleteDialog
-          target={deleteTarget}
-          open={deleteTarget !== null}
-          onOpenChange={(open) => !open && setDeleteTarget(null)}
-          allowSystemProcessActions={settings.allowSystemProcessActions}
-          onComplete={onRefresh}
-        />
-
-        <Dialog
-          open={historyPort !== null}
-          onOpenChange={(open) => !open && setHistoryPort(null)}
-        >
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>Port {historyPort} history</DialogTitle>
-              <DialogDescription>
-                Occupied and freed events recorded during scans.
-              </DialogDescription>
-            </DialogHeader>
-            {historyPort !== null && <PortHistoryTimeline port={historyPort} />}
-          </DialogContent>
-        </Dialog>
       </TooltipProvider>
     </OpenMenuProvider>
   );

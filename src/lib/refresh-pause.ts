@@ -8,22 +8,37 @@ import { invoke } from "@tauri-apps/api/core";
 // under a menu that was still open.
 const reasons = new Set<string>();
 
+let told = false;
+let scheduled = false;
+
+// At the end of the turn, and only when the answer changed: a menu that
+// gives way to a dialog lets go and takes hold within one render, and the
+// backend scans as soon as it hears "resume".
 function tellBackend() {
-  void invoke("set_refresh_paused", { paused: reasons.size > 0 }).catch(() => {
-    // not inside the app
+  if (scheduled) {
+    return;
+  }
+  scheduled = true;
+  queueMicrotask(() => {
+    scheduled = false;
+    const paused = reasons.size > 0;
+    if (paused === told) {
+      return;
+    }
+    told = paused;
+    void invoke("set_refresh_paused", { paused }).catch(() => {
+      // not inside the app
+    });
   });
 }
 
 /** Pauses periodic scans until the function it returns is called. */
 export function holdRefresh(reason: string): () => void {
-  const wasPaused = reasons.size > 0;
   reasons.add(reason);
-  if (!wasPaused) {
-    tellBackend();
-  }
+  tellBackend();
 
   return () => {
-    if (reasons.delete(reason) && reasons.size === 0) {
+    if (reasons.delete(reason)) {
       tellBackend();
     }
   };

@@ -1,0 +1,183 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { toast } from "sonner";
+import { DeleteDialog } from "@/components/delete-dialog";
+import { PortHistoryTimeline } from "@/components/port-history-timeline";
+import { StopDialog } from "@/components/stop-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useRefreshPause } from "@/lib/refresh-pause";
+import { useSettings } from "@/lib/settings-store";
+import { processesOnPort, type PortProcess } from "@/lib/types";
+
+/** What can be done to a listed process, wherever the request comes from. */
+export interface ProcessActions {
+  /** False for a system service while those are locked, and for a listener
+   * whose owner the scan could not see: there is no process to act on. */
+  canStop: (process: PortProcess) => boolean;
+  /** Asks, then stops the processes given. */
+  stop: (targets: PortProcess[], title?: string, description?: string) => void;
+  /**
+   * Asks, then stops everything holding the port that can be stopped. A
+   * socket can be shared (a reloader and its worker, a pre-forked server),
+   * so freeing a port means stopping all of them. `first` leads the list.
+   */
+  freePort: (port: number, first?: PortProcess) => void;
+  /** Asks, then stops the process and removes its project folder. */
+  remove: (process: PortProcess, mode: "trash" | "permanent") => void;
+  showHistory: (port: number) => void;
+}
+
+const ProcessActionsContext = createContext<ProcessActions | null>(null);
+
+export function useProcessActions(): ProcessActions {
+  const actions = useContext(ProcessActionsContext);
+  if (!actions) {
+    throw new Error("useProcessActions needs a ProcessActionsProvider");
+  }
+  return actions;
+}
+
+interface StopRequest {
+  targets: PortProcess[];
+  title?: string;
+  description?: string;
+}
+
+interface ProcessActionsProviderProps {
+  /** Every listener, shown or not: freeing a port reaches past the filter. */
+  processes: PortProcess[];
+  /** Called after something was stopped or removed. */
+  onChanged: () => void;
+  children: ReactNode;
+}
+
+/**
+ * The one owner of the stop, delete and history dialogs. The toolbar's port
+ * lookup and the table's rows each had a stop dialog of their own, and chose
+ * what "free this port" stops differently.
+ */
+export function ProcessActionsProvider({
+  processes,
+  onChanged,
+  children,
+}: ProcessActionsProviderProps) {
+  const { allowSystemProcessActions } = useSettings();
+  const [stopRequest, setStopRequest] = useState<StopRequest | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    process: PortProcess;
+    mode: "trash" | "permanent";
+  } | null>(null);
+  const [historyPort, setHistoryPort] = useState<number | null>(null);
+
+  // Rows must not move behind a dialog that is about them.
+  useRefreshPause(
+    "process-dialog",
+    stopRequest !== null || deleteTarget !== null || historyPort !== null,
+  );
+
+  // Read through a ref, so the actions keep their identity from one scan to
+  // the next and the rows that hold them do not render again.
+  const processesRef = useRef(processes);
+  useEffect(() => {
+    processesRef.current = processes;
+  }, [processes]);
+
+  const canStop = useCallback(
+    (process: PortProcess) =>
+      process.pid !== 0 &&
+      (!process.is_system_service || allowSystemProcessActions),
+    [allowSystemProcessActions],
+  );
+
+  const actions = useMemo<ProcessActions>(
+    () => ({
+      canStop,
+      stop: (targets, title, description) => {
+        if (targets.length > 0) {
+          setStopRequest({ targets, title, description });
+        }
+      },
+      freePort: (port, first) => {
+        const holders = processesOnPort(processesRef.current, port).filter(
+          (holder) => holder.id !== first?.id && canStop(holder),
+        );
+        const targets = first ? [first, ...holders] : holders;
+        if (targets.length === 0) {
+          toast.error(`Nothing on port ${port} can be stopped from here`, {
+            description:
+              "What holds it is a system service, or belongs to another user.",
+          });
+          return;
+        }
+        setStopRequest({
+          targets,
+          title: `Free port ${port}?`,
+          description:
+            targets.length === 1
+              ? `Stop ${targets[0].name} (PID ${targets[0].pid}) to free port ${port}.`
+              : `Stop ${targets.length} processes to free port ${port}.`,
+        });
+      },
+      remove: (process, mode) => setDeleteTarget({ process, mode }),
+      showHistory: setHistoryPort,
+    }),
+    [canStop],
+  );
+
+  return (
+    <ProcessActionsContext.Provider value={actions}>
+      {children}
+
+      <StopDialog
+        processes={stopRequest?.targets ?? []}
+        open={stopRequest !== null}
+        onOpenChange={(open) => !open && setStopRequest(null)}
+        title={stopRequest?.title}
+        description={stopRequest?.description}
+        requireDoubleConfirm={
+          allowSystemProcessActions &&
+          (stopRequest?.targets.some((process) => process.is_system_service) ??
+            false)
+        }
+        onStopped={onChanged}
+      />
+
+      <DeleteDialog
+        target={deleteTarget}
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        allowSystemProcessActions={allowSystemProcessActions}
+        onComplete={onChanged}
+      />
+
+      <Dialog
+        open={historyPort !== null}
+        onOpenChange={(open) => !open && setHistoryPort(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Port {historyPort} history</DialogTitle>
+            <DialogDescription>
+              Occupied and freed events recorded during scans.
+            </DialogDescription>
+          </DialogHeader>
+          {historyPort !== null && <PortHistoryTimeline port={historyPort} />}
+        </DialogContent>
+      </Dialog>
+    </ProcessActionsContext.Provider>
+  );
+}

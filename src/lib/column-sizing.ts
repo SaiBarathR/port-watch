@@ -30,15 +30,3 @@ export function loadColumnSizing(): ColumnSizingState {
 export function saveColumnSizing(sizing: ColumnSizingState) {
   localStorage.setItem(COLUMN_SIZING_KEY, JSON.stringify(sizing));
 }
-
-export function clampColumnWidth(
-  width: number,
-  minSize = 20,
-  maxSize = Number.MAX_SAFE_INTEGER,
-): number {
-  return Math.round(Math.min(maxSize, Math.max(minSize, width)));
-}
-
-export function totalColumnWidth(sizing: ColumnSizingState): number {
-  return Object.values(sizing).reduce((sum, width) => sum + width, 0);
-}

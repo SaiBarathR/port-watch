@@ -1,4 +1,5 @@
-use crate::platform::unix::{self, LiveProcess, Probe};
+use crate::platform::identity::{LiveProcess, Probe};
+use crate::platform::unix;
 use crate::scanner::ProcessIdentity;
 
 pub fn open_in_file_manager(path: &str) -> Result<(), String> {
@@ -77,30 +78,33 @@ pub fn probe() -> Probe {
     Probe {
         live: live_process,
         names_match: |live, scanned| live == scanned,
+        // The kernel keeps one start time per process, whichever call
+        // reports it.
+        start_slack: 0,
     }
 }
 
 fn live_process(pid: u32) -> LiveProcess {
-    // The start time comes from a call that answers for every user's
-    // process, so it also says whether the PID exists at all.
-    let Some(started_at) = process_started_at(pid) else {
-        return LiveProcess::Gone;
-    };
-
     match bsd_info(pid) {
         Ok(info) if info.pbi_status == libc::SZOMB => LiveProcess::Gone,
+        // Name and start time from one reply, so they describe one process
+        // and not two that held the PID in turn.
         Ok(info) => LiveProcess::Running {
             name: process_name(&info),
-            started_at,
+            started_at: info.pbi_start_tvsec,
         },
-        // Another user's process: it exists, but its name is not ours to read.
-        Err(error) if error.raw_os_error() == Some(libc::EPERM) => LiveProcess::Running {
-            name: None,
-            started_at,
+        // No such process, or one that has exited and waits to be reaped.
+        // Only ESRCH says it is gone.
+        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => LiveProcess::Gone,
+        // Anything else, such as another user's process (EPERM): it exists,
+        // and its name is not ours to read. Its start time is public.
+        Err(_) => match process_started_at(pid) {
+            Some(started_at) => LiveProcess::Running {
+                name: None,
+                started_at,
+            },
+            None => LiveProcess::Gone,
         },
-        // "No such process" for a PID that still has a start time is a
-        // zombie: exited, not yet reaped by its parent.
-        Err(_) => LiveProcess::Gone,
     }
 }
 
@@ -140,8 +144,11 @@ fn bsd_info(pid: u32) -> std::io::Result<libc::proc_bsdinfo> {
         );
         if written == size {
             Ok(info.assume_init())
-        } else {
+        } else if written <= 0 {
             Err(std::io::Error::last_os_error())
+        } else {
+            // A short reply sets no error code; whatever is in errno is stale.
+            Err(std::io::Error::other("short reply from proc_pidinfo"))
         }
     }
 }

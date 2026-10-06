@@ -1,4 +1,5 @@
-use crate::platform::unix::{self, LiveProcess, Probe};
+use crate::platform::identity::{LiveProcess, Probe};
+use crate::platform::unix;
 use crate::scanner::ProcessIdentity;
 
 pub fn open_in_file_manager(path: &str) -> Result<(), String> {
@@ -117,30 +118,54 @@ pub fn probe() -> Probe {
     Probe {
         live: live_process,
         names_match: crate::platform::shared::process_names_match,
+        // Both readings come from /proc/<pid>/stat.
+        start_slack: 0,
     }
 }
 
 fn live_process(pid: u32) -> LiveProcess {
-    let proc_dir = std::path::PathBuf::from(format!("/proc/{pid}"));
-    let Ok(stat) = std::fs::read_to_string(proc_dir.join("stat")) else {
-        return LiveProcess::Gone;
+    // State, name and start time all come from this one read, so they
+    // describe one process and not two that held the PID in turn.
+    let stat = match std::fs::read(format!("/proc/{pid}/stat")) {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        // Only "no such process" says it is gone: a missing /proc/<pid>, or
+        // ESRCH from one that exited while the file was being read.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            return LiveProcess::Gone;
+        }
+        // It is there and cannot be read.
+        Err(_) => {
+            return LiveProcess::Running {
+                name: None,
+                started_at: 0,
+            }
+        }
     };
     if matches!(parse_state(&stat), Some('Z' | 'X')) {
         return LiveProcess::Gone;
     }
 
-    let name = std::fs::read_to_string(proc_dir.join("comm"))
-        .ok()
-        .map(|comm| comm.trim().to_string())
-        .filter(|name| !name.is_empty());
     LiveProcess::Running {
-        name,
-        started_at: super::scanner::read_proc_started_at(&proc_dir),
+        name: parse_comm(&stat),
+        started_at: super::scanner::started_at_from_stat(&stat),
     }
 }
 
-// The state is the field after the name, which is parenthesised and may
-// itself contain spaces and parentheses. Z (zombie) and X (dead) have exited.
+// The name is parenthesised and may itself contain spaces and parentheses,
+// so it runs from the first "(" to the last ")".
+fn parse_comm(proc_pid_stat: &str) -> Option<String> {
+    let start = proc_pid_stat.find('(')? + 1;
+    let end = proc_pid_stat.rfind(')')?;
+    proc_pid_stat
+        .get(start..end)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
+// The state is the field after the name. Z (zombie) and X (dead) have exited.
 fn parse_state(proc_pid_stat: &str) -> Option<char> {
     proc_pid_stat
         .rsplit_once(')')
@@ -157,6 +182,63 @@ mod tests {
         assert_eq!(parse_state("42 (sleep) S 1 42 42"), Some('S'));
         assert_eq!(parse_state("42 (tmux: server (1)) Z 1 42"), Some('Z'));
         assert_eq!(parse_state(""), None);
+    }
+
+    #[test]
+    fn parse_comm_reads_the_whole_parenthesised_name() {
+        assert_eq!(parse_comm("42 (sleep) S 1 42 42").as_deref(), Some("sleep"));
+        assert_eq!(
+            parse_comm("42 (tmux: server (1)) Z 1 42").as_deref(),
+            Some("tmux: server (1)")
+        );
+        assert_eq!(parse_comm("42 () S 1"), None);
+        assert_eq!(parse_comm(""), None);
+    }
+
+    // A name that is not valid UTF-8 used to fail the read, and a failed
+    // read used to mean "gone": the stop reported success and a delete went
+    // ahead with the process still running.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_process_whose_name_is_not_utf8_is_still_running() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let odd_name = dir.path().join(std::ffi::OsStr::from_bytes(b"sl\xffeep"));
+        let sleep = ["/bin/sleep", "/usr/bin/sleep"]
+            .into_iter()
+            .find(|path| std::path::Path::new(path).exists())
+            .expect("a sleep binary");
+        std::os::unix::fs::symlink(sleep, &odd_name).unwrap();
+        let mut child = std::process::Command::new(&odd_name)
+            .arg("60")
+            .spawn()
+            .expect("spawn sleep under an odd name");
+
+        // The child carries this thread's name until its exec completes.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let live = loop {
+            let live = live_process(child.id());
+            let renamed = matches!(
+                &live,
+                LiveProcess::Running { name: Some(name), .. } if name.contains('\u{fffd}')
+            );
+            if renamed || live == LiveProcess::Gone || std::time::Instant::now() >= deadline {
+                break live;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(
+            matches!(
+                &live,
+                LiveProcess::Running { name: Some(name), started_at }
+                    if name.contains('\u{fffd}') && *started_at > 0
+            ),
+            "{live:?}"
+        );
     }
 
     #[test]

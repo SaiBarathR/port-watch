@@ -2567,6 +2567,7 @@ version = "0.3.0"
 dependencies = [
  "dirs",
  "libc",
+ "same-file",
  "serde",
  "serde_json",
  "tauri",

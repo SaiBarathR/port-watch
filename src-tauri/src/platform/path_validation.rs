@@ -113,29 +113,26 @@ impl DeleteRules {
     }
 }
 
-/// Tells a directory from a different one that later takes over its path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FolderIdentity(FolderKey);
-
-// Device and inode.
-#[cfg(unix)]
-type FolderKey = (u64, u64);
-// Windows exposes no stable file id through std; a directory moved into
-// place keeps its own creation time, which serves the same purpose.
-#[cfg(not(unix))]
-type FolderKey = Option<std::time::SystemTime>;
+/// Tells a directory from a different one that later takes over its path,
+/// by the file system's own id for it: device and inode, or volume and file
+/// index on Windows. It holds the directory open, so drop it before removing
+/// the directory.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FolderIdentity {
+    handle: same_file::Handle,
+    // A second witness. On some Windows volumes (ReFS, some network shares)
+    // the file index is not unique, and two folders can report the same one.
+    created: Option<std::time::SystemTime>,
+}
 
 pub fn folder_identity(folder: &Path) -> std::io::Result<FolderIdentity> {
-    let metadata = std::fs::symlink_metadata(folder)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Ok(FolderIdentity((metadata.dev(), metadata.ino())))
-    }
-    #[cfg(not(unix))]
-    {
-        Ok(FolderIdentity(metadata.created().ok()))
-    }
+    let handle = same_file::Handle::from_path(folder)?;
+    let created = handle
+        .as_file()
+        .metadata()
+        .and_then(|metadata| metadata.created())
+        .ok();
+    Ok(FolderIdentity { handle, created })
 }
 
 fn matches_any(name: &str, candidates: &[&str]) -> bool {
@@ -396,8 +393,6 @@ mod tests {
         let original = folder_identity(&project).unwrap();
         assert_eq!(folder_identity(&project).unwrap(), original);
 
-        // Long enough for a new creation time where that is the identity.
-        std::thread::sleep(std::time::Duration::from_millis(20));
         fs::rename(&project, home.path.join("Dev/moved-away")).unwrap();
         fs::create_dir(&project).unwrap();
 

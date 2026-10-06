@@ -196,7 +196,7 @@ fn plan_delete(
 /// stop succeeded and the folder is still the one that was checked.
 fn run_delete(
     rules: &DeleteRules,
-    target: &DeleteTarget,
+    target: DeleteTarget,
     stop: impl FnOnce() -> Result<(), String>,
     remove: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<(), String> {
@@ -204,20 +204,23 @@ fn run_delete(
 
     // The stop can take seconds. The path must still pass, and must still
     // lead to the same directory: another one moved into its place is not
-    // what the user confirmed.
+    // what the user confirmed. If that cannot be established, nothing goes.
     let still_there = rules
         .resolve(&target.folder)
         .map_err(|err| format!("The process was stopped, but its folder was not deleted: {err}"))?;
-    if still_there != target.folder
-        || folder_identity(&still_there).ok().as_ref() != Some(&target.identity)
-    {
+    let same_folder = still_there == target.folder
+        && folder_identity(&still_there).is_ok_and(|now| now == target.identity);
+    if !same_folder {
         return Err(
             "The process was stopped, but its folder was replaced meanwhile and was not deleted."
                 .into(),
         );
     }
 
-    remove(&target.folder).map_err(|err| {
+    // The identity keeps the directory open; let go of it before removing.
+    let DeleteTarget { folder, identity } = target;
+    drop(identity);
+    remove(&folder).map_err(|err| {
         format!("The process was stopped, but its folder could not be deleted: {err}")
     })
 }
@@ -241,7 +244,7 @@ fn delete_with(
 ) -> Result<(), String> {
     let target = plan_delete(pid, listed, request, allow_system_actions, rules)?;
     let identity = listed.ok_or_else(|| not_listed(pid))?.identity();
-    run_delete(rules, &target, || stop(&identity), remove)
+    run_delete(rules, target, || stop(&identity), remove)
 }
 
 pub fn delete_project(app: &AppHandle, pid: u32, request: &DeleteRequest) -> Result<(), String> {
@@ -350,7 +353,7 @@ mod tests {
 
     #[cfg(unix)]
     fn live_started_at(pid: u32) -> u64 {
-        use crate::platform::unix::LiveProcess;
+        use crate::platform::identity::LiveProcess;
         match (platform::shell::probe().live)(pid) {
             LiveProcess::Running { started_at, .. } => started_at,
             LiveProcess::Gone => panic!("PID {pid} should be running"),
@@ -366,6 +369,34 @@ mod tests {
             name: Some(name),
             started_at: None,
         }
+    }
+
+    // What the scan records about a process and what the live probe reports
+    // come from different sources on every platform (lsof and sysctl, ss and
+    // /proc, PowerShell and the Win32 API). If they disagreed, every stop
+    // would be refused as stale.
+    #[test]
+    fn a_scanned_listener_is_recognised_as_the_same_process() {
+        use crate::platform::identity::{verdict, Verdict};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local address").port();
+        let pid = std::process::id();
+
+        let scanned = crate::scanner::scan_listening_ports(false).expect("scan");
+        let own = scanned
+            .iter()
+            .find(|process| process.pid == pid)
+            .unwrap_or_else(|| panic!("PID {pid} listens on {port} and should be listed"));
+
+        assert!(own.ports.iter().any(|binding| binding.port == port));
+        assert!(own.started_at > 0, "the scan should know when it started");
+        assert_eq!(
+            verdict(&platform::shell::probe(), pid, Some(&own.identity())),
+            Verdict::Same,
+            "scanned as {:?}",
+            own.identity()
+        );
     }
 
     // --- stop ---------------------------------------------------------------
@@ -613,7 +644,7 @@ mod tests {
         let removed = Cell::new(false);
         let err = run_delete(
             &fixture.rules,
-            &fixture.target(),
+            fixture.target(),
             || Err("PID 42 is still running after SIGKILL".into()),
             |_| {
                 removed.set(true);
@@ -633,7 +664,7 @@ mod tests {
         let removed = Cell::new(false);
         let err = run_delete(
             &fixture.rules,
-            &fixture.target(),
+            fixture.target(),
             || {
                 fs::remove_dir_all(&fixture.project).unwrap();
                 Ok(())
@@ -658,10 +689,8 @@ mod tests {
         let removed = Cell::new(false);
         let err = run_delete(
             &fixture.rules,
-            &fixture.target(),
+            fixture.target(),
             || {
-                // Long enough for a new creation time where that is the identity.
-                std::thread::sleep(std::time::Duration::from_millis(20));
                 fs::rename(&fixture.project, &moved_away).unwrap();
                 fs::create_dir(&fixture.project).unwrap();
                 fs::write(fixture.project.join("notes.txt"), "keep").unwrap();
@@ -698,7 +727,7 @@ mod tests {
         let fixture = Fixture::new();
         let err = run_delete(
             &fixture.rules,
-            &fixture.target(),
+            fixture.target(),
             || Ok(()),
             |_| Err("permission denied".into()),
         )

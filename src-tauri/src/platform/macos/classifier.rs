@@ -29,17 +29,9 @@ fn detect_system_kind(process: &PortProcess) -> SystemKind {
         return SystemKind::System;
     }
 
-    if is_current_user
-        && (is_under_user_home(&process.executable_path)
-            || is_under_applications(&process.executable_path))
-    {
-        return SystemKind::User;
-    }
-
-    if is_binary_outside_user_home(&process.executable_path) {
-        return SystemKind::System;
-    }
-
+    // Anything else the current user runs is theirs, wherever the binary
+    // lives: Homebrew services under /opt/homebrew, tools under /usr/local,
+    // an app's helper copied into a temporary folder. Same rule as Linux.
     if is_current_user {
         return SystemKind::User;
     }
@@ -79,25 +71,12 @@ fn is_system_user(user: &str) -> bool {
     user.starts_with('_') && user != current_username()
 }
 
-fn is_binary_outside_user_home(executable_path: &str) -> bool {
-    if executable_path.is_empty() {
-        return false;
-    }
-
-    !is_under_user_home(executable_path) && !is_under_applications(executable_path)
-}
-
 // Component-wise so /Users/foobar does not count as under /Users/foo.
 fn is_under_user_home(path: &str) -> bool {
     let home = user_home();
     !path.is_empty()
         && !home.is_empty()
         && std::path::Path::new(path).starts_with(std::path::Path::new(home))
-}
-
-fn is_under_applications(path: &str) -> bool {
-    let home = user_home();
-    path.starts_with("/Applications/") || path.starts_with(&format!("{home}/Applications/"))
 }
 
 fn current_username() -> String {
@@ -139,6 +118,50 @@ mod tests {
         classify(&mut p);
         assert_eq!(p.system_kind, SystemKind::Apple);
         assert!(p.is_system_service);
+    }
+
+    #[test]
+    fn classifies_current_user_tools_outside_home_as_user() {
+        // A brew-services database: binary and data directory both outside
+        // home and /Applications.
+        for (executable, cwd) in [
+            (
+                "/opt/homebrew/opt/postgresql@16/bin/postgres",
+                "/opt/homebrew/var/postgresql@16",
+            ),
+            (
+                "/usr/local/opt/redis/bin/redis-server",
+                "/usr/local/var/db/redis",
+            ),
+            (
+                "/private/var/folders/ab/T/com.google.Chrome.code_sign_clone/Google Chrome",
+                "/",
+            ),
+            ("", "/"),
+        ] {
+            let mut p = sample_process(executable, &current_username(), cwd);
+            classify(&mut p);
+            assert_eq!(p.system_kind, SystemKind::User, "{executable}");
+            assert!(!p.is_system_service, "{executable}");
+        }
+    }
+
+    #[test]
+    fn classifies_apple_binaries_run_by_the_current_user_as_apple() {
+        let mut p = sample_process("/usr/libexec/rapportd", &current_username(), "/");
+        classify(&mut p);
+        assert_eq!(p.system_kind, SystemKind::Apple);
+        assert!(p.is_system_service);
+    }
+
+    #[test]
+    fn classifies_other_accounts_as_system() {
+        for user in ["root", "_postgres", "someone-else"] {
+            let mut p = sample_process("/opt/homebrew/bin/postgres", user, "/");
+            classify(&mut p);
+            assert_eq!(p.system_kind, SystemKind::System, "{user}");
+            assert!(p.is_system_service, "{user}");
+        }
     }
 
     #[test]

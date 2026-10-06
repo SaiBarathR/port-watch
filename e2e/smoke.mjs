@@ -12,13 +12,12 @@
 // E2E_SCREENSHOTS set to a folder, it saves a picture of the window there at
 // each step, and one named `failure.png` if a step fails.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const DRIVER = "http://127.0.0.1:4444";
 const ELEMENT = "element-6066-11e4-a52e-4f735466cecf";
 
 const [application, ...driverArguments] = process.argv.slice(2);
@@ -26,6 +25,20 @@ if (!application) {
   console.error("usage: node e2e/smoke.mjs <application> [driver arguments]");
   process.exit(2);
 }
+
+// tauri-driver listens on 4444 unless one of its arguments says otherwise.
+function driverPort() {
+  for (const [index, argument] of driverArguments.entries()) {
+    if (argument === "--port") {
+      return driverArguments[index + 1];
+    }
+    if (argument.startsWith("--port=")) {
+      return argument.slice("--port=".length);
+    }
+  }
+  return "4444";
+}
+const DRIVER = `http://127.0.0.1:${driverPort()}`;
 
 const screenshots = process.env.E2E_SCREENSHOTS;
 const step = (text) => console.log(`- ${text}`);
@@ -63,6 +76,18 @@ async function until(what, check, timeoutMs = 30_000) {
       );
     }
     await sleep(250);
+  }
+}
+
+// On Windows the driver's own children (the native driver and the app) would
+// outlive it, so the whole tree is ended there.
+function end(child) {
+  if (process.platform === "win32" && child.pid) {
+    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+      stdio: "ignore",
+    });
+  } else {
+    child.kill();
   }
 }
 
@@ -195,9 +220,19 @@ async function main() {
     if (session) {
       await webdriver("DELETE", `/session/${session}`).catch(() => {});
     }
-    driver.kill();
-    listener.child.kill();
-    rmSync(folder, { recursive: true, force: true });
+    end(driver);
+    end(listener.child);
+    await Promise.race([listener.exited, sleep(5_000)]);
+    try {
+      rmSync(folder, {
+        recursive: true,
+        force: true,
+        maxRetries: 20,
+        retryDelay: 250,
+      });
+    } catch {
+      // A folder left behind is not a failed test, and must not hide one.
+    }
   }
 }
 

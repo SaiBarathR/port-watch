@@ -23,7 +23,6 @@ import {
 import {
   pinPath,
   systemKindLabel,
-  type AppSettings,
   type PortProcess,
   type RowChangeKind,
 } from "@/lib/types";
@@ -38,10 +37,10 @@ export interface PortTableMeta {
   portsColumnWidth: number;
   rowChanges: Map<string, RowChangeKind>;
   canStop: (process: PortProcess) => boolean;
-  actionSettings: Pick<
-    AppSettings,
-    "pinnedPaths" | "preferredEditor" | "useHttpsForLocalhost"
-  >;
+  /** Whether other processes hold this one's first port too. */
+  isPortShared: (process: PortProcess) => boolean;
+  /** Changes when a setting a row's menu shows does. */
+  actionSettings: object;
 }
 
 function metaOf(table: Table<PortProcess>): PortTableMeta {
@@ -161,6 +160,8 @@ function PortsCell({
             <TooltipTrigger asChild>
               <button
                 type="button"
+                // The row's menu names every port for the keyboard.
+                tabIndex={-1}
                 className="shrink-0 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label={`${rest.length} more port${rest.length === 1 ? "" : "s"}: ${rest.map(portText).join(", ")}`}
               >
@@ -197,6 +198,7 @@ function ProjectCell({ process }: { process: PortProcess }) {
       <TooltipTrigger asChild>
         <button
           type="button"
+          tabIndex={-1}
           className="flex w-full min-w-0 items-baseline gap-1.5 text-left text-sm hover:underline"
           onClick={() => void openFolder(folder)}
         >
@@ -248,6 +250,8 @@ export const columns: ColumnDef<PortProcess>[] = [
       <input
         type="checkbox"
         className="size-4 accent-primary"
+        // Space on the row does this; the row is the tab stop.
+        tabIndex={-1}
         checked={row.getIsSelected()}
         disabled={!metaOf(table).canStop(row.original)}
         onChange={row.getToggleSelectedHandler()}
@@ -369,6 +373,7 @@ export const columns: ColumnDef<PortProcess>[] = [
     cell: ({ row, table }) => (
       <PortTableActionsCell
         process={row.original}
+        portIsShared={metaOf(table).isPortShared(row.original)}
         settings={metaOf(table).actionSettings}
       />
     ),

@@ -101,7 +101,27 @@ Builds are unsigned. macOS may show Gatekeeper warnings (right-click → Open, o
 
 ### Main window
 
-The full window shows all listening ports in a sortable, resizable table. Use the toolbar to search, filter user vs system listeners, export results, and open settings.
+The full window lists every listening port, largest first in each row: the port, then who can reach it (every network interface, one address, or this machine only), the process, and its project folder. Use the toolbar to search, to switch between your own listeners, the system's, or all of them, to export what is shown, and to open settings.
+
+Right-click a row, or use its **…** button, for everything that can be done with it: open it in the browser, open its project in the editor or a terminal, pin or watch it, stop it, or move its folder to the Trash. Hold **⌥** (**Shift** on Windows and Linux) while the menu is open to delete the folder permanently instead.
+
+### Keyboard
+
+The table is one tab stop: Tab onto a row, then use the arrow keys.
+
+| Keys (macOS) | Windows / Linux | Does |
+| --- | --- | --- |
+| ⌘F or / | Ctrl+F or / | Search |
+| ↓ from the search box | ↓ | Into the rows |
+| ↑ ↓ Home End | same | Move between rows |
+| Space | Space | Select the row |
+| ↵ | Enter | Open in the browser |
+| ⌘O | Ctrl+O | Open the project in the editor |
+| ⇧⌘C | Ctrl+Shift+C | Copy the URL |
+| ⌘⌫ | Ctrl+Backspace | Stop (asks first) |
+| ⌘K | Ctrl+K | The row's menu |
+| ⌘R | Ctrl+R | Refresh |
+| ⌘, | Ctrl+, | Settings |
 
 ### Tray menu
 
@@ -109,7 +129,7 @@ Click the tray icon for a native menu of your listening dev servers. Each one ha
 
 ### Port lookup
 
-Search for a specific port to see whether it is free, who is using it, and its recent history. Use **Free port** to stop all processes bound to that port.
+Search by port and type a port number to see, on the line under the search box, whether it is free and who last held it, or who is using it now. **History** shows what has come and gone on it; **Free port** stops every process bound to it that can be stopped.
 
 ### CLI
 

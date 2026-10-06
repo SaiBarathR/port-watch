@@ -133,6 +133,50 @@ jobs:
           if ($withoutUdp -ne 0) { throw "expected exit code 0 for UDP port $udpPort without --udp, got $withoutUdp" }
           exit 0
 
+      # The built app in its real webview: a listener is started, found in the
+      # table and stopped from its row's menu. Linux only: macOS has no
+      # WebDriver for WKWebView, and see below for Windows. The component
+      # tests stand in for this on both.
+      - name: Install the WebDriver tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y webkit2gtk-driver xvfb
+          cargo install tauri-driver --locked
+
+      - name: End-to-end smoke test (Linux)
+        if: runner.os == 'Linux'
+        env:
+          E2E_SCREENSHOTS: e2e-screenshots
+        run: xvfb-run -a node e2e/smoke.mjs src-tauri/target/release/port-watch
+
+      # The same test cannot run on Windows for now. Edge's WebDriver asks a
+      # WebView2 app for a debugging port through an environment variable,
+      # and WebView2 runtimes from 152 on ignore it when the app passes
+      # browser arguments of its own, as every Tauri app does
+      # (actions/runner-images#14738). Until that changes, at least see the
+      # window's process start, stay up and get its webview: nothing else
+      # runs this platform's launch code.
+      - name: Launch check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $app = Start-Process -FilePath src-tauri\target\release\port-watch.exe -PassThru
+          Start-Sleep 15
+          if ($app.HasExited) { throw "the app exited with code $($app.ExitCode) within 15 s of starting" }
+          $webview = Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" |
+            Where-Object { $_.CommandLine -like '*--webview-exe-name=port-watch.exe*' }
+          Stop-Process -Id $app.Id -Force
+          if (-not $webview) { throw "the app stayed up but never started its webview" }
+          "the app stayed up and started its webview"
+
+      - name: Keep the window's pictures if the smoke test failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: e2e-screenshots
+          if-no-files-found: ignore
+
   # What the tests reach, for reading: the tables go to the run's summary
   # page. No number is enforced, and a failure here does not fail the run.
   coverage:

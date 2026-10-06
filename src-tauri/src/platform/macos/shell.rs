@@ -128,7 +128,7 @@ fn process_name(info: &libc::proc_bsdinfo) -> Option<String> {
 
 // Fails with EPERM for a process another user owns, and with ESRCH for one
 // that has exited, zombie or not.
-fn bsd_info(pid: u32) -> std::io::Result<libc::proc_bsdinfo> {
+pub(super) fn bsd_info(pid: u32) -> std::io::Result<libc::proc_bsdinfo> {
     let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
     // SAFETY: `info` is a writable, zero-initialised buffer of exactly `size`

@@ -18,11 +18,31 @@ pub fn scan(include_udp: bool) -> Result<RawScan, String> {
     pids.sort_unstable();
     pids.dedup();
 
-    let mut ps_info = fetch_ps_info(&pids)?;
-    let mut paths = fetch_paths(&pids);
-    let details = pids
-        .into_iter()
-        .map(|pid| {
+    // Asked of the kernel, which costs nothing next to starting a program.
+    // What it will not say goes to the tools a scan used to run for all of
+    // them.
+    let mut details = HashMap::new();
+    let mut unread = Vec::new();
+    for pid in pids {
+        match super::process::read_details(pid) {
+            Some(read) => {
+                details.insert(pid, read);
+            }
+            None => unread.push(pid),
+        }
+    }
+    details.extend(read_details_with_tools(&unread)?);
+
+    Ok(RawScan { sockets, details })
+}
+
+fn read_details_with_tools(pids: &[u32]) -> Result<HashMap<u32, ProcessDetails>, String> {
+    let mut ps_info = fetch_ps_info(pids)?;
+    let mut paths = fetch_paths(pids);
+
+    Ok(pids
+        .iter()
+        .map(|&pid| {
             let ps = ps_info.remove(&pid).unwrap_or_default();
             let paths = paths.remove(&pid).unwrap_or_default();
             let details = ProcessDetails {
@@ -35,9 +55,7 @@ pub fn scan(include_udp: bool) -> Result<RawScan, String> {
             };
             (pid, details)
         })
-        .collect();
-
-    Ok(RawScan { sockets, details })
+        .collect())
 }
 
 fn list_sockets(selection: &[&str], protocol: &str) -> Result<Vec<RawSocket>, String> {
@@ -108,5 +126,25 @@ mod tests {
     #[test]
     fn scan_live() {
         scan(false).expect("scan should succeed on macOS");
+    }
+
+    // The path a scan took for every process before, and still takes for
+    // one the kernel will not describe.
+    #[test]
+    fn the_tools_describe_a_process_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().canonicalize().unwrap();
+        let mut child = crate::platform::unix::testing::spawn_sleep(Some(&folder));
+        let pid = child.id();
+        let details = read_details_with_tools(&[pid]);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let details = details.unwrap().remove(&pid).unwrap();
+        assert_eq!(details.command_line, "sleep 60");
+        assert_eq!(details.working_directory, folder.to_string_lossy());
+        assert!(details.executable_path.ends_with("/sleep"));
+        assert!(!details.user.is_empty());
+        assert!(details.started_at > 0);
     }
 }

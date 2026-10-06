@@ -39,9 +39,9 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 
 | Platform | Scanner backend | CLI PATH install |
 | --- | --- | --- |
-| macOS | `lsof` + `ps` | `/usr/local/bin/port-watch` (symlink; may prompt for password) |
+| macOS | `lsof` + `ps` | `/usr/local/bin/port-watch` (symlink; asks for an administrator password) |
 | Linux | `ss` + `/proc` | `~/.local/bin/port-watch` (symlink; ensure `~/.local/bin` is on PATH) |
-| Windows | PowerShell (`Get-NetTCPConnection`) | `%LOCALAPPDATA%\Programs\Port Watch\port-watch.exe` (user PATH) |
+| Windows | PowerShell (`Get-NetTCPConnection`) | `%LOCALAPPDATA%\Programs\Port Watch\port-watch.cmd` (shim; user PATH) |
 
 macOS-only UI: **menu bar mode** (accessory app / dockless tray).
 
@@ -121,6 +121,12 @@ port-watch check 53 --udp
 ```
 
 **Exit codes:** `0` = port free, `1` = port in use (JSON on stdout), `2` = error.
+
+What the install puts on your PATH:
+
+- **macOS:** a symlink at `/usr/local/bin/port-watch`. That folder belongs to root on a stock Mac, so installing and uninstalling ask for an administrator password.
+- **Linux:** a symlink at `~/.local/bin/port-watch`.
+- **Windows:** a `port-watch.cmd` shim under `%LOCALAPPDATA%\Programs\Port Watch`, added to your user PATH. The app itself is a windowed program that a shell does not wait for; the shim makes `port-watch check` print before the prompt returns and hand back its exit code in both cmd and PowerShell.
 
 **Direct binary examples:**
 

@@ -83,3 +83,29 @@ jobs:
 
       - name: Build Tauri app (compile check, no installers)
         run: npm run tauri -- build --no-bundle
+
+      # The release build is a GUI-subsystem program, so a shell neither waits
+      # for it nor sees its exit code. `install-cli` writes a .cmd shim that
+      # fixes both; this is the only place that can be checked for real.
+      - name: Smoke-test the installed CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $app = "src-tauri\target\release\port-watch.exe"
+          $install = Start-Process -FilePath $app -ArgumentList "install-cli" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "install-cli exited with $($install.ExitCode)" }
+          $shim = Join-Path $env:LOCALAPPDATA "Programs\Port Watch\port-watch.cmd"
+          Get-Content $shim
+
+          & $shim check 1
+          if ($LASTEXITCODE -ne 0) { throw "expected exit code 0 for a free port, got $LASTEXITCODE" }
+
+          $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $listener.Start()
+          $port = $listener.LocalEndpoint.Port
+          $output = & $shim check $port
+          $code = $LASTEXITCODE
+          $listener.Stop()
+          if ($code -ne 1) { throw "expected exit code 1 for port $port in use, got $code" }
+          if ("$output" -notmatch "`"port`":$port\b") { throw "port $port missing from the output: $output" }
+          exit 0

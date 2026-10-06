@@ -48,7 +48,7 @@ export function cliInstallPathHint(): string {
     case "linux":
       return "~/.local/bin/port-watch";
     case "windows":
-      return "%LOCALAPPDATA%\\Programs\\Port Watch\\port-watch.exe";
+      return "%LOCALAPPDATA%\\Programs\\Port Watch\\port-watch.cmd";
     default:
       return "your PATH";
   }
@@ -57,7 +57,7 @@ export function cliInstallPathHint(): string {
 export function cliInstallPrivilegeHint(): string {
   switch (getPlatform()) {
     case "macos":
-      return "macOS may ask for your password to write to /usr/local/bin.";
+      return "macOS asks for an administrator password to change /usr/local/bin.";
     case "linux":
       return "Adds a symlink in ~/.local/bin (ensure it is on your PATH).";
     case "windows":

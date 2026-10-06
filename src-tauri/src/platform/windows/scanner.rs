@@ -1,110 +1,65 @@
-use std::collections::HashMap;
 use std::path::Path;
 
-use serde::Deserialize;
-
-use crate::classifier::{classify as classify_process, SystemKind};
-use crate::home::infer_project_root;
+use crate::platform::parsers::powershell::{self, Listener};
 use crate::platform::shared::{extract_script_path, run_with_timeout};
-use crate::scanner::{PortBinding, PortProcess};
-
-#[derive(Debug, Deserialize)]
-struct WindowsListener {
-    pid: u32,
-    name: String,
-    user: String,
-    #[serde(rename = "localAddress")]
-    local_address: String,
-    #[serde(rename = "localPort")]
-    local_port: u16,
-    #[serde(rename = "executablePath")]
-    executable_path: Option<String>,
-    #[serde(rename = "commandLine")]
-    command_line: Option<String>,
-    protocol: String,
-    // Unix seconds, 0 when unknown. Signed so a clock far in the past cannot
-    // fail the whole parse; clamped when building PortProcess.
-    #[serde(rename = "startedAt")]
-    started_at: i64,
-}
+use crate::scanner::{PortBinding, ProcessDetails, RawScan, RawSocket};
 
 // PowerShell alone can take seconds to start on a cold or busy machine, so it
 // gets far longer than the Unix tools before it counts as stuck.
 const POWERSHELL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-pub fn scan_listening_ports(include_udp: bool) -> Result<Vec<PortProcess>, String> {
+pub fn scan(include_udp: bool) -> Result<RawScan, String> {
     // Taken before PowerShell starts, so anything that was already running
     // by now is what the snapshot below describes.
     let scan_began = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0);
-    let listeners = query_listeners(include_udp)?;
 
-    let mut by_pid: HashMap<u32, PortProcess> = HashMap::new();
-
-    for listener in listeners {
-        let executable_path = listener.executable_path.unwrap_or_default();
-        let command_line = listener.command_line.unwrap_or_default();
-        let address = normalize_address(&listener.local_address);
-        let binding = PortBinding {
-            address,
-            port: listener.local_port,
-            protocol: listener.protocol,
-        };
-
-        let script_path = extract_script_path(&command_line, &listener.name);
-        let working_directory = infer_working_directory(&executable_path, &script_path);
-        // Without a script, that folder is just where the program is
-        // installed (per-user VS Code, Cursor, ...), not a project.
-        let delete_blocked = script_path.is_none().then(|| {
-            "The folder was guessed from where the program is installed, so it may not be a project."
-                .to_string()
+    let mut raw = RawScan::default();
+    for listener in query_listeners(include_udp)? {
+        raw.sockets.push(RawSocket {
+            pid: listener.pid,
+            name: listener.name.clone(),
+            binding: PortBinding {
+                address: powershell::normalize_address(&listener.local_address),
+                port: listener.local_port,
+                protocol: listener.protocol.clone(),
+            },
         });
-        let project_root = infer_project_root(if !working_directory.is_empty() {
-            &working_directory
-        } else {
-            script_path.as_deref().unwrap_or(&executable_path)
+        raw.details.entry(listener.pid).or_insert_with(|| {
+            let kernel_started_at = super::shell::process_started_at(listener.pid);
+            details_of(listener, kernel_started_at, scan_began)
         });
-
-        by_pid
-            .entry(listener.pid)
-            .and_modify(|process| {
-                if !process.ports.iter().any(|b| {
-                    b.address == binding.address
-                        && b.port == binding.port
-                        && b.protocol == binding.protocol
-                }) {
-                    process.ports.push(binding.clone());
-                }
-            })
-            .or_insert_with(|| {
-                let mut process = PortProcess {
-                    id: String::new(),
-                    pid: listener.pid,
-                    name: listener.name.clone(),
-                    user: listener.user.clone(),
-                    ports: vec![binding],
-                    executable_path: executable_path.clone(),
-                    script_path: script_path.clone(),
-                    command_line: command_line.clone(),
-                    working_directory: working_directory.clone(),
-                    project_root: project_root.clone(),
-                    system_kind: SystemKind::User,
-                    is_system_service: false,
-                    started_at: started_at(
-                        super::shell::process_started_at(listener.pid),
-                        listener.started_at,
-                        scan_began,
-                    ),
-                    delete_blocked: delete_blocked.clone(),
-                };
-                classify_process(&mut process);
-                process
-            });
     }
 
-    Ok(by_pid.into_values().collect())
+    Ok(raw)
+}
+
+fn details_of(
+    listener: Listener,
+    kernel_started_at: Option<u64>,
+    scan_began: u64,
+) -> ProcessDetails {
+    let executable_path = listener.executable_path.unwrap_or_default();
+    let command_line = listener.command_line.unwrap_or_default();
+    let script_path = extract_script_path(&command_line, &listener.name);
+
+    ProcessDetails {
+        user: listener.user,
+        // Windows does not say where a process is running, so the folder is
+        // taken from its script, or failing that from its executable.
+        working_directory: infer_working_directory(&executable_path, &script_path),
+        // Without a script, that folder is just where the program is
+        // installed (per-user VS Code, Cursor, ...), not a project.
+        delete_blocked: script_path.is_none().then(|| {
+            "The folder was guessed from where the program is installed, so it may not be a project."
+                .to_string()
+        }),
+        executable_path,
+        command_line,
+        started_at: started_at(kernel_started_at, listener.started_at, scan_began),
+    }
 }
 
 // The kernel's own figure, read the way a stop reads it, when it is sure to
@@ -118,17 +73,6 @@ fn started_at(kernel: Option<u64>, reported: i64, scan_began: u64) -> u64 {
     match kernel {
         Some(kernel) if kernel < scan_began => kernel,
         _ => reported.max(0) as u64,
-    }
-}
-
-fn normalize_address(address: &str) -> String {
-    if address == "0.0.0.0" || address == "::" {
-        "*".to_string()
-    } else if address.contains(':') && !address.starts_with('[') {
-        // Bracket IPv6 addresses to match the macOS/Linux scanners.
-        format!("[{address}]")
-    } else {
-        address.to_string()
     }
 }
 
@@ -157,7 +101,7 @@ fn scan_script(include_udp: bool) -> String {
     )
 }
 
-fn query_listeners(include_udp: bool) -> Result<Vec<WindowsListener>, String> {
+fn query_listeners(include_udp: bool) -> Result<Vec<Listener>, String> {
     let script = scan_script(include_udp);
 
     use super::shell::NoWindow;
@@ -179,23 +123,20 @@ fn query_listeners(include_udp: bool) -> Result<Vec<WindowsListener>, String> {
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if stdout.starts_with('[') {
-        serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse PowerShell JSON: {e}"))
-    } else {
-        let single: WindowsListener = serde_json::from_str(&stdout)
-            .map_err(|e| format!("Failed to parse PowerShell JSON: {e}"))?;
-        Ok(vec![single])
-    }
+    powershell::parse(&String::from_utf8_lossy(&output.stdout))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn listener(json: &str) -> Listener {
+        powershell::parse(json)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("one listener")
+    }
 
     #[test]
     fn infer_working_directory_from_script_path() {
@@ -216,13 +157,37 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_scan_scripts_output() {
-        let json = r#"[{"pid":4242,"name":"node.exe","user":"PC\\dev","localAddress":"::","localPort":3000,"executablePath":"C:\\Program Files\\nodejs\\node.exe","commandLine":"node C:\\Users\\dev\\app\\server.js","protocol":"TCP","startedAt":1790000000},{"pid":4,"name":"System","user":"","localAddress":"0.0.0.0","localPort":445,"executablePath":"","commandLine":"","protocol":"TCP","startedAt":0}]"#;
-        let listeners: Vec<WindowsListener> = serde_json::from_str(json).unwrap();
-        assert_eq!(listeners.len(), 2);
-        assert_eq!(listeners[0].pid, 4242);
-        assert_eq!(listeners[0].started_at, 1_790_000_000);
-        assert_eq!(listeners[1].started_at, 0);
+    fn a_process_with_a_script_runs_in_the_scripts_folder() {
+        let details = details_of(
+            listener(
+                r#"{"pid":4242,"name":"node.exe","user":"PC\\dev","localAddress":"::","localPort":3000,"executablePath":"C:\\Program Files\\nodejs\\node.exe","commandLine":"node C:\\Users\\dev\\app\\server.js","protocol":"TCP","startedAt":1790000000}"#,
+            ),
+            None,
+            1_790_000_500,
+        );
+
+        assert_eq!(details.user, "PC\\dev");
+        assert_eq!(details.working_directory, "C:\\Users\\dev\\app");
+        assert_eq!(details.delete_blocked, None);
+        assert_eq!(details.started_at, 1_790_000_000);
+    }
+
+    #[test]
+    fn a_folder_guessed_from_the_executable_is_not_deletable() {
+        let details = details_of(
+            listener(
+                r#"{"pid":4242,"name":"Code.exe","user":"PC\\dev","localAddress":"127.0.0.1","localPort":3000,"executablePath":"C:\\Users\\dev\\AppData\\Local\\Programs\\VS Code\\Code.exe","commandLine":"Code.exe","protocol":"TCP","startedAt":1790000000}"#,
+            ),
+            Some(1_790_000_001),
+            1_790_000_500,
+        );
+
+        assert_eq!(
+            details.working_directory,
+            "C:\\Users\\dev\\AppData\\Local\\Programs\\VS Code"
+        );
+        assert!(details.delete_blocked.is_some());
+        assert_eq!(details.started_at, 1_790_000_001);
     }
 
     #[test]
@@ -245,14 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_address_wildcard() {
-        assert_eq!(normalize_address("0.0.0.0"), "*");
-        assert_eq!(normalize_address("127.0.0.1"), "127.0.0.1");
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn scan_listening_ports_live() {
-        scan_listening_ports(false).expect("scan should succeed on Windows");
+    fn scan_live() {
+        scan(false).expect("scan should succeed on Windows");
     }
 }

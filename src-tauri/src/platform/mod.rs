@@ -3,6 +3,7 @@ pub mod identity;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+pub mod parsers;
 pub mod path_validation;
 pub mod shared;
 #[cfg(unix)]
@@ -11,11 +12,11 @@ pub mod unix;
 mod windows;
 
 #[cfg(target_os = "linux")]
-pub use linux::{classify, scan_listening_ports};
+pub use linux::{classify, scan};
 #[cfg(target_os = "macos")]
-pub use macos::{classify, scan_listening_ports};
+pub use macos::{classify, scan};
 #[cfg(target_os = "windows")]
-pub use windows::{classify, scan_listening_ports};
+pub use windows::{classify, scan};
 
 #[cfg(target_os = "linux")]
 pub use linux::guards;

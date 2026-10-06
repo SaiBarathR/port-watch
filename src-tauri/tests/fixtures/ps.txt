@@ -1,0 +1,4 @@
+    1 root             /sbin/launchd
+ 4310 dev              /opt/homebrew/opt/postgresql@16/bin/postgres -D /opt/homebrew/var/postgresql@16
+ 5120 dev              /Applications/Google Chrome.app/Contents/MacOS/Google Chrome Helper --type=utility  --lang=en-US
+99999 _windowserver    

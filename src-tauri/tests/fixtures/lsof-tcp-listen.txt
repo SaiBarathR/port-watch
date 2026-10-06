@@ -1,0 +1,32 @@
+p612
+cControlCenter
+f9
+n*:7000
+f10
+n*:7000
+f11
+n*:5000
+f12
+n*:5000
+p1006
+crapportd
+f8
+n*:49152
+p4310
+cpostgres
+f7
+n127.0.0.1:5432
+f8
+n[::1]:5432
+p5120
+cGoogle Chrome Helper
+f104
+n127.0.0.1:9222
+p6001
+cCaf\xc3\xa9 S\xc3\xabrver
+f5
+n[fe80:4::1c2d:3eff:fe4f:5a6b]:8443
+p7777
+cback\\slash
+f3
+n192.168.1.20:3000

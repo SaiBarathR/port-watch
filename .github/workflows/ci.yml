@@ -133,6 +133,49 @@ jobs:
           if ($withoutUdp -ne 0) { throw "expected exit code 0 for UDP port $udpPort without --udp, got $withoutUdp" }
           exit 0
 
+      # The built app in its real webview: a listener is started, found in the
+      # table and stopped from its row's menu. macOS has no WebDriver for
+      # WKWebView, so the component tests stand in for this there.
+      - name: Install the WebDriver tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y webkit2gtk-driver xvfb
+          cargo install tauri-driver --locked
+
+      - name: End-to-end smoke test (Linux)
+        if: runner.os == 'Linux'
+        env:
+          E2E_SCREENSHOTS: e2e-screenshots
+        run: xvfb-run -a node e2e/smoke.mjs src-tauri/target/release/port-watch
+
+      - name: Install the WebDriver tools (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo install tauri-driver --locked
+          # The driver has to match the WebView2 runtime, which is not always
+          # the version of the Edge browser the runner's own driver is for.
+          $runtime = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = (Get-ItemProperty $runtime).pv
+          Write-Host "WebView2 runtime $version"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile edgedriver.zip
+          Expand-Archive edgedriver.zip -DestinationPath edgedriver
+
+      - name: End-to-end smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          E2E_SCREENSHOTS: e2e-screenshots
+        run: node e2e/smoke.mjs src-tauri\target\release\port-watch.exe --native-driver "$PWD\edgedriver\msedgedriver.exe"
+
+      - name: Keep the window's pictures if the smoke test failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots-${{ runner.os }}
+          path: e2e-screenshots
+          if-no-files-found: ignore
+
   # What the tests reach, for reading: the tables go to the run's summary
   # page. No number is enforced, and a failure here does not fail the run.
   coverage:

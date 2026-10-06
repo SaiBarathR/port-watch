@@ -81,9 +81,10 @@ Release bundles are written to `src-tauri/target/release/bundle/` (`.app` on mac
 npm test                  # the window: its logic, and the whole app against a stand-in backend
 npm run test:coverage     # the same, with a table of what the tests reach
 cd src-tauri && cargo test
+node e2e/smoke.mjs <built app>   # Linux and Windows: the built app in its webview, see the file
 ```
 
-The Rust tests start real processes and run the system's own tools (`lsof`, `ss`, PowerShell), so each platform's code is only tested on that platform. CI runs all three, and writes a coverage table to each run's summary without enforcing a number.
+The Rust tests start real processes and run the system's own tools (`lsof`, `ss`, PowerShell), so each platform's code is only tested on that platform. CI runs all three, and writes a coverage table to each run's summary without enforcing a number. On Linux and Windows it also starts the built app, finds a listener in the table and stops it from its row.
 
 ## Releases
 

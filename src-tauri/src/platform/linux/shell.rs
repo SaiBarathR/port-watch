@@ -1,4 +1,5 @@
-use crate::platform::unix::{self, LiveProcess, Probe};
+use crate::platform::identity::{LiveProcess, Probe};
+use crate::platform::unix;
 use crate::scanner::ProcessIdentity;
 
 pub fn open_in_file_manager(path: &str) -> Result<(), String> {
@@ -117,11 +118,14 @@ pub fn probe() -> Probe {
     Probe {
         live: live_process,
         names_match: crate::platform::shared::process_names_match,
+        // Both readings come from /proc/<pid>/stat.
+        start_slack: 0,
     }
 }
 
 fn live_process(pid: u32) -> LiveProcess {
     let proc_dir = std::path::PathBuf::from(format!("/proc/{pid}"));
+    // Only a missing /proc/<pid> says the process is gone.
     let Ok(stat) = std::fs::read_to_string(proc_dir.join("stat")) else {
         return LiveProcess::Gone;
     };
@@ -129,13 +133,16 @@ fn live_process(pid: u32) -> LiveProcess {
         return LiveProcess::Gone;
     }
 
+    // State and start time come from that one read, so they describe the
+    // same process. The name is a second read; if it fails, the process is
+    // reported without one rather than as gone.
     let name = std::fs::read_to_string(proc_dir.join("comm"))
         .ok()
         .map(|comm| comm.trim().to_string())
         .filter(|name| !name.is_empty());
     LiveProcess::Running {
         name,
-        started_at: super::scanner::read_proc_started_at(&proc_dir),
+        started_at: super::scanner::started_at_from_stat(&stat),
     }
 }
 

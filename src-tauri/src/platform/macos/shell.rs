@@ -1,4 +1,5 @@
-use crate::platform::unix::{self, LiveProcess, Probe};
+use crate::platform::identity::{LiveProcess, Probe};
+use crate::platform::unix;
 use crate::scanner::ProcessIdentity;
 
 pub fn open_in_file_manager(path: &str) -> Result<(), String> {
@@ -77,6 +78,8 @@ pub fn probe() -> Probe {
     Probe {
         live: live_process,
         names_match: |live, scanned| live == scanned,
+        // Both readings come from the same sysctl.
+        start_slack: 0,
     }
 }
 
@@ -93,14 +96,15 @@ fn live_process(pid: u32) -> LiveProcess {
             name: process_name(&info),
             started_at,
         },
-        // Another user's process: it exists, but its name is not ours to read.
-        Err(error) if error.raw_os_error() == Some(libc::EPERM) => LiveProcess::Running {
+        // "No such process" for a PID that still has a start time is a
+        // zombie: exited, not yet reaped by its parent.
+        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => LiveProcess::Gone,
+        // Anything else, such as another user's process (EPERM): it exists,
+        // and its name is not ours to read. Only ESRCH says it is gone.
+        Err(_) => LiveProcess::Running {
             name: None,
             started_at,
         },
-        // "No such process" for a PID that still has a start time is a
-        // zombie: exited, not yet reaped by its parent.
-        Err(_) => LiveProcess::Gone,
     }
 }
 
@@ -140,8 +144,11 @@ fn bsd_info(pid: u32) -> std::io::Result<libc::proc_bsdinfo> {
         );
         if written == size {
             Ok(info.assume_init())
-        } else {
+        } else if written <= 0 {
             Err(std::io::Error::last_os_error())
+        } else {
+            // A short reply sets no error code; whatever is in errno is stale.
+            Err(std::io::Error::other("short reply from proc_pidinfo"))
         }
     }
 }

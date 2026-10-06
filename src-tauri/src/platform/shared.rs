@@ -81,6 +81,14 @@ fn wait_by(child: &mut std::process::Child, deadline: Instant) -> Option<ExitSta
     }
 }
 
+/// Windows file times count 100 ns ticks from 1601. Times before 1970 are 0.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn filetime_to_unix_seconds(ticks: u64) -> u64 {
+    const TICKS_PER_SECOND: u64 = 10_000_000;
+    const SECONDS_FROM_1601_TO_1970: u64 = 11_644_473_600;
+    (ticks / TICKS_PER_SECOND).saturating_sub(SECONDS_FROM_1601_TO_1970)
+}
+
 pub fn extract_script_path(command_line: &str, process_name: &str) -> Option<String> {
     if command_line.is_empty() {
         return None;
@@ -301,6 +309,22 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn filetime_converts_to_unix_seconds() {
+        assert_eq!(filetime_to_unix_seconds(116_444_736_000_000_000), 0);
+        assert_eq!(filetime_to_unix_seconds(116_444_736_010_000_000), 1);
+        // 2026-10-06T10:00:00Z, and the same second 0.9999999 s later.
+        assert_eq!(
+            filetime_to_unix_seconds(134_357_544_000_000_000),
+            1_791_280_800
+        );
+        assert_eq!(
+            filetime_to_unix_seconds(134_357_544_009_999_999),
+            1_791_280_800
+        );
+        assert_eq!(filetime_to_unix_seconds(0), 0);
     }
 
     #[test]

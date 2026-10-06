@@ -3,65 +3,13 @@
 
 use std::time::{Duration, Instant};
 
+use crate::platform::identity::{verdict, Probe, Verdict};
 use crate::scanner::ProcessIdentity;
 
 // SIGTERM gets this long before escalating to SIGKILL, and SIGKILL gets as
 // long again to take effect before the stop is reported as failed.
 const STOP_GRACE: Duration = Duration::from_secs(2);
 const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
-
-/// What a PID is right now.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiveProcess {
-    /// No such process, or a zombie: it has exited and released its ports,
-    /// and only lingers until its parent reaps it.
-    Gone,
-    Running {
-        /// None when this user may not inspect the process.
-        name: Option<String>,
-        /// Unix seconds; 0 when unknown.
-        started_at: u64,
-    },
-}
-
-/// How a platform reads a PID, and how it compares a live name with a scanned
-/// one.
-pub struct Probe {
-    pub live: fn(u32) -> LiveProcess,
-    pub names_match: fn(&str, &str) -> bool,
-}
-
-enum Verdict {
-    Gone,
-    Same,
-    /// The PID belongs to another process now; this describes it.
-    Other(String),
-}
-
-fn verdict(probe: &Probe, pid: u32, expected: Option<&ProcessIdentity>) -> Verdict {
-    let LiveProcess::Running { name, started_at } = (probe.live)(pid) else {
-        return Verdict::Gone;
-    };
-    let Some(expected) = expected else {
-        return Verdict::Same;
-    };
-
-    if let Some(name) = &name {
-        if !(probe.names_match)(name, &expected.name) {
-            return Verdict::Other(format!("\"{name}\""));
-        }
-    }
-    // The name alone cannot tell a process from a later one of the same
-    // program that was handed its PID. The start time can.
-    if started_at != 0 && expected.started_at != 0 && started_at != expected.started_at {
-        return Verdict::Other(match name {
-            Some(name) => format!("a newer \"{name}\""),
-            None => "a newer process".to_string(),
-        });
-    }
-
-    Verdict::Same
-}
 
 pub fn stop_process(
     probe: &Probe,
@@ -73,50 +21,69 @@ pub fn stop_process(
         // Nothing is signalled: a PID that is free now can be another
         // process's a moment later.
         Verdict::Gone => return Ok(()),
-        Verdict::Other(now) => {
-            let was = expected
-                .map(|identity| identity.name.as_str())
-                .unwrap_or("");
-            return Err(format!(
-                "PID {pid} now belongs to {now}, not \"{was}\" — the process list was stale. Refresh and try again."
-            ));
-        }
         Verdict::Same => {}
+        other => return Err(refusal(&other, pid, expected)),
     }
 
     if !force {
         send_signal(pid, libc::SIGTERM, "TERM")?;
-        // The wait re-checks the identity on every poll, so reaching the
-        // escalation below means the PID still belongs to the same process.
-        if wait_for_exit(probe, pid, expected, STOP_GRACE) {
-            return Ok(());
+        match wait_for_exit(probe, pid, expected, STOP_GRACE) {
+            Wait::Exited => return Ok(()),
+            // Escalating means signalling again, which needs the same
+            // certainty the first signal had.
+            Wait::Unconfirmed(why) => return Err(why),
+            Wait::StillRunning => {}
         }
     }
 
     send_signal(pid, libc::SIGKILL, "KILL")?;
-    if wait_for_exit(probe, pid, expected, STOP_GRACE) {
-        Ok(())
-    } else {
-        Err(format!("PID {pid} is still running after SIGKILL"))
+    match wait_for_exit(probe, pid, expected, STOP_GRACE) {
+        Wait::Exited => Ok(()),
+        Wait::StillRunning => Err(format!("PID {pid} is still running after SIGKILL")),
+        Wait::Unconfirmed(why) => Err(why),
     }
 }
 
+fn refusal(verdict: &Verdict, pid: u32, expected: Option<&ProcessIdentity>) -> String {
+    expected
+        .and_then(|expected| verdict.refusal(pid, expected))
+        .unwrap_or_else(|| format!("PID {pid} could not be stopped"))
+}
+
+enum Wait {
+    Exited,
+    StillRunning,
+    /// The process could no longer be told apart from another; says why.
+    Unconfirmed(String),
+}
+
 // Polls instead of sleeping a fixed interval: most processes exit within
-// milliseconds of a signal. A PID that now belongs to something else counts
-// as exited too.
+// milliseconds of a signal.
+//
+// Exited means gone, or provably replaced by another process. The same
+// process under a new name has not exited: a server may rename itself while
+// it shuts down, and it still holds its port.
 fn wait_for_exit(
     probe: &Probe,
     pid: u32,
     expected: Option<&ProcessIdentity>,
     timeout: Duration,
-) -> bool {
+) -> Wait {
     let deadline = Instant::now() + timeout;
     loop {
-        if !matches!(verdict(probe, pid, expected), Verdict::Same) {
-            return true;
-        }
+        let now = verdict(probe, pid, expected);
+        let unconfirmed = match &now {
+            Verdict::Gone | Verdict::Other { certain: true, .. } => return Wait::Exited,
+            Verdict::Same | Verdict::Renamed(_) => None,
+            Verdict::Other { certain: false, .. } | Verdict::Unconfirmed(_) => {
+                Some(refusal(&now, pid, expected))
+            }
+        };
         if Instant::now() >= deadline {
-            return false;
+            return match unconfirmed {
+                Some(why) => Wait::Unconfirmed(why),
+                None => Wait::StillRunning,
+            };
         }
         std::thread::sleep(EXIT_POLL_INTERVAL);
     }
@@ -149,7 +116,7 @@ fn send_signal(pid: u32, signal: libc::c_int, name: &str) -> Result<(), String> 
 
 #[cfg(test)]
 pub mod testing {
-    use super::LiveProcess;
+    use crate::platform::identity::LiveProcess;
     use std::path::Path;
     use std::process::{Child, Command};
     use std::time::{Duration, Instant};
@@ -182,6 +149,7 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::identity::LiveProcess;
     use std::io::{BufRead, BufReader};
     use std::process::{Child, Command, Stdio};
 
@@ -348,6 +316,7 @@ mod tests {
         let probe = Probe {
             live: |_| LiveProcess::Gone,
             names_match: |a, b| a == b,
+            start_slack: 0,
         };
 
         let result = stop_process(&probe, child.id(), true, None);
@@ -356,6 +325,85 @@ mod tests {
         let _ = child.wait();
 
         assert_eq!(result, Ok(()));
+        assert!(still_running);
+    }
+
+    // A server that renames itself when told to stop (Node's `process.title`
+    // changes the kernel's name on Linux) has not exited. It used to count
+    // as stopped the moment its name changed, and a delete then went ahead.
+    #[test]
+    fn a_process_that_renames_itself_is_not_taken_for_stopped() {
+        let mut child = sleeper();
+        let identity = identity_of(child.id());
+        // What the real probe reports, with another name once signalled:
+        // SIGTERM kills `sleep` at once, so the rename is played by the probe.
+        fn renamed(pid: u32) -> LiveProcess {
+            match (real_probe().live)(pid) {
+                LiveProcess::Running { started_at, .. } => LiveProcess::Running {
+                    name: Some("shutting-down".into()),
+                    started_at,
+                },
+                LiveProcess::Gone => LiveProcess::Gone,
+            }
+        }
+        let probe = Probe {
+            live: renamed,
+            ..real_probe()
+        };
+
+        // Renamed, same start time: still the same process, still running.
+        assert!(matches!(
+            verdict(&probe, child.id(), Some(&identity)),
+            Verdict::Renamed(_)
+        ));
+        assert!(matches!(
+            wait_for_exit(
+                &probe,
+                child.id(),
+                Some(&identity),
+                Duration::from_millis(200)
+            ),
+            Wait::StillRunning
+        ));
+        // And it is not signalled under a name the user never confirmed.
+        let result = stop_process(&probe, child.id(), true, Some(&identity));
+        let still_running = child.try_wait().expect("try_wait").is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(result
+            .unwrap_err()
+            .contains("now belongs to \"shutting-down\""));
+        assert!(still_running);
+    }
+
+    // Nothing is signalled, and nothing escalated, on a check that could not
+    // be made.
+    #[test]
+    fn an_identity_that_cannot_be_read_stops_nothing() {
+        let mut child = sleeper();
+        let identity = identity_of(child.id());
+        let probe = Probe {
+            live: |_| LiveProcess::Running {
+                name: None,
+                started_at: 0,
+            },
+            ..real_probe()
+        };
+
+        let result = stop_process(&probe, child.id(), true, Some(&identity));
+        let waited = wait_for_exit(
+            &probe,
+            child.id(),
+            Some(&identity),
+            Duration::from_millis(100),
+        );
+        let still_running = child.try_wait().expect("try_wait").is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(result.unwrap_err().contains("could not be confirmed"));
+        assert!(matches!(waited, Wait::Unconfirmed(_)));
         assert!(still_running);
     }
 

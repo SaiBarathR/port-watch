@@ -311,7 +311,12 @@ fn resolve_uid_uncached(uid: u32) -> Option<String> {
 
 // When the process started, in Unix seconds: the boot time plus the start
 // offset the kernel records. Unlike an uptime, it is the same on every scan.
-pub(super) fn read_proc_started_at(proc_dir: &Path) -> u64 {
+fn read_proc_started_at(proc_dir: &Path) -> u64 {
+    started_at_from_stat(&fs::read_to_string(proc_dir.join("stat")).unwrap_or_default())
+}
+
+// From the contents of /proc/<pid>/stat; 0 when it cannot be worked out.
+pub(super) fn started_at_from_stat(proc_pid_stat: &str) -> u64 {
     use std::sync::OnceLock;
 
     static CLOCK_TICKS: OnceLock<u64> = OnceLock::new();
@@ -333,7 +338,7 @@ pub(super) fn read_proc_started_at(proc_dir: &Path) -> u64 {
         return 0;
     };
 
-    match parse_start_ticks(&fs::read_to_string(proc_dir.join("stat")).unwrap_or_default()) {
+    match parse_start_ticks(proc_pid_stat) {
         Some(start_ticks) => boot_time + start_ticks / clock_ticks,
         None => 0,
     }

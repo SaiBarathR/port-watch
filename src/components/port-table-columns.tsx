@@ -84,17 +84,19 @@ function PortNumber({ held }: { held: HeldPort }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[15px] leading-5 font-semibold tabular-nums">
-          {held.port}
+        {/* May shrink: in a column narrower than one port, the number is
+            cut short rather than pushing the "+N" after it out of the cell. */}
+        <span className="inline-flex min-w-0 items-center gap-1 font-mono text-[15px] leading-5 font-semibold tabular-nums">
+          <span className="truncate">{held.port}</span>
           {protocol && (
-            <span className="text-[10px] font-normal text-muted-foreground">
+            <span className="shrink-0 text-[10px] font-normal text-muted-foreground">
               {protocol}
             </span>
           )}
           <Icon
             aria-hidden
             className={cn(
-              "size-3",
+              "size-3 shrink-0",
               held.reach === "this-machine"
                 ? "text-muted-foreground/60"
                 : "text-amber-600 dark:text-amber-400",

@@ -168,6 +168,21 @@ function watchedPortEvents(
 }
 
 /**
+ * A scan as it would have been without UDP: what a scan that looked for UDP
+ * and one that did not can be compared on.
+ */
+export function withoutUdp(processes: PortProcess[]): PortProcess[] {
+  return processes
+    .map((process) => ({
+      ...process,
+      ports: process.ports.filter(
+        (binding) => binding.protocol.toUpperCase() !== "UDP",
+      ),
+    }))
+    .filter((process) => process.ports.length > 0);
+}
+
+/**
  * `next`, with every process that has not changed replaced by the object
  * `prev` holds for it, and `prev` itself when nothing changed at all. A row
  * whose process is the same object does not render again.

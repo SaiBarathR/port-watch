@@ -136,6 +136,61 @@ describe("while a menu or a dialog is open", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 
+  // The dialog was closed from outside, not by its own Cancel.
+  it("asks twice again after a dialog was closed for it", async () => {
+    const service = systemService(88, 5000, "rapportd");
+    const app = await launchApp({
+      settings: { hideSystemServices: false, allowSystemProcessActions: true },
+      processes: [service],
+    });
+
+    let menu = await openRowMenu(app.user, "rapportd");
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    let dialog = within(await screen.findByRole("alertdialog"));
+    await app.user.click(dialog.getByRole("button", { name: "Continue" }));
+    expect(dialog.getByRole("button", { name: "Stop Process" })).toBeTruthy();
+
+    await app.scanFinds([]);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await app.scanFinds([service]);
+
+    menu = await openRowMenu(app.user, "rapportd");
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    dialog = within(await screen.findByRole("alertdialog"));
+    expect(dialog.getByRole("button", { name: "Continue" })).toBeTruthy();
+    expect(dialog.queryByRole("button", { name: "Stop Process" })).toBeNull();
+    expect(app.callsTo("stop_process")).toEqual([]);
+  });
+
+  it("does not carry a typed folder name into the next delete dialog", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+    const permanentDelete = async () => {
+      await app.user.keyboard("{Alt>}");
+      const menu = await openRowMenu(app.user, "node");
+      await app.user.click(
+        menu.getByRole("menuitem", { name: "Delete Permanently…" }),
+      );
+      await app.user.keyboard("{/Alt}");
+      return within(await screen.findByRole("dialog"));
+    };
+
+    let dialog = await permanentDelete();
+    await app.user.type(dialog.getByRole("textbox"), "app-3000");
+    expect(
+      dialog.getByRole("button", { name: "Delete Permanently" }),
+    ).toHaveProperty("disabled", false);
+
+    await app.scanFinds([]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await app.scanFinds([listener(4242, 3000)]);
+
+    dialog = await permanentDelete();
+    expect(dialog.getByRole("textbox")).toHaveProperty("value", "");
+    expect(
+      dialog.getByRole("button", { name: "Delete Permanently" }),
+    ).toHaveProperty("disabled", true);
+  });
+
   it("closes a delete dialog whose process is no longer listed", async () => {
     const app = await launchApp({
       processes: [listener(4242, 3000)],
@@ -569,6 +624,25 @@ describe("port change toasts", () => {
     );
     expect(await table().findByText("avahi")).toBeTruthy();
     expect(screen.queryByText(/port changes? detected/i)).toBeNull();
+
+    // A server that went away in the same moment is still news.
+    await app.scanFinds(
+      [listener(4343, 5353, { name: "avahi", ports: [udp] })],
+      { includeUdp: false },
+    );
+    const toast = await screen.findByText("Port change detected");
+    expect(
+      within(toast.closest("li") as HTMLElement).getByText(
+        "Port 3000 freed (node, PID 4242)",
+      ),
+    ).toBeTruthy();
+    await app.scanFinds(
+      [
+        listener(4242, 3000),
+        listener(4343, 5353, { name: "avahi", ports: [udp] }),
+      ],
+      { includeUdp: true },
+    );
 
     // The next scan looks for the same things, and is compared again.
     await app.scanFinds(

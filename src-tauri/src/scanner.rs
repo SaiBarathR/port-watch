@@ -313,6 +313,16 @@ mod tests {
         );
     }
 
+    // A path that is absolute wherever the tests run: a project folder is
+    // only looked for from one of those.
+    fn absolute(path: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{}", path.replace('/', "\\"))
+        } else {
+            path.to_string()
+        }
+    }
+
     #[test]
     fn details_are_joined_by_pid_and_rows_come_out_sorted() {
         let details = HashMap::from([
@@ -320,8 +330,8 @@ mod tests {
                 7,
                 ProcessDetails {
                     user: "dev".into(),
-                    command_line: "node /srv/app/server.js --port 8080".into(),
-                    working_directory: "/srv/app".into(),
+                    command_line: format!("node {} --port 8080", absolute("/srv/app/server.js")),
+                    working_directory: absolute("/srv/app"),
                     executable_path: "/usr/bin/node".into(),
                     started_at: 1_790_000_000,
                     delete_blocked: Some("not a project".into()),
@@ -346,9 +356,12 @@ mod tests {
 
         let node = &processes[2];
         assert_eq!(node.user, "dev");
-        assert_eq!(node.script_path.as_deref(), Some("/srv/app/server.js"));
-        assert_eq!(node.working_directory, "/srv/app");
-        assert_eq!(node.project_root, "/srv/app");
+        assert_eq!(
+            node.script_path.as_deref(),
+            Some(absolute("/srv/app/server.js").as_str())
+        );
+        assert_eq!(node.working_directory, absolute("/srv/app"));
+        assert_eq!(node.project_root, absolute("/srv/app"));
         assert_eq!(node.started_at, 1_790_000_000);
         assert_eq!(node.delete_blocked.as_deref(), Some("not a project"));
 

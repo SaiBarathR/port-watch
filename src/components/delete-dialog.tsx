@@ -42,6 +42,12 @@ export function DeleteDialog({
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Closed from outside too (its process left the list): the name typed
+  // for one folder is not carried into the next dialog.
+  if (!open && confirmation !== "") {
+    setConfirmation("");
+  }
+
   const path = target ? pinPath(target.process) : "";
   const folderBasename = basename(path);
   const blockedReason = target?.process.delete_blocked ?? null;

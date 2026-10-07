@@ -29,7 +29,10 @@ pub fn infer_project_root(path: &str) -> String {
     // Without the working directory a script may be known only as
     // `server.js`, and a relative path would be looked up against wherever
     // this app happens to have been started.
-    let mut current = PathBuf::from(path.trim());
+    //
+    // The path is taken as it is: a folder's name may end in a space, and
+    // trimming it would name the folder next to it.
+    let mut current = PathBuf::from(path);
     if !current.is_absolute() {
         return String::new();
     }
@@ -97,6 +100,22 @@ mod tests {
         assert_eq!(infer_project_root(&script.to_string_lossy()), expected);
         assert_eq!(infer_project_root(&expected), expected);
         assert_eq!(infer_project_root(&format!("{expected}/")), expected);
+    }
+
+    // Trimmed, the first of these would be the second: another project, and
+    // the one a delete would then be pointed at.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_whose_name_ends_in_a_space_is_not_the_one_next_to_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let spaced = root.join("project ");
+        fs::create_dir_all(&spaced).unwrap();
+        fs::create_dir_all(root.join("project")).unwrap();
+        fs::write(root.join("project/package.json"), "{}").unwrap();
+
+        let spaced = spaced.to_string_lossy().into_owned();
+        assert_eq!(infer_project_root(&spaced), spaced);
     }
 
     #[test]

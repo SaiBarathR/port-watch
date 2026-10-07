@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { shareUnchanged } from "@/lib/scan-diff";
+import { shareUnchanged, withoutUdp } from "@/lib/scan-diff";
 import type { PortProcess } from "@/lib/types";
 
 interface PortsUpdatedPayload {
@@ -74,15 +74,20 @@ export function useScanStream(
     setLastScanAt(Date.now());
 
     // Turning "Include UDP" on or off changes what a scan looks for, not
-    // what is listening. The first scan after it is not compared with the
-    // one before: every UDP socket would be news, or every one gone.
-    const comparable = payload.includeUdp === includedUdpRef.current;
+    // what is listening: every UDP socket would be news, or every one gone.
+    // The first scan after it is compared with the one before on what both
+    // looked for, so a server that came or went in between is not missed.
+    const sameCoverage = payload.includeUdp === includedUdpRef.current;
     includedUdpRef.current = payload.includeUdp;
 
     const prev = processesRef.current;
     const next = shareUnchanged(prev, payload.processes);
-    if (hasResultRef.current && comparable && next !== prev) {
-      onChangeRef.current(prev, next);
+    if (hasResultRef.current && next !== prev) {
+      if (sameCoverage) {
+        onChangeRef.current(prev, next);
+      } else {
+        onChangeRef.current(withoutUdp(prev), withoutUdp(next));
+      }
     }
     hasResultRef.current = true;
     processesRef.current = next;

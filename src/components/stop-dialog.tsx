@@ -44,6 +44,12 @@ export function StopDialog({
   const [confirmStep, setConfirmStep] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Closed from outside too (its process left the list): the next dialog
+  // must ask twice again, not find the first answer already given.
+  if (!open && confirmStep) {
+    setConfirmStep(false);
+  }
+
   const handleOpenChange = (next: boolean) => {
     if (!next) {
       setConfirmStep(false);

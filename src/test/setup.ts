@@ -44,6 +44,11 @@ if (typeof window !== "undefined") {
 
   afterEach(() => {
     cleanup();
+    // Each test loads the app's modules afresh, and the ones it leaves
+    // behind still hold timers. This is what a window going away tells
+    // them: write what is pending now, into the storage about to be cleared,
+    // and not into the next test's.
+    window.dispatchEvent(new Event("pagehide"));
     localStorage.clear();
   });
 }

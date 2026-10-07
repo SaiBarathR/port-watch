@@ -163,6 +163,30 @@ describe("port summaries", () => {
     ]);
   });
 
+  it("and timelines can be asked for one protocol of a port", async () => {
+    localStorage.setItem(
+      HISTORY_KEY,
+      [
+        event(5353, { protocol: "UDP", processName: "mDNSResponder" }),
+        event(5353, { protocol: "TCP" }),
+        event(5353, { protocol: "UDP", kind: "freed" }),
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    const { getPortSummary, getPortTimeline } = await history();
+
+    expect(getPortTimeline(5353)).toHaveLength(3);
+    expect(getPortTimeline(5353, "UDP").map((entry) => entry.kind)).toEqual([
+      "freed",
+      "occupied",
+    ]);
+    expect(getPortTimeline(5353, "TCP")).toHaveLength(1);
+    expect(getPortSummary(5353, "UDP")?.eventCount).toBe(2);
+    expect(getPortSummary(5353, "TCP")?.eventCount).toBe(1);
+    expect(getPortSummary(5353, "SCTP")).toBeNull();
+  });
+
   it("say when a port was first and last seen, and by whom, newest port first", async () => {
     const { getPortSummaries } = await history();
 

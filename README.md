@@ -197,13 +197,14 @@ Deleting a project folder (move to trash, delete permanently) is one backend ste
 
 - It is the project folder the latest scan recorded for that process. The window cannot name any other path.
 - It is a real folder (not a symlink or a file) inside your home folder.
-- It is not your home folder itself, one of its standard folders (`Desktop`, `Documents`, `Downloads`, …), or anywhere inside app data and settings (`Library`, `Applications`, `AppData`, and hidden folders such as `.config` or `.ssh`).
+- It is not your home folder itself, one of its standard folders (`Desktop`, `Documents`, `Downloads`, …), a synced folder (`Dropbox`, `OneDrive`, `Google Drive`, `iCloudDrive`), or anywhere inside app data and settings (`Library`, `Applications`, `AppData`, and hidden folders such as `.config` or `.ssh`). Projects inside a standard or synced folder can be deleted; the folder itself cannot.
+- It was not merely guessed from where the program is installed.
 - It is not under a protected system path:
   - **macOS:** `/System`, `/usr`, `/bin`, `/sbin`, `/Library`
   - **Linux:** `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/opt` (not `/usr/local`)
   - **Windows:** `C:\Windows`, `Program Files`, `Program Files (x86)`, `ProgramData`
 
-On Windows the folder is inferred rather than read from the process, so delete is offered only when it comes from a script path, never from where the program is installed.
+On Windows the folder is inferred rather than read from the process, so delete is offered only when it comes from a script path.
 
 Stop refuses a PID that is not in the latest scan, or whose name or start time no longer match what the scan saw: the PID has passed to another process. System process stop/delete requires an explicit opt-in in Settings, and "Stop all user processes shown" never includes system services.
 

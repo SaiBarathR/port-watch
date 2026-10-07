@@ -17,14 +17,16 @@ function changed() {
 }
 
 /** Whether anything is holding periodic scans paused right now. */
+export function isRefreshPaused(): boolean {
+  return reasons.size > 0;
+}
+
+/** The same, for a component to draw. */
 export function useRefreshPaused(): boolean {
-  return useSyncExternalStore(
-    (watcher) => {
-      watchers.add(watcher);
-      return () => watchers.delete(watcher);
-    },
-    () => reasons.size > 0,
-  );
+  return useSyncExternalStore((watcher) => {
+    watchers.add(watcher);
+    return () => watchers.delete(watcher);
+  }, isRefreshPaused);
 }
 
 let told = false;

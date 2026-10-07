@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { shareUnchanged } from "@/lib/scan-diff";
+import { shareUnchanged, withoutUdp } from "@/lib/scan-diff";
 import type { PortProcess } from "@/lib/types";
 
 interface PortsUpdatedPayload {
@@ -10,6 +10,8 @@ interface PortsUpdatedPayload {
   error: string | null;
   /** Goes up each time the backend's result changes. */
   revision: number;
+  /** Whether the scan looked for UDP sockets too. */
+  includeUdp: boolean;
 }
 
 function readPayload(payload: unknown): PortsUpdatedPayload {
@@ -24,6 +26,7 @@ function readPayload(payload: unknown): PortsUpdatedPayload {
       : [],
     error: typeof record.error === "string" ? record.error : null,
     revision: typeof record.revision === "number" ? record.revision : 0,
+    includeUdp: record.include_udp === true,
   };
 }
 
@@ -45,6 +48,7 @@ export function useScanStream(
 
   const processesRef = useRef<PortProcess[]>([]);
   const hasResultRef = useRef(false);
+  const includedUdpRef = useRef(false);
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -69,10 +73,21 @@ export function useScanStream(
     setError(null);
     setLastScanAt(Date.now());
 
+    // Turning "Include UDP" on or off changes what a scan looks for, not
+    // what is listening: every UDP socket would be news, or every one gone.
+    // The first scan after it is compared with the one before on what both
+    // looked for, so a server that came or went in between is not missed.
+    const sameCoverage = payload.includeUdp === includedUdpRef.current;
+    includedUdpRef.current = payload.includeUdp;
+
     const prev = processesRef.current;
     const next = shareUnchanged(prev, payload.processes);
     if (hasResultRef.current && next !== prev) {
-      onChangeRef.current(prev, next);
+      if (sameCoverage) {
+        onChangeRef.current(prev, next);
+      } else {
+        onChangeRef.current(withoutUdp(prev), withoutUdp(next));
+      }
     }
     hasResultRef.current = true;
     processesRef.current = next;

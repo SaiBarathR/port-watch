@@ -119,6 +119,33 @@ describe("diffScans", () => {
     ]);
   });
 
+  // A browser or a call does this all day. It is marked and recorded, and
+  // not announced: a toast is for a server coming or going.
+  it("does not announce the UDP sockets a surviving process opens and closes", () => {
+    const result = diff(
+      [process(1, "chrome", [binding(9222), binding(50001, "UDP")])],
+      [process(1, "chrome", [binding(9222), binding(50002, "UDP")])],
+    );
+
+    expect(result.messages).toEqual([]);
+    expect(result.rowChanges).toEqual(new Map([["pid-1", "changed"]]));
+    expect(summary(result.historyEvents)).toEqual([
+      "occupied 50002 by 1",
+      "freed 50001 by 1",
+    ]);
+  });
+
+  it("still announces a process that comes or goes with only UDP sockets", () => {
+    const dns = process(2, "dnsmasq", [binding(53, "UDP")]);
+
+    expect(diff([], [dns]).messages).toEqual([
+      "Port 53 is now in use by dnsmasq (PID 2)",
+    ]);
+    expect(diff([dns], []).messages).toEqual([
+      "Port 53 freed (dnsmasq, PID 2)",
+    ]);
+  });
+
   it("marks a row whose address changed without calling the port new", () => {
     const result = diff(
       [process(1, "node", [binding(3000, "TCP", "127.0.0.1")])],

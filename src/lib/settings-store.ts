@@ -13,6 +13,13 @@ import {
 
 /** Where the window kept settings itself, before the backend did. */
 const LEGACY_KEY = "port-watch-settings";
+/**
+ * Set once those have been handed to the backend. They are left where they
+ * are, for an older version of the app to read, and must not be handed over
+ * again: a settings file deleted months later to start afresh would bring
+ * them back.
+ */
+const HANDED_OVER_KEY = "port-watch-settings-handed-over";
 
 /** The backend's settings as of one change. */
 interface Snapshot {
@@ -147,6 +154,9 @@ export function readSettings(raw: unknown): AppSettings {
 
 function readLegacySettings(): AppSettings | null {
   try {
+    if (localStorage.getItem(HANDED_OVER_KEY) !== null) {
+      return null;
+    }
     const raw = localStorage.getItem(LEGACY_KEY);
     return raw ? readSettings(JSON.parse(raw)) : null;
   } catch {
@@ -176,11 +186,20 @@ export async function initSettings(): Promise<void> {
     // over what the window had been keeping. The window's copy is left where
     // it is, which is what an older version of the app would read.
     if (!reply.adopted) {
-      receive(
-        await invoke<Snapshot>("adopt_window_settings", {
-          legacy: readLegacySettings() ?? {},
-        }),
+      const taken = await invoke<Snapshot & { saved?: boolean }>(
+        "adopt_window_settings",
+        { legacy: readLegacySettings() ?? {} },
       );
+      receive(taken);
+      // Only once the backend has them on disk. Until then this copy is the
+      // only one that outlasts the run, and is offered again next time.
+      if (taken.saved === true) {
+        try {
+          localStorage.setItem(HANDED_OVER_KEY, "1");
+        } catch {
+          // storage is unavailable, and then there was nothing to hand over
+        }
+      }
     }
   } catch {
     // not inside the app

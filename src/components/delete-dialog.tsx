@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangleIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { commands } from "@/lib/commands";
 import { deletableFoldersDescription } from "@/lib/platform";
 import type { PortProcess } from "@/lib/types";
 import { formatPorts, pinPath } from "@/lib/types";
@@ -42,6 +42,12 @@ export function DeleteDialog({
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Closed from outside too (its process left the list): the name typed
+  // for one folder is not carried into the next dialog.
+  if (!open && confirmation !== "") {
+    setConfirmation("");
+  }
+
   const path = target ? pinPath(target.process) : "";
   const folderBasename = basename(path);
   const blockedReason = target?.process.delete_blocked ?? null;
@@ -64,14 +70,12 @@ export function DeleteDialog({
     setBusy(true);
     try {
       // One command: the backend checks the folder before it stops anything.
-      await invoke("delete_project", {
-        pid: target.process.pid,
-        expectedName: target.process.name,
-        expectedStartedAt: target.process.started_at,
+      await commands.deleteProject(
+        target.process,
         path,
-        mode: target.mode,
-        confirmation: target.mode === "permanent" ? confirmation : null,
-      });
+        target.mode,
+        target.mode === "permanent" ? confirmation : null,
+      );
       toast.success(
         target.mode === "trash"
           ? "Moved folder to Trash"

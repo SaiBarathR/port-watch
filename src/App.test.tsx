@@ -69,6 +69,149 @@ describe("a row's menu", () => {
   });
 });
 
+describe("while a menu or a dialog is open", () => {
+  const paused = () => screen.queryByText(/^Paused while a menu or dialog/);
+  const lastPause = (app: Awaited<ReturnType<typeof launchApp>>) =>
+    app.callsTo("set_refresh_paused").slice(-1)[0];
+
+  it("holds the scans, and lets them go when it closes", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+
+    await openRowMenu(app.user, "node");
+    await waitFor(() => expect(lastPause(app)).toEqual({ paused: true }));
+    expect(paused()).toBeTruthy();
+
+    await app.user.keyboard("{Escape}");
+    await waitFor(() => expect(lastPause(app)).toEqual({ paused: false }));
+    expect(paused()).toBeNull();
+  });
+
+  // Nothing tells the table that a menu closed because its row left.
+  it("lets the scans go when the row the menu belongs to is gone", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+
+    await openRowMenu(app.user, "node");
+    await waitFor(() => expect(lastPause(app)).toEqual({ paused: true }));
+
+    await app.scanFinds([]);
+
+    await waitFor(() => expect(lastPause(app)).toEqual({ paused: false }));
+    expect(paused()).toBeNull();
+  });
+
+  it("does not scan when the window comes to the front", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+    await screen.findByText("node");
+
+    await app.focusWindow();
+    await waitFor(() =>
+      expect(app.callsTo("trigger_port_scan")).toHaveLength(1),
+    );
+
+    const menu = await openRowMenu(app.user, "node");
+    await app.focusWindow();
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    await screen.findByRole("alertdialog");
+    await app.focusWindow();
+
+    expect(app.callsTo("trigger_port_scan")).toHaveLength(1);
+  });
+
+  it("closes a stop dialog whose process is no longer listed", async () => {
+    const app = await launchApp({
+      processes: [listener(4242, 3000)],
+      refuseToStop: { 4242: "PID 4242 now belongs to a different process" },
+    });
+
+    const menu = await openRowMenu(app.user, "node");
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    const dialog = within(await screen.findByRole("alertdialog"));
+    await app.user.click(dialog.getByRole("button", { name: "Stop Process" }));
+    await screen.findByText(/now belongs to a different process/);
+    // Refused, and still listed: the dialog stays for another try.
+    expect(screen.queryByRole("alertdialog")).toBeTruthy();
+
+    await app.scanFinds([]);
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+
+  // The dialog was closed from outside, not by its own Cancel.
+  it("asks twice again after a dialog was closed for it", async () => {
+    const service = systemService(88, 5000, "rapportd");
+    const app = await launchApp({
+      settings: { hideSystemServices: false, allowSystemProcessActions: true },
+      processes: [service],
+    });
+
+    let menu = await openRowMenu(app.user, "rapportd");
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    let dialog = within(await screen.findByRole("alertdialog"));
+    await app.user.click(dialog.getByRole("button", { name: "Continue" }));
+    expect(dialog.getByRole("button", { name: "Stop Process" })).toBeTruthy();
+
+    await app.scanFinds([]);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await app.scanFinds([service]);
+
+    menu = await openRowMenu(app.user, "rapportd");
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    dialog = within(await screen.findByRole("alertdialog"));
+    expect(dialog.getByRole("button", { name: "Continue" })).toBeTruthy();
+    expect(dialog.queryByRole("button", { name: "Stop Process" })).toBeNull();
+    expect(app.callsTo("stop_process")).toEqual([]);
+  });
+
+  it("does not carry a typed folder name into the next delete dialog", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+    const permanentDelete = async () => {
+      await app.user.keyboard("{Alt>}");
+      const menu = await openRowMenu(app.user, "node");
+      await app.user.click(
+        menu.getByRole("menuitem", { name: "Delete Permanently…" }),
+      );
+      await app.user.keyboard("{/Alt}");
+      return within(await screen.findByRole("dialog"));
+    };
+
+    let dialog = await permanentDelete();
+    await app.user.type(dialog.getByRole("textbox"), "app-3000");
+    expect(
+      dialog.getByRole("button", { name: "Delete Permanently" }),
+    ).toHaveProperty("disabled", false);
+
+    await app.scanFinds([]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await app.scanFinds([listener(4242, 3000)]);
+
+    dialog = await permanentDelete();
+    expect(dialog.getByRole("textbox")).toHaveProperty("value", "");
+    expect(
+      dialog.getByRole("button", { name: "Delete Permanently" }),
+    ).toHaveProperty("disabled", true);
+  });
+
+  it("closes a delete dialog whose process is no longer listed", async () => {
+    const app = await launchApp({
+      processes: [listener(4242, 3000)],
+      refuseToDelete:
+        "The process was stopped, but its folder could not be deleted",
+    });
+
+    const menu = await openRowMenu(app.user, "node");
+    await app.user.click(
+      menu.getByRole("menuitem", { name: "Move to Trash…" }),
+    );
+    const dialog = within(await screen.findByRole("dialog"));
+    await app.user.click(dialog.getByRole("button", { name: "Move to Trash" }));
+    await screen.findByText(/its folder could not be deleted/);
+
+    await app.scanFinds([]);
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
 describe("stopping", () => {
   it("stops the process the row showed, after one confirmation", async () => {
     const app = await launchApp({ processes: [listener(4242, 3000)] });
@@ -463,6 +606,43 @@ describe("port change toasts", () => {
     ]);
 
     expect(await screen.findByText("Port change detected")).toBeTruthy();
+  });
+
+  // Turning "Include UDP" on changes what a scan looks for. What it then
+  // finds was listening all along.
+  it("does not announce what a scan finds only because it looked for more", async () => {
+    const node = listener(4242, 3000);
+    const avahi = listener(4343, 5353, {
+      name: "avahi",
+      ports: [{ address: "*", port: 5353, protocol: "UDP" }],
+    });
+    const toasts = () =>
+      document.querySelector("[data-sonner-toaster]")?.textContent ?? "";
+    const app = await launchApp({ processes: [node] });
+    await screen.findByText("node");
+
+    await app.scanFinds([node, avahi], { includeUdp: true });
+    expect(await table().findByText("avahi")).toBeTruthy();
+    expect(toasts()).toBe("");
+
+    // The next scan looks for the same things, and is compared in full.
+    await app.scanFinds(
+      [node, avahi, listener(4444, 8080, { name: "caddy" })],
+      { includeUdp: true },
+    );
+    expect(
+      await screen.findByText(/Port 8080 is now in use by caddy/),
+    ).toBeTruthy();
+
+    // A server that goes away in the very scan that stops looking for UDP is
+    // still news; the UDP sockets that scan no longer lists are not.
+    await app.scanFinds([listener(4444, 8080, { name: "caddy" })], {
+      includeUdp: false,
+    });
+    expect(
+      await screen.findByText(/Port 3000 freed \(node, PID 4242\)/),
+    ).toBeTruthy();
+    expect(toasts()).not.toContain("5353");
   });
 
   it("takes the open ones away when they are muted, and shows no more", async () => {

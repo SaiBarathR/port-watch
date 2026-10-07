@@ -78,6 +78,19 @@ export function ProcessActionsProvider({
   } | null>(null);
   const [history, setHistory] = useState<number | "all" | null>(null);
 
+  // A dialog about a process that is no longer listed has nothing left to
+  // act on. A stop that was refused because the row was out of date, or a
+  // delete that stopped the process and then could not remove its folder,
+  // would otherwise leave one open that can only fail again.
+  const listed = (process: PortProcess) =>
+    processes.some((item) => item.id === process.id);
+  if (stopRequest !== null && !stopRequest.targets.some(listed)) {
+    setStopRequest(null);
+  }
+  if (deleteTarget !== null && !listed(deleteTarget.process)) {
+    setDeleteTarget(null);
+  }
+
   const dialogOpen =
     stopRequest !== null || deleteTarget !== null || history !== null;
   // Rows must not move behind a dialog that is about them.

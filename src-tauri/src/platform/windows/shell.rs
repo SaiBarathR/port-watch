@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use crate::platform::identity::{verdict, LiveProcess, Probe, Verdict};
 use crate::scanner::ProcessIdentity;
@@ -77,6 +78,13 @@ pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
     Ok(())
 }
 
+// A request to close gets this long before the process is ended outright,
+// and that gets as long again to take effect: the same as on macOS and Linux.
+const STOP_GRACE: Duration = Duration::from_secs(2);
+const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Returns once the process has exited. A delete follows a stop, and a
+/// folder cannot be removed from under a program that is still running.
 pub fn stop_process(
     pid: u32,
     force: bool,
@@ -93,38 +101,57 @@ pub fn stop_process(
         return Ok(());
     }
 
-    let mut command = Command::new("taskkill");
-    command.no_window().args(["/PID", &pid.to_string()]);
-    if force {
-        command.arg("/F");
-    }
-
-    let status = command
-        .status()
-        .map_err(|e| format!("Failed to run taskkill: {e}"))?;
-
-    if !status.success() && !force {
-        // Console processes reject the graceful WM_CLOSE path outright;
-        // re-verify identity before force-killing.
-        if !still_there(pid, expected)? {
-            return Ok(());
-        }
-        let force_status = Command::new("taskkill")
-            .no_window()
-            .args(["/F", "/PID", &pid.to_string()])
-            .status()
-            .map_err(|e| format!("Failed to run taskkill: {e}"))?;
-        if !force_status.success() {
-            return Err(format!("taskkill failed for PID {pid}"));
-        }
+    // Without /F taskkill only asks: it posts a close message, which a
+    // program may answer with a prompt or not at all, and which a console
+    // program has no window to receive (taskkill then fails).
+    if !force && taskkill(pid, false)? && exited_within(pid, expected, STOP_GRACE)? {
         return Ok(());
     }
 
-    if !status.success() {
+    // Ending it outright needs the same certainty the request had.
+    if !still_there(pid, expected)? {
+        return Ok(());
+    }
+    if !taskkill(pid, true)? && still_there(pid, expected)? {
         return Err(format!("taskkill failed for PID {pid}"));
     }
+    if exited_within(pid, expected, STOP_GRACE)? {
+        Ok(())
+    } else {
+        Err(format!("PID {pid} is still running after taskkill /F"))
+    }
+}
 
-    Ok(())
+// Whether taskkill reported success.
+fn taskkill(pid: u32, force: bool) -> Result<bool, String> {
+    let mut command = Command::new("taskkill");
+    command.no_window();
+    if force {
+        command.arg("/F");
+    }
+    command
+        .args(["/PID", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .map_err(|e| format!("Failed to run taskkill: {e}"))
+}
+
+// Polls: most processes are gone within milliseconds of being told to go.
+fn exited_within(
+    pid: u32,
+    expected: Option<&ProcessIdentity>,
+    timeout: Duration,
+) -> Result<bool, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if !still_there(pid, expected)? {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(EXIT_POLL_INTERVAL);
+    }
 }
 
 pub fn is_running(pid: u32) -> bool {
@@ -372,9 +399,12 @@ mod tests {
             assert_eq!(identity.name.to_ascii_lowercase(), "ping.exe");
 
             let result = stop_process(child.id(), force, Some(&identity));
+            // A delete follows a stop, so the process must be gone by now.
+            let exited = child.try_wait().expect("try_wait").is_some();
             let status = child.wait().expect("wait");
 
             assert_eq!(result, Ok(()), "force={force}");
+            assert!(exited, "force={force}: stop returned before it had exited");
             assert!(
                 !status.success(),
                 "force={force}: it should have been killed"

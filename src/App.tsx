@@ -12,6 +12,7 @@ import { usePortQuery } from "@/hooks/use-port-query";
 import { useScanSideEffects } from "@/hooks/use-scan-side-effects";
 import { useScanStream } from "@/hooks/use-scan-stream";
 import { useTheme } from "@/hooks/use-theme";
+import { isRefreshPaused } from "@/lib/refresh-pause";
 import { useSettings } from "@/lib/settings-store";
 
 function App() {
@@ -40,7 +41,9 @@ function App() {
 
     void getCurrentWindow()
       .onFocusChanged(({ payload: focused }) => {
-        if (focused) {
+        // Not under an open menu or dialog: the rows it is about would
+        // move. Scans start again, with one at once, when it closes.
+        if (focused && !isRefreshPaused()) {
           void refresh();
         }
       })

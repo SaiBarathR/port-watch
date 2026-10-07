@@ -82,5 +82,5 @@ export function stopMultipleProcessDescription(): string {
 }
 
 export function deletableFoldersDescription(): string {
-  return "Only project folders inside your home folder can be deleted. Your home folder, its standard folders (Desktop, Documents, Downloads, …) and anything holding app data or settings are protected.";
+  return "Only project folders inside your home folder can be deleted. Your home folder, its standard and synced folders (Desktop, Documents, Dropbox, OneDrive, …) and anything holding app data or settings are protected.";
 }

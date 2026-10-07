@@ -23,9 +23,11 @@ pub struct TrayState {
     numbered: u64,
 }
 
-/// How many applied menus are remembered. One can be open while the next is
-/// applied; the third is slack.
-const MENUS_KEPT: usize = 3;
+/// How many applied menus are remembered. A menu stays on screen for as long
+/// as it is open while each scan that finds something new applies another,
+/// and a click on one that has been forgotten does nothing: this many
+/// changes to the list have to pass under an open menu for that.
+const MENUS_KEPT: usize = 8;
 
 /// Everything a tray menu shows. A click acts on the process its item was
 /// built from, not on whatever holds that PID by the time of the click.
@@ -711,13 +713,15 @@ mod tests {
     #[test]
     fn a_menu_too_old_to_be_remembered_does_nothing() {
         let mut menus = VecDeque::new();
-        for number in 1..=5 {
+        let newest = MENUS_KEPT as u64 + 2;
+        for number in 1..=newest {
             remember(&mut menus, number, showing(vec![listener(42, 3000)]));
         }
 
         assert_eq!(menus.len(), MENUS_KEPT);
-        assert_eq!(shown_process(&menus, 1, "pid-42"), None);
-        assert!(shown_process(&menus, 5, "pid-42").is_some());
+        assert_eq!(shown_process(&menus, 2, "pid-42"), None);
+        assert!(shown_process(&menus, 3, "pid-42").is_some());
+        assert!(shown_process(&menus, newest, "pid-42").is_some());
     }
 
     #[test]

@@ -96,6 +96,9 @@ pub struct Snapshot {
 pub struct Change {
     pub before: Settings,
     pub after: Snapshot,
+    /// Whether the settings as they now are reached the disk. They are in
+    /// use either way.
+    pub saved: bool,
 }
 
 impl SettingsStore {
@@ -166,17 +169,19 @@ impl SettingsStore {
         let before = std::mem::replace(&mut state.settings, after);
         state.revision += 1;
         // Kept for the session even when the file cannot be written.
-        if let Some(file) = &self.file {
-            if let Err(error) = save(file, &state.settings, state.adopted) {
-                eprintln!("Failed to save settings: {error}");
-            }
-        }
+        let saved = match &self.file {
+            Some(file) => save(file, &state.settings, state.adopted)
+                .inspect_err(|error| eprintln!("Failed to save settings: {error}"))
+                .is_ok(),
+            None => false,
+        };
         Change {
             before,
             after: Snapshot {
                 settings: state.settings.clone(),
                 revision: state.revision,
             },
+            saved,
         }
     }
 
@@ -232,14 +237,17 @@ pub fn update(app: &AppHandle, patch: Map<String, Value>) -> Result<Snapshot, St
 }
 
 /// Takes over what the window kept in earlier versions; see
-/// `SettingsStore::adopt`.
-pub fn adopt(app: &AppHandle, legacy: Map<String, Value>) -> Snapshot {
+/// `SettingsStore::adopt`. Also says whether the result reached the disk:
+/// until it has, the window's copy is the only one that will outlast this
+/// run.
+pub fn adopt(app: &AppHandle, legacy: Map<String, Value>) -> (Snapshot, bool) {
     let change = app.state::<SettingsStore>().adopt(legacy);
-    follow(app, change)
+    let saved = change.saved;
+    (follow(app, change), saved)
 }
 
 fn follow(app: &AppHandle, change: Change) -> Snapshot {
-    let Change { before, after } = change;
+    let Change { before, after, .. } = change;
 
     apply_to_poller(app, &after.settings);
     if before.menu_bar_mode != after.settings.menu_bar_mode {
@@ -418,6 +426,23 @@ mod tests {
             let again = store.adopt(patch(json!({ "includeUdp": false })));
             assert_eq!(again.after.settings, adopted);
         }
+    }
+
+    // The window only stops offering its own copy once this one is on disk.
+    #[test]
+    fn a_change_says_whether_it_reached_the_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(store_in(&dir).adopt(Map::new()).saved);
+
+        // A folder that cannot be made: a file is in the way.
+        let blocker = dir.path().join("not-a-folder");
+        std::fs::write(&blocker, "").unwrap();
+        let store = SettingsStore::load(Some(blocker.join("settings.json")));
+        let change = store.adopt(patch(json!({ "includeUdp": true })));
+        assert!(!change.saved);
+        assert!(change.after.settings.include_udp, "in use all the same");
+
+        assert!(!SettingsStore::load(None).adopt(Map::new()).saved);
     }
 
     // The tray is usable before the window has loaded. What the user picks

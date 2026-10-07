@@ -22,17 +22,28 @@ const PROJECT_MARKERS: &[&str] = &[
     "pom.xml",
 ];
 
+/// The folder a process's project lives in: the nearest one at or above
+/// `path` that holds a project marker, else the folder `path` is or is in.
+/// Empty when `path` does not say where that is.
 pub fn infer_project_root(path: &str) -> String {
-    if path.trim().is_empty() {
+    // Without the working directory a script may be known only as
+    // `server.js`, and a relative path would be looked up against wherever
+    // this app happens to have been started.
+    //
+    // The path is taken as it is: a folder's name may end in a space, and
+    // trimming it would name the folder next to it.
+    let mut current = PathBuf::from(path);
+    if !current.is_absolute() {
         return String::new();
     }
 
-    let mut current = PathBuf::from(path);
+    // A script or a program is given when the working directory is unknown.
+    // The folder is what every action on a row is for: a file can be neither
+    // shown in the file manager as a folder nor opened in a terminal.
     if current.is_file() {
-        if let Some(parent) = current.parent() {
-            current = parent.to_path_buf();
-        }
+        current.pop();
     }
+    let start = current.clone();
 
     loop {
         if PROJECT_MARKERS
@@ -47,7 +58,10 @@ pub fn infer_project_root(path: &str) -> String {
         }
     }
 
-    path.trim_end_matches(['/', '\\']).to_string()
+    start
+        .to_string_lossy()
+        .trim_end_matches(['/', '\\'])
+        .to_string()
 }
 
 #[cfg(test)]
@@ -72,5 +86,43 @@ mod tests {
         assert_eq!(root, temp.to_string_lossy().into_owned());
 
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn a_file_with_no_project_around_it_gives_its_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = fs::canonicalize(temp.path()).unwrap().join("scripts");
+        fs::create_dir_all(&folder).unwrap();
+        let script = folder.join("serve.py");
+        fs::write(&script, "").unwrap();
+
+        let expected = folder.to_string_lossy().into_owned();
+        assert_eq!(infer_project_root(&script.to_string_lossy()), expected);
+        assert_eq!(infer_project_root(&expected), expected);
+        assert_eq!(infer_project_root(&format!("{expected}/")), expected);
+    }
+
+    // Trimmed, the first of these would be the second: another project, and
+    // the one a delete would then be pointed at.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_whose_name_ends_in_a_space_is_not_the_one_next_to_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let spaced = root.join("project ");
+        fs::create_dir_all(&spaced).unwrap();
+        fs::create_dir_all(root.join("project")).unwrap();
+        fs::write(root.join("project/package.json"), "{}").unwrap();
+
+        let spaced = spaced.to_string_lossy().into_owned();
+        assert_eq!(infer_project_root(&spaced), spaced);
+    }
+
+    #[test]
+    fn a_path_that_does_not_say_where_it_is_gives_nothing() {
+        assert_eq!(infer_project_root(""), "");
+        assert_eq!(infer_project_root("  "), "");
+        assert_eq!(infer_project_root("server.js"), "");
+        assert_eq!(infer_project_root("./bin/serve"), "");
     }
 }

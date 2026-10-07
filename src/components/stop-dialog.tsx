@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangleIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -13,6 +12,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { commands } from "@/lib/commands";
 import type { PortProcess } from "@/lib/types";
 import { formatPorts, oldestFirst } from "@/lib/types";
 import {
@@ -64,11 +64,7 @@ export function StopDialog({
 
     for (const process of ordered) {
       try {
-        await invoke("stop_process", {
-          pid: process.pid,
-          expectedName: process.name,
-          expectedStartedAt: process.started_at,
-        });
+        await commands.stopProcess(process);
         stopped.push(process);
       } catch (err) {
         failures.push(`${process.name} (${process.pid}): ${String(err)}`);

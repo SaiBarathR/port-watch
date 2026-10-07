@@ -97,6 +97,13 @@ export function PortTable({
     [shownProcesses, settings.groupByDirectory, settings.pinnedPaths],
   );
 
+  // A menu goes with its row. Nothing tells this table that one closed
+  // because its row left, and the scans it was holding still would never
+  // start again.
+  if (openMenuId !== null && !tableData.some((row) => row.id === openMenuId)) {
+    setOpenMenuId(null);
+  }
+
   // A socket can be shared (a master and its workers). For such a row,
   // stopping it and freeing its port are different things.
   const isPortShared = useMemo(() => {

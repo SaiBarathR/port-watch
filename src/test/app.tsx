@@ -62,6 +62,11 @@ interface Launch {
   refuseSettings?: string;
 }
 
+interface Scan {
+  /** Whether this scan looked for UDP sockets too. */
+  includeUdp?: boolean;
+}
+
 /**
  * Starts the app as a launch does, against a backend that answers the
  * window's commands from memory. The app's modules are loaded afresh, so
@@ -80,6 +85,7 @@ export async function launchApp(launch: Launch = {}) {
   let processes = launch.processes ?? [];
   let settings: AppSettings = { ...DEFAULT_SETTINGS, ...launch.settings };
   let scanRevision = 1;
+  let includeUdp = settings.includeUdp;
   let settingsRevision = 1;
   let releaseFirstScan = () => {};
   const firstScanReleased = launch.holdFirstScan
@@ -89,7 +95,12 @@ export async function launchApp(launch: Launch = {}) {
     : Promise.resolve();
   const calls: { command: string; args: Record<string, unknown> }[] = [];
 
-  const scan = () => ({ processes, error: null, revision: scanRevision });
+  const scan = () => ({
+    processes,
+    error: null,
+    revision: scanRevision,
+    include_udp: includeUdp,
+  });
   const without = (pid: unknown) => {
     processes = processes.filter((process) => process.pid !== pid);
     scanRevision += 1;
@@ -153,12 +164,19 @@ export async function launchApp(launch: Launch = {}) {
     /** The arguments of every call the window made to one command. */
     callsTo: (command: string) =>
       calls.filter((call) => call.command === command).map((call) => call.args),
+    /** The window comes to the front, as after a switch from another app. */
+    focusWindow: async () => {
+      await act(async () => {
+        await emit("tauri://focus");
+      });
+    },
     finishFirstScan: async () => {
       await act(async () => releaseFirstScan());
     },
     /** A later scan finds this instead, and says so as the poller does. */
-    scanFinds: async (next: PortProcess[]) => {
+    scanFinds: async (next: PortProcess[], found: Scan = {}) => {
       processes = next;
+      includeUdp = found.includeUdp ?? includeUdp;
       scanRevision += 1;
       await act(async () => {
         await emit("ports-updated", scan());

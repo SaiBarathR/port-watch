@@ -10,6 +10,8 @@ interface PortsUpdatedPayload {
   error: string | null;
   /** Goes up each time the backend's result changes. */
   revision: number;
+  /** Whether the scan looked for UDP sockets too. */
+  includeUdp: boolean;
 }
 
 function readPayload(payload: unknown): PortsUpdatedPayload {
@@ -24,6 +26,7 @@ function readPayload(payload: unknown): PortsUpdatedPayload {
       : [],
     error: typeof record.error === "string" ? record.error : null,
     revision: typeof record.revision === "number" ? record.revision : 0,
+    includeUdp: record.include_udp === true,
   };
 }
 
@@ -45,6 +48,7 @@ export function useScanStream(
 
   const processesRef = useRef<PortProcess[]>([]);
   const hasResultRef = useRef(false);
+  const includedUdpRef = useRef(false);
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -69,9 +73,15 @@ export function useScanStream(
     setError(null);
     setLastScanAt(Date.now());
 
+    // Turning "Include UDP" on or off changes what a scan looks for, not
+    // what is listening. The first scan after it is not compared with the
+    // one before: every UDP socket would be news, or every one gone.
+    const comparable = payload.includeUdp === includedUdpRef.current;
+    includedUdpRef.current = payload.includeUdp;
+
     const prev = processesRef.current;
     const next = shareUnchanged(prev, payload.processes);
-    if (hasResultRef.current && next !== prev) {
+    if (hasResultRef.current && comparable && next !== prev) {
       onChangeRef.current(prev, next);
     }
     hasResultRef.current = true;

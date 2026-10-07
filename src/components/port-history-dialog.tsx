@@ -25,7 +25,13 @@ interface PortHistoryDialogProps {
  * section of Settings, which it is not one of.
  */
 export function PortHistoryDialog({ show, onClose }: PortHistoryDialogProps) {
-  const [selectedPort, setSelectedPort] = useState<number | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  // What to draw while the dialog fades out: `show` is already null by then,
+  // and the title and the list would change under the fade.
+  const [shown, setShown] = useState(show);
+  if (show !== null && show !== shown) {
+    setShown(show);
+  }
   // Bumped to draw the list again once the history has been cleared.
   const [cleared, setCleared] = useState(0);
 
@@ -34,24 +40,26 @@ export function PortHistoryDialog({ show, onClose }: PortHistoryDialogProps) {
       <DialogContent className="flex max-h-[min(80vh,640px)] max-w-md flex-col">
         <DialogHeader>
           <DialogTitle>
-            {typeof show === "number" ? `Port ${show} history` : "Port history"}
+            {typeof shown === "number"
+              ? `Port ${shown} history`
+              : "Port history"}
           </DialogTitle>
           <DialogDescription>
-            {typeof show === "number"
+            {typeof shown === "number"
               ? "When this port was taken and freed, as the scans saw it."
               : "When each port was first and last seen. Pick one for its timeline."}
           </DialogDescription>
         </DialogHeader>
 
-        {typeof show === "number" && <PortHistoryTimeline port={show} />}
+        {typeof shown === "number" && <PortHistoryTimeline port={shown} />}
 
-        {show === "all" && (
+        {shown === "all" && (
           <>
             <div key={cleared} className="min-h-0 flex-1 overflow-y-auto">
               <PortHistoryList
-                selectedPort={selectedPort}
-                onSelectPort={(port) =>
-                  setSelectedPort((current) => (current === port ? null : port))
+                selected={selected}
+                onSelect={(key) =>
+                  setSelected((current) => (current === key ? null : key))
                 }
               />
             </div>
@@ -62,7 +70,7 @@ export function PortHistoryDialog({ show, onClose }: PortHistoryDialogProps) {
                 variant="outline"
                 onClick={() => {
                   clearPortHistory();
-                  setSelectedPort(null);
+                  setSelected(null);
                   setCleared((count) => count + 1);
                 }}
               >

@@ -6,7 +6,10 @@ import { portSignature } from "@/lib/types";
 export interface ScanDiff {
   /** Rows to highlight, by row id. Only rows the table shows. */
   rowChanges: Map<string, RowChangeKind>;
-  /** One line per port taken or freed, for the toast. Only rows shown. */
+  /**
+   * One line per port taken or freed, for the toast. Only rows shown, and
+   * not the UDP sockets of a process that was there before and still is.
+   */
   messages: string[];
   /** Every port taken or freed, shown or not, for the history. */
   historyEvents: PortHistoryEvent[];
@@ -80,22 +83,36 @@ export function diffScans(
     ...freed.map(([, holding]) => event("freed", holding)),
   ];
 
+  const prevById = new Map(prev.map((process) => [process.id, process]));
+  const nextIds = new Set(next.map((process) => process.id));
+  // A toast is for a server coming, going or taking another port. A browser
+  // or a call opens and closes UDP sockets all day without doing any of
+  // those; that is recorded in the history and marked on the row.
+  const announced = ({ process, protocol }: Holding) =>
+    isShown(process) &&
+    !(
+      protocol.toUpperCase() === "UDP" &&
+      prevById.has(process.id) &&
+      nextIds.has(process.id)
+    );
+
   // A Set, because a port held over both TCP and UDP reads the same.
   const messages = new Set<string>();
-  for (const [, { process, port }] of taken) {
-    if (isShown(process)) {
+  for (const [, holding] of taken) {
+    if (announced(holding)) {
+      const { process, port } = holding;
       messages.add(
         `Port ${port} is now in use by ${process.name} (PID ${process.pid})`,
       );
     }
   }
-  for (const [, { process, port }] of freed) {
-    if (isShown(process)) {
+  for (const [, holding] of freed) {
+    if (announced(holding)) {
+      const { process, port } = holding;
       messages.add(`Port ${port} freed (${process.name}, PID ${process.pid})`);
     }
   }
 
-  const prevById = new Map(prev.map((process) => [process.id, process]));
   const rowChanges = new Map<string, RowChangeKind>();
   for (const process of next) {
     if (!isShown(process)) {

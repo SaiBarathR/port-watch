@@ -90,15 +90,18 @@ function TimelineDayGroup({
 
 interface PortHistoryTimelineProps {
   port: number;
+  /** Only this protocol's events; both TCP's and UDP's when left out. */
+  protocol?: string;
   className?: string;
 }
 
 export function PortHistoryTimeline({
   port,
+  protocol,
   className,
 }: PortHistoryTimelineProps) {
-  const summary = getPortSummary(port);
-  const grouped = groupTimelineByDay(getPortTimeline(port));
+  const summary = getPortSummary(port, protocol);
+  const grouped = groupTimelineByDay(getPortTimeline(port, protocol));
 
   if (!summary) {
     return (
@@ -127,14 +130,15 @@ export function PortHistoryTimeline({
 }
 
 interface PortHistoryListProps {
-  onSelectPort?: (port: number) => void;
-  selectedPort?: number | null;
+  /** Given the key of the entry picked: a port under one protocol. */
+  onSelect?: (key: string) => void;
+  selected?: string | null;
   className?: string;
 }
 
 export function PortHistoryList({
-  onSelectPort,
-  selectedPort = null,
+  onSelect,
+  selected = null,
   className,
 }: PortHistoryListProps) {
   const summaries = getPortSummaries();
@@ -151,17 +155,19 @@ export function PortHistoryList({
   return (
     <div className={cn("space-y-1.5", className)}>
       {summaries.map((summary) => {
-        const selected = selectedPort === summary.port;
+        // TCP and UDP on one port number are two entries.
+        const key = `${summary.protocol}|${summary.port}`;
+        const open = selected === key;
 
         return (
-          <div key={summary.port} className="overflow-hidden rounded-md border">
+          <div key={key} className="overflow-hidden rounded-md border">
             <button
               type="button"
               className={cn(
                 "flex w-full items-start justify-between gap-3 px-2.5 py-2 text-left transition-colors hover:bg-muted/40",
-                selected && "bg-muted/30",
+                open && "bg-muted/30",
               )}
-              onClick={() => onSelectPort?.(summary.port)}
+              onClick={() => onSelect?.(key)}
             >
               <div className="min-w-0 space-y-0.5">
                 <p className="font-mono text-sm font-medium">
@@ -182,9 +188,12 @@ export function PortHistoryList({
                 {summary.eventCount}
               </Badge>
             </button>
-            {selected && (
+            {open && (
               <div className="border-t bg-muted/10 px-2.5 py-2.5">
-                <PortHistoryTimeline port={summary.port} />
+                <PortHistoryTimeline
+                  port={summary.port}
+                  protocol={summary.protocol}
+                />
               </div>
             )}
           </div>

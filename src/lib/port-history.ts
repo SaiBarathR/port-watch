@@ -128,9 +128,17 @@ if (typeof window !== "undefined") {
   });
 }
 
-export function getPortTimeline(port: number): PortHistoryEvent[] {
+/** One port's events, newest first; of one protocol when that is given. */
+export function getPortTimeline(
+  port: number,
+  protocol?: string,
+): PortHistoryEvent[] {
   return loadRaw()
-    .filter((event) => event.port === port)
+    .filter(
+      (event) =>
+        event.port === port &&
+        (protocol === undefined || event.protocol === protocol),
+    )
     .reverse();
 }
 
@@ -177,8 +185,17 @@ export function getPortSummaries(
   );
 }
 
-export function getPortSummary(port: number): PortSummary | null {
-  return getPortSummaries().find((summary) => summary.port === port) ?? null;
+export function getPortSummary(
+  port: number,
+  protocol?: string,
+): PortSummary | null {
+  return (
+    getPortSummaries().find(
+      (summary) =>
+        summary.port === port &&
+        (protocol === undefined || summary.protocol === protocol),
+    ) ?? null
+  );
 }
 
 function startOfLocalDay(date: Date): Date {

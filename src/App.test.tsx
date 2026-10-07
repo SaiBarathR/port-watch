@@ -69,6 +69,94 @@ describe("a row's menu", () => {
   });
 });
 
+describe("while a menu or a dialog is open", () => {
+  const paused = () => screen.queryByText(/^Paused while a menu or dialog/);
+  const lastPause = (app: Awaited<ReturnType<typeof launchApp>>) =>
+    app.callsTo("set_refresh_paused").slice(-1)[0];
+
+  it("holds the scans, and lets them go when it closes", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+
+    await openRowMenu(app.user, "node");
+    await waitFor(() => expect(lastPause(app)).toEqual({ paused: true }));
+    expect(paused()).toBeTruthy();
+
+    await app.user.keyboard("{Escape}");
+    await waitFor(() => expect(lastPause(app)).toEqual({ paused: false }));
+    expect(paused()).toBeNull();
+  });
+
+  // Nothing tells the table that a menu closed because its row left.
+  it("lets the scans go when the row the menu belongs to is gone", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+
+    await openRowMenu(app.user, "node");
+    await waitFor(() => expect(lastPause(app)).toEqual({ paused: true }));
+
+    await app.scanFinds([]);
+
+    await waitFor(() => expect(lastPause(app)).toEqual({ paused: false }));
+    expect(paused()).toBeNull();
+  });
+
+  it("does not scan when the window comes to the front", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+    await screen.findByText("node");
+
+    await app.focusWindow();
+    await waitFor(() =>
+      expect(app.callsTo("trigger_port_scan")).toHaveLength(1),
+    );
+
+    const menu = await openRowMenu(app.user, "node");
+    await app.focusWindow();
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    await screen.findByRole("alertdialog");
+    await app.focusWindow();
+
+    expect(app.callsTo("trigger_port_scan")).toHaveLength(1);
+  });
+
+  it("closes a stop dialog whose process is no longer listed", async () => {
+    const app = await launchApp({
+      processes: [listener(4242, 3000)],
+      refuseToStop: { 4242: "PID 4242 now belongs to a different process" },
+    });
+
+    const menu = await openRowMenu(app.user, "node");
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    const dialog = within(await screen.findByRole("alertdialog"));
+    await app.user.click(dialog.getByRole("button", { name: "Stop Process" }));
+    await screen.findByText(/now belongs to a different process/);
+    // Refused, and still listed: the dialog stays for another try.
+    expect(screen.queryByRole("alertdialog")).toBeTruthy();
+
+    await app.scanFinds([]);
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+
+  it("closes a delete dialog whose process is no longer listed", async () => {
+    const app = await launchApp({
+      processes: [listener(4242, 3000)],
+      refuseToDelete:
+        "The process was stopped, but its folder could not be deleted",
+    });
+
+    const menu = await openRowMenu(app.user, "node");
+    await app.user.click(
+      menu.getByRole("menuitem", { name: "Move to Trash…" }),
+    );
+    const dialog = within(await screen.findByRole("dialog"));
+    await app.user.click(dialog.getByRole("button", { name: "Move to Trash" }));
+    await screen.findByText(/its folder could not be deleted/);
+
+    await app.scanFinds([]);
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
 describe("stopping", () => {
   it("stops the process the row showed, after one confirmation", async () => {
     const app = await launchApp({ processes: [listener(4242, 3000)] });
@@ -462,6 +550,35 @@ describe("port change toasts", () => {
       listener(4343, 4000, { name: "vite" }),
     ]);
 
+    expect(await screen.findByText("Port change detected")).toBeTruthy();
+  });
+
+  // Turning "Include UDP" on changes what a scan looks for. What it then
+  // finds was listening all along.
+  it("does not announce what a scan finds only because it looked for more", async () => {
+    const udp = { address: "*", port: 5353, protocol: "UDP" };
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+    await screen.findByText("node");
+
+    await app.scanFinds(
+      [
+        listener(4242, 3000),
+        listener(4343, 5353, { name: "avahi", ports: [udp] }),
+      ],
+      { includeUdp: true },
+    );
+    expect(await table().findByText("avahi")).toBeTruthy();
+    expect(screen.queryByText(/port changes? detected/i)).toBeNull();
+
+    // The next scan looks for the same things, and is compared again.
+    await app.scanFinds(
+      [
+        listener(4242, 3000),
+        listener(4343, 5353, { name: "avahi", ports: [udp] }),
+        listener(4444, 8080, { name: "caddy" }),
+      ],
+      { includeUdp: true },
+    );
     expect(await screen.findByText("Port change detected")).toBeTruthy();
   });
 

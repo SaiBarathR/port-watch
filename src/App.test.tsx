@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { launchApp, listener, systemService } from "@/test/app";
@@ -115,6 +115,25 @@ describe("while a menu or a dialog is open", () => {
     await app.focusWindow();
 
     expect(app.callsTo("trigger_port_scan")).toHaveLength(1);
+  });
+
+  // A toast in the corner reaches the confirming button in a narrow window.
+  it("clears the toasts from under a dialog that asks for confirmation", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+    await screen.findByText("node");
+    await app.scanFinds([
+      listener(4242, 3000),
+      listener(4343, 4000, { name: "vite" }),
+    ]);
+    await screen.findByText("Port change detected");
+
+    const menu = await openRowMenu(app.user, "node");
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    await screen.findByRole("alertdialog");
+
+    await waitFor(() =>
+      expect(screen.queryByText("Port change detected")).toBeNull(),
+    );
   });
 
   it("closes a stop dialog whose process is no longer listed", async () => {
@@ -384,6 +403,90 @@ describe("stopping", () => {
 });
 
 describe("deleting a project folder", () => {
+  // A big folder, or macOS asking a question first: it can take a while.
+  it("says what it is doing, and stays until it is done", async () => {
+    const app = await launchApp({
+      processes: [listener(4242, 3000), listener(4343, 4000, { name: "vite" })],
+      holdDelete: true,
+    });
+
+    let menu = await openRowMenu(app.user, "node");
+    await app.user.click(
+      menu.getByRole("menuitem", { name: "Move to Trash…" }),
+    );
+    let dialog = within(await screen.findByRole("dialog"));
+    await app.user.click(dialog.getByRole("button", { name: "Move to Trash" }));
+
+    const busy = await dialog.findByRole("button", {
+      name: "Moving to Trash…",
+    });
+    expect(busy).toHaveProperty("disabled", true);
+    await app.user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeTruthy();
+
+    await app.finishDelete();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(await screen.findByText("Moved folder to Trash")).toBeTruthy();
+
+    // The next one starts afresh, with its buttons to press.
+    menu = await openRowMenu(app.user, "vite");
+    await app.user.click(
+      menu.getByRole("menuitem", { name: "Move to Trash…" }),
+    );
+    dialog = within(await screen.findByRole("dialog"));
+    expect(
+      dialog.getByRole("button", { name: "Move to Trash" }),
+    ).toHaveProperty("disabled", false);
+    expect(dialog.getByRole("button", { name: "Cancel" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  // macOS capitalises and "corrects" what is typed into a text field. The
+  // name has to match letter for letter.
+  it("takes the folder's name as it is typed", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+
+    await app.user.keyboard("{Alt>}");
+    const menu = await openRowMenu(app.user, "node");
+    await app.user.click(
+      menu.getByRole("menuitem", { name: "Delete Permanently…" }),
+    );
+    await app.user.keyboard("{/Alt}");
+
+    const dialog = within(await screen.findByRole("dialog"));
+    for (const field of [
+      dialog.getByRole("textbox"),
+      screen.getByLabelText("Search listeners", { selector: "input" }),
+    ]) {
+      expect(field.getAttribute("autocorrect")).toBe("off");
+      expect(field.getAttribute("autocapitalize")).toBe("off");
+      expect(field.getAttribute("spellcheck")).toBe("false");
+    }
+  });
+
+  // The key was let go where this window could not hear it.
+  it("names the action a click will take once the pointer moves without Option", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+
+    await app.user.keyboard("{Alt>}");
+    const menu = await openRowMenu(app.user, "node");
+    expect(
+      menu.getByRole("menuitem", { name: "Delete Permanently…" }),
+    ).toBeTruthy();
+
+    fireEvent(window, new MouseEvent("pointermove", { altKey: false }));
+
+    expect(
+      await menu.findByRole("menuitem", { name: "Move to Trash…" }),
+    ).toBeTruthy();
+    expect(
+      menu.queryByRole("menuitem", { name: "Delete Permanently…" }),
+    ).toBeNull();
+    await app.user.keyboard("{/Alt}");
+  });
+
   it("moves it to the Trash without asking for the name", async () => {
     const app = await launchApp({ processes: [listener(4242, 3000)] });
 

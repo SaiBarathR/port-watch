@@ -58,6 +58,10 @@ export function DeleteDialog({
     (!target.process.is_system_service || allowSystemProcessActions);
 
   const handleOpenChange = (next: boolean) => {
+    // Not while the folder is being removed: the dialog is what says so.
+    if (!next && busy) {
+      return;
+    }
     if (!next) {
       setConfirmation("");
     }
@@ -164,7 +168,13 @@ export function DeleteDialog({
             disabled={busy || !canSubmit}
             onClick={() => void handleDelete()}
           >
-            {isPermanent ? "Delete Permanently" : "Move to Trash"}
+            {busy
+              ? isPermanent
+                ? "Deleting…"
+                : "Moving to Trash…"
+              : isPermanent
+                ? "Delete Permanently"
+                : "Move to Trash"}
           </Button>
         </DialogFooter>
       </DialogContent>

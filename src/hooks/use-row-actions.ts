@@ -45,6 +45,9 @@ if (typeof window !== "undefined") {
   // mousedown follows it.
   window.addEventListener("pointerdown", noteAlternateKey, true);
   window.addEventListener("contextmenu", noteAlternateKey, true);
+  // And as the pointer moves: a key let go without this window hearing of
+  // it would leave the menu naming one action and a click doing the other.
+  window.addEventListener("pointermove", noteAlternateKey, true);
   window.addEventListener("blur", () => noteAlternateKey(null));
 }
 

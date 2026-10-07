@@ -611,49 +611,38 @@ describe("port change toasts", () => {
   // Turning "Include UDP" on changes what a scan looks for. What it then
   // finds was listening all along.
   it("does not announce what a scan finds only because it looked for more", async () => {
-    const udp = { address: "*", port: 5353, protocol: "UDP" };
-    const app = await launchApp({ processes: [listener(4242, 3000)] });
+    const node = listener(4242, 3000);
+    const avahi = listener(4343, 5353, {
+      name: "avahi",
+      ports: [{ address: "*", port: 5353, protocol: "UDP" }],
+    });
+    const toasts = () =>
+      document.querySelector("[data-sonner-toaster]")?.textContent ?? "";
+    const app = await launchApp({ processes: [node] });
     await screen.findByText("node");
 
-    await app.scanFinds(
-      [
-        listener(4242, 3000),
-        listener(4343, 5353, { name: "avahi", ports: [udp] }),
-      ],
-      { includeUdp: true },
-    );
+    await app.scanFinds([node, avahi], { includeUdp: true });
     expect(await table().findByText("avahi")).toBeTruthy();
-    expect(screen.queryByText(/port changes? detected/i)).toBeNull();
+    expect(toasts()).toBe("");
 
-    // A server that went away in the same moment is still news.
+    // The next scan looks for the same things, and is compared in full.
     await app.scanFinds(
-      [listener(4343, 5353, { name: "avahi", ports: [udp] })],
-      { includeUdp: false },
+      [node, avahi, listener(4444, 8080, { name: "caddy" })],
+      { includeUdp: true },
     );
-    const toast = await screen.findByText("Port change detected");
     expect(
-      within(toast.closest("li") as HTMLElement).getByText(
-        "Port 3000 freed (node, PID 4242)",
-      ),
+      await screen.findByText(/Port 8080 is now in use by caddy/),
     ).toBeTruthy();
-    await app.scanFinds(
-      [
-        listener(4242, 3000),
-        listener(4343, 5353, { name: "avahi", ports: [udp] }),
-      ],
-      { includeUdp: true },
-    );
 
-    // The next scan looks for the same things, and is compared again.
-    await app.scanFinds(
-      [
-        listener(4242, 3000),
-        listener(4343, 5353, { name: "avahi", ports: [udp] }),
-        listener(4444, 8080, { name: "caddy" }),
-      ],
-      { includeUdp: true },
-    );
-    expect(await screen.findByText("Port change detected")).toBeTruthy();
+    // A server that goes away in the very scan that stops looking for UDP is
+    // still news; the UDP sockets that scan no longer lists are not.
+    await app.scanFinds([listener(4444, 8080, { name: "caddy" })], {
+      includeUdp: false,
+    });
+    expect(
+      await screen.findByText(/Port 3000 freed \(node, PID 4242\)/),
+    ).toBeTruthy();
+    expect(toasts()).not.toContain("5353");
   });
 
   it("takes the open ones away when they are muted, and shows no more", async () => {

@@ -7,7 +7,7 @@ const LEGACY_KEY = "port-watch-settings";
 
 // A launch against a backend with no settings file: it has adopted nothing
 // yet, and says so. Returns what the window handed over.
-async function launchWithoutSettingsFile() {
+async function launchWithoutSettingsFile(saved = true) {
   const handedOver: unknown[] = [];
   vi.resetModules();
   clearMocks();
@@ -22,6 +22,7 @@ async function launchWithoutSettingsFile() {
         return {
           settings: { ...DEFAULT_SETTINGS, ...args.legacy },
           revision: 2,
+          saved,
         };
       }
       return null;
@@ -64,5 +65,18 @@ describe("the settings the window used to keep", () => {
 
     expect(handedOver).toEqual([{}]);
     expect(settings).toEqual(DEFAULT_SETTINGS);
+  });
+
+  // A full disk, a folder that cannot be written: the backend has them for
+  // this run only, and the window's copy is still the one that lasts.
+  it("are offered again if the backend could not save them", async () => {
+    localStorage.setItem(LEGACY_KEY, JSON.stringify({ menuBarMode: true }));
+    await launchWithoutSettingsFile(false);
+
+    const { handedOver, settings } = await launchWithoutSettingsFile();
+
+    expect(handedOver).toHaveLength(1);
+    expect(handedOver[0]).toMatchObject({ menuBarMode: true });
+    expect(settings.menuBarMode).toBe(true);
   });
 });

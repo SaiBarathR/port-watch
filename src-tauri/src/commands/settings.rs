@@ -28,9 +28,19 @@ pub fn update_settings(app: AppHandle, patch: Map<String, Value>) -> Result<Snap
     crate::settings::update(&app, patch)
 }
 
+#[derive(Serialize)]
+pub struct AdoptReply {
+    #[serde(flatten)]
+    snapshot: Snapshot,
+    /// Whether the settings were written to disk. If not, the window keeps
+    /// offering its own copy on later launches.
+    saved: bool,
+}
+
 /// Hands over the settings the window kept in earlier versions. Used once,
 /// on the first launch of a version that keeps them in the backend.
 #[tauri::command]
-pub fn adopt_window_settings(app: AppHandle, legacy: Map<String, Value>) -> Snapshot {
-    crate::settings::adopt(&app, legacy)
+pub fn adopt_window_settings(app: AppHandle, legacy: Map<String, Value>) -> AdoptReply {
+    let (snapshot, saved) = crate::settings::adopt(&app, legacy);
+    AdoptReply { snapshot, saved }
 }

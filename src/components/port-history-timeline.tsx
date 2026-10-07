@@ -37,13 +37,13 @@ function PortSummaryBar({ summary }: { summary: PortSummary }) {
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <span>
-        First seen{" "}
+        First change{" "}
         <span className="font-medium text-foreground">
           {formatHistorySeen(summary.firstSeen)}
         </span>
       </span>
       <span>
-        Last seen{" "}
+        Last change{" "}
         <span className="font-medium text-foreground">
           {formatHistorySeen(summary.lastSeen)}
         </span>

@@ -58,6 +58,8 @@ interface Launch {
   refuseToStop?: Record<number, string>;
   /** What the backend says instead of deleting a project. */
   refuseToDelete?: string;
+  /** Leaves a delete unanswered until `finishDelete` is called. */
+  holdDelete?: boolean;
   /** What the backend says instead of saving a settings change. */
   refuseSettings?: string;
 }
@@ -94,6 +96,12 @@ export async function launchApp(launch: Launch = {}) {
       })
     : Promise.resolve();
   const calls: { command: string; args: Record<string, unknown> }[] = [];
+  let releaseDelete = () => {};
+  const deleteReleased = launch.holdDelete
+    ? new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      })
+    : Promise.resolve();
 
   const scan = () => ({
     processes,
@@ -138,8 +146,10 @@ export async function launchApp(launch: Launch = {}) {
           if (launch.refuseToDelete) {
             throw launch.refuseToDelete;
           }
-          without(args.pid);
-          return null;
+          return deleteReleased.then(() => {
+            without(args.pid);
+            return null;
+          });
         case "get_cli_install_status":
           return {
             installed: true,
@@ -169,6 +179,10 @@ export async function launchApp(launch: Launch = {}) {
       await act(async () => {
         await emit("tauri://focus");
       });
+    },
+    /** The folder has been removed, however long that took. */
+    finishDelete: async () => {
+      await act(async () => releaseDelete());
     },
     finishFirstScan: async () => {
       await act(async () => releaseFirstScan());

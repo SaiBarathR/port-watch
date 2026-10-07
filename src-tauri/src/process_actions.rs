@@ -230,9 +230,29 @@ fn run_delete(
 
 fn remove_folder(folder: &Path, mode: DeleteMode) -> Result<(), String> {
     match mode {
-        DeleteMode::Trash => trash::delete(folder).map_err(|err| err.to_string()),
+        DeleteMode::Trash => move_to_trash(folder).map_err(|err| err.to_string()),
         DeleteMode::Permanent => std::fs::remove_dir_all(folder).map_err(|err| err.to_string()),
     }
+}
+
+// On macOS the library's default is to ask Finder, with an AppleScript. The
+// first such request makes macOS ask whether this app may control Finder,
+// and until that is answered the script waits: two minutes, then an error,
+// by which time the process has long been stopped. The file manager moves
+// the folder itself, asks nothing and takes no time. What it costs is
+// Finder's "Put Back" on some systems.
+#[cfg(target_os = "macos")]
+fn move_to_trash(folder: &Path) -> Result<(), trash::Error> {
+    use trash::macos::{DeleteMethod, TrashContextExtMacos};
+
+    let mut context = trash::TrashContext::default();
+    context.set_delete_method(DeleteMethod::NsFileManager);
+    context.delete(folder)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn move_to_trash(folder: &Path) -> Result<(), trash::Error> {
+    trash::delete(folder)
 }
 
 /// Checks everything first, then stops the process, then removes its folder.

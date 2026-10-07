@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { DeleteDialog } from "@/components/delete-dialog";
 import { PortHistoryDialog } from "@/components/port-history-dialog";
 import { StopDialog } from "@/components/stop-dialog";
+import { dismissAllToasts } from "@/lib/change-toasts";
 import { useRefreshPause } from "@/lib/refresh-pause";
 import { focusRow, focusTabStopRow } from "@/lib/row-focus";
 import { useSettings } from "@/lib/settings-store";
@@ -77,6 +78,10 @@ export function ProcessActionsProvider({
     mode: "trash" | "permanent";
   } | null>(null);
   const [history, setHistory] = useState<number | "all" | null>(null);
+  // Counts the stops and deletes asked for. Each gets a dialog of its own:
+  // one that is still busy with the last request (a slow delete) must not
+  // hand its disabled buttons to the next.
+  const [asked, setAsked] = useState(0);
 
   // A dialog about a process that is no longer listed has nothing left to
   // act on. A stop that was refused because the row was out of date, or a
@@ -138,12 +143,20 @@ export function ProcessActionsProvider({
     [allowSystemProcessActions],
   );
 
+  // A new dialog, with nothing over it: a toast in the corner reaches as far
+  // as the dialog's confirming button in a narrow window.
+  const openConfirmation = useCallback(() => {
+    dismissAllToasts();
+    setAsked((count) => count + 1);
+  }, []);
+
   const actions = useMemo<ProcessActions>(
     () => ({
       canStop,
       stop: (targets, title, description) => {
         if (targets.length > 0) {
           noteFocus(targets.length === 1 ? targets[0].id : undefined);
+          openConfirmation();
           setStopRequest({ targets, title, description });
         }
       },
@@ -160,6 +173,7 @@ export function ProcessActionsProvider({
           return;
         }
         noteFocus(first?.id);
+        openConfirmation();
         setStopRequest({
           targets,
           title: `Free port ${port}?`,
@@ -171,6 +185,7 @@ export function ProcessActionsProvider({
       },
       remove: (process, mode) => {
         noteFocus(process.id);
+        openConfirmation();
         setDeleteTarget({ process, mode });
       },
       showHistory: (port) => {
@@ -178,7 +193,7 @@ export function ProcessActionsProvider({
         setHistory(port ?? "all");
       },
     }),
-    [canStop, noteFocus],
+    [canStop, noteFocus, openConfirmation],
   );
 
   return (
@@ -186,6 +201,7 @@ export function ProcessActionsProvider({
       {children}
 
       <StopDialog
+        key={`stop-${asked}`}
         processes={stopRequest?.targets ?? []}
         open={stopRequest !== null}
         onOpenChange={(open) => !open && setStopRequest(null)}
@@ -200,6 +216,7 @@ export function ProcessActionsProvider({
       />
 
       <DeleteDialog
+        key={`delete-${asked}`}
         target={deleteTarget}
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}

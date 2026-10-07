@@ -51,6 +51,10 @@ export function StopDialog({
   }
 
   const handleOpenChange = (next: boolean) => {
+    // Not while the stop is under way: the dialog is what says so.
+    if (!next && busy) {
+      return;
+    }
     if (!next) {
       setConfirmStep(false);
     }
@@ -162,11 +166,13 @@ export function StopDialog({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
           <Button disabled={busy} variant="destructive" onClick={handleConfirm}>
-            {requireDoubleConfirm && hasSystemService && !confirmStep
-              ? "Continue"
-              : processes.length === 1
-                ? "Stop Process"
-                : `Stop ${processes.length} Processes`}
+            {busy
+              ? "Stopping…"
+              : requireDoubleConfirm && hasSystemService && !confirmStep
+                ? "Continue"
+                : processes.length === 1
+                  ? "Stop Process"
+                  : `Stop ${processes.length} Processes`}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

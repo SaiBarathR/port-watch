@@ -47,7 +47,7 @@ export function PortHistoryDialog({ show, onClose }: PortHistoryDialogProps) {
           <DialogDescription>
             {typeof shown === "number"
               ? "When this port was taken and freed, as the scans saw it."
-              : "When each port was first and last seen. Pick one for its timeline."}
+              : "Ports taken and freed while Port Watch was watching. Pick one for its timeline."}
           </DialogDescription>
         </DialogHeader>
 

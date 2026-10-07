@@ -52,10 +52,9 @@ fn details_of(
         working_directory: infer_working_directory(&executable_path, &script_path),
         // Without a script, that folder is just where the program is
         // installed (per-user VS Code, Cursor, ...), not a project.
-        delete_blocked: script_path.is_none().then(|| {
-            "The folder was guessed from where the program is installed, so it may not be a project."
-                .to_string()
-        }),
+        delete_blocked: script_path
+            .is_none()
+            .then(|| crate::scanner::GUESSED_FROM_PROGRAM.to_string()),
         executable_path,
         command_line,
         started_at: started_at(kernel_started_at, listener.started_at, scan_began),

@@ -108,9 +108,19 @@ mod unix {
             Err(_) => Entry::Missing,
             Ok(metadata) if !metadata.file_type().is_symlink() => Entry::NotASymlink,
             Ok(_) => match std::fs::read_link(link) {
-                Ok(target) => Entry::Link {
-                    target: target.to_string_lossy().into_owned(),
-                },
+                Ok(target) => {
+                    // A relative target is relative to the folder the link
+                    // is in, not to wherever this app was started from. Read
+                    // against the latter, another tool's link looks dangling
+                    // and would be replaced.
+                    let target = match link.parent() {
+                        Some(folder) if target.is_relative() => folder.join(target),
+                        _ => target,
+                    };
+                    Entry::Link {
+                        target: target.to_string_lossy().into_owned(),
+                    }
+                }
                 Err(_) => Entry::NotASymlink,
             },
         }
@@ -455,11 +465,15 @@ fn powershell_single_quote(value: &str) -> String {
 #[cfg(target_os = "windows")]
 fn add_windows_cli_to_user_path(dir: &Path) -> Result<(), String> {
     let dir = powershell_single_quote(&dir.to_string_lossy());
+    // `@(...)`: a pipeline that yields one item hands back that item and not
+    // a list of one, and a string plus a string is one longer string. A user
+    // PATH with a single entry, which is what Windows starts with, came out
+    // as that entry and this folder run together.
     let script = format!(
         r#"$dir = {dir}
 $current = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($null -eq $current) {{ $current = "" }}
-$parts = $current -split ";" | Where-Object {{ $_ -and $_.Trim() -ne "" }}
+$parts = @($current -split ";" | Where-Object {{ $_ -and $_.Trim() -ne "" }})
 if ($parts -notcontains $dir) {{
   $updated = if ($parts.Count -gt 0) {{ ($parts + $dir) -join ";" }} else {{ $dir }}
   [Environment]::SetEnvironmentVariable("Path", $updated, "User")
@@ -827,6 +841,27 @@ mod tests {
             let err = uninstall(&link, &fixture.app, Some(&must_not_escalate)).unwrap_err();
             assert!(err.contains("not this app"), "{err}");
             assert_eq!(fs::read_link(&link).unwrap(), other);
+        }
+
+        // How a package manager links a tool: by a path relative to the link.
+        #[test]
+        fn leaves_someone_elses_relative_link_alone() {
+            let fixture = Fixture::new();
+            let link = fixture.path("bin/port-watch");
+            let other = fixture.path("cellar/port-watch");
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            fs::create_dir_all(other.parent().unwrap()).unwrap();
+            fs::write(&other, "").unwrap();
+            symlink("../cellar/port-watch", &link).unwrap();
+
+            let err = install(&link, &fixture.app, Some(&must_not_escalate)).unwrap_err();
+            assert!(err.contains("Another port-watch is installed"), "{err}");
+            let err = uninstall(&link, &fixture.app, Some(&must_not_escalate)).unwrap_err();
+            assert!(err.contains("not this app"), "{err}");
+            assert_eq!(
+                fs::read_link(&link).unwrap(),
+                Path::new("../cellar/port-watch")
+            );
         }
 
         #[test]

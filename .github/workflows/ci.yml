@@ -92,9 +92,15 @@ jobs:
         shell: pwsh
         run: |
           $app = "src-tauri\target\release\port-watch.exe"
+          # A user PATH with one entry is what Windows starts with, and what
+          # the update once ran together with the folder it was adding.
+          [Environment]::SetEnvironmentVariable("Path", "C:\OnlyEntry", "User")
           $install = Start-Process -FilePath $app -ArgumentList "install-cli" -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "install-cli exited with $($install.ExitCode)" }
-          $shim = Join-Path $env:LOCALAPPDATA "Programs\Port Watch\port-watch.cmd"
+          $shimDir = Join-Path $env:LOCALAPPDATA "Programs\Port Watch"
+          $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          if ($userPath -ne "C:\OnlyEntry;$shimDir") { throw "user PATH after install-cli: $userPath" }
+          $shim = Join-Path $shimDir "port-watch.cmd"
           Get-Content $shim
 
           & $shim check 1

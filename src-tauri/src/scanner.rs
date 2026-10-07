@@ -136,6 +136,11 @@ fn assemble(raw: RawScan, classify: impl Fn(&mut PortProcess)) -> Vec<PortProces
     processes
 }
 
+/// Why a folder that is only where the program is installed is not offered
+/// for deletion.
+pub const GUESSED_FROM_PROGRAM: &str =
+    "The folder was guessed from where the program is installed, so it may not be a project.";
+
 fn describe(socket: RawSocket, details: ProcessDetails) -> PortProcess {
     let script_path = extract_script_path(&details.command_line, &socket.name);
     let project_root = infer_project_root(if !details.working_directory.is_empty() {
@@ -143,6 +148,11 @@ fn describe(socket: RawSocket, details: ProcessDetails) -> PortProcess {
     } else {
         script_path.as_deref().unwrap_or(&details.executable_path)
     });
+    // With neither a working directory nor a script, the folder is the one
+    // the program itself is in. It can be shown; it is not a project.
+    let guessed_from_program = details.working_directory.is_empty()
+        && script_path.is_none()
+        && !details.executable_path.is_empty();
 
     PortProcess {
         id: String::new(),
@@ -158,7 +168,9 @@ fn describe(socket: RawSocket, details: ProcessDetails) -> PortProcess {
         system_kind: SystemKind::User,
         is_system_service: false,
         started_at: details.started_at,
-        delete_blocked: details.delete_blocked,
+        delete_blocked: details
+            .delete_blocked
+            .or_else(|| guessed_from_program.then(|| GUESSED_FROM_PROGRAM.to_string())),
     }
 }
 
@@ -347,14 +359,24 @@ mod tests {
     }
 
     // With no working directory, the project is looked for from the script,
-    // and failing that from the executable.
+    // and failing that from the executable. Either way it is a folder, and
+    // the one a program is merely installed in is not offered for deletion.
     #[test]
     fn the_project_root_falls_back_to_the_script_then_the_executable() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap();
+        let path = |relative: &str| root.join(relative).to_string_lossy().into_owned();
+        for file in ["api/main.py", "tool/bin/tool"] {
+            let file = root.join(file);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, "").unwrap();
+        }
+
         let details = HashMap::from([
             (
                 1,
                 ProcessDetails {
-                    command_line: "python /srv/api/main.py".into(),
+                    command_line: format!("python {}", path("api/main.py")),
                     executable_path: "/usr/bin/python3".into(),
                     ..Default::default()
                 },
@@ -362,7 +384,7 @@ mod tests {
             (
                 2,
                 ProcessDetails {
-                    executable_path: "/opt/tool/bin/tool".into(),
+                    executable_path: path("tool/bin/tool"),
                     ..Default::default()
                 },
             ),
@@ -375,8 +397,13 @@ mod tests {
             details,
         });
 
-        assert_eq!(processes[0].project_root, "/srv/api/main.py");
-        assert_eq!(processes[1].project_root, "/opt/tool/bin/tool");
+        assert_eq!(processes[0].project_root, path("api"));
+        assert_eq!(processes[0].delete_blocked, None);
+        assert_eq!(processes[1].project_root, path("tool/bin"));
+        assert_eq!(
+            processes[1].delete_blocked.as_deref(),
+            Some(GUESSED_FROM_PROGRAM)
+        );
     }
 
     #[test]

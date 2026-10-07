@@ -49,7 +49,11 @@ impl Default for Config {
 impl Config {
     /// Time between periodic scans; None while they are off or paused.
     fn interval(&self) -> Option<Duration> {
-        if self.paused || self.interval_ms == 0 {
+        // The window pauses scans so that rows do not move under an open
+        // menu or dialog. Hidden, it has nothing on screen to keep still,
+        // and the tray and the watched-port alerts still need the scans: a
+        // window closed with a dialog open must not stop them for good.
+        if (self.paused && self.window_visible) || self.interval_ms == 0 {
             return None;
         }
 
@@ -82,6 +86,9 @@ pub struct Snapshot {
     /// Goes up by one each time the result changes. A reader that has seen
     /// revision N can tell a late copy of N-1 from news.
     pub revision: u64,
+    /// Whether the scan looked for UDP sockets too. Two scans that differ in
+    /// this differ in what was looked for, not in what was listening.
+    pub include_udp: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -112,6 +119,7 @@ impl PortPoller {
                 error: None,
                 scanned: false,
                 revision: 0,
+                include_udp: false,
             }),
             progress: watch::Sender::new(Progress::default()),
             kick: Notify::new(),
@@ -216,7 +224,7 @@ impl PortPoller {
             let started = Instant::now();
             self.progress.send_modify(|progress| progress.started += 1);
             let result = scan(config.include_udp).await;
-            self.publish(result, asked, &after_scan);
+            self.publish(result, config.include_udp, asked, &after_scan);
             self.progress
                 .send_modify(|progress| progress.completed += 1);
 
@@ -261,25 +269,36 @@ impl PortPoller {
     fn publish(
         &self,
         result: Result<Vec<PortProcess>, String>,
+        include_udp: bool,
         asked: bool,
         after_scan: &impl Fn(&Snapshot, bool, bool),
     ) {
         let previous = self.snapshot.borrow().clone();
-        let (processes, error) = match result {
+        // A failed scan keeps the list of the last good one, and with it
+        // what that one looked for.
+        let (processes, error, include_udp) = match result {
             // The same allocation when nothing changed.
-            Ok(processes) if *previous.processes == processes => (previous.processes.clone(), None),
-            Ok(processes) => (Arc::new(processes), None),
-            Err(error) => (previous.processes.clone(), Some(error)),
+            Ok(processes) if *previous.processes == processes => {
+                (previous.processes.clone(), None, include_udp)
+            }
+            Ok(processes) => (Arc::new(processes), None, include_udp),
+            Err(error) => (
+                previous.processes.clone(),
+                Some(error),
+                previous.include_udp,
+            ),
         };
 
         let changed = !previous.scanned
             || error != previous.error
+            || include_udp != previous.include_udp
             || !Arc::ptr_eq(&processes, &previous.processes);
         let next = Snapshot {
             processes,
             error,
             scanned: true,
             revision: previous.revision + u64::from(changed),
+            include_udp,
         };
         if changed {
             self.snapshot.send_replace(next.clone());
@@ -293,6 +312,7 @@ pub struct PortsUpdatedPayload {
     pub processes: Vec<PortProcess>,
     pub error: Option<String>,
     pub revision: u64,
+    pub include_udp: bool,
 }
 
 // The same shape, borrowed, so an event does not copy the list.
@@ -301,6 +321,7 @@ struct PortsUpdatedEvent<'a> {
     processes: &'a [PortProcess],
     error: Option<&'a str>,
     revision: u64,
+    include_udp: bool,
 }
 
 pub fn start_poller(app: AppHandle) {
@@ -328,6 +349,7 @@ pub fn start_poller(app: AppHandle) {
                                 processes: &snapshot.processes,
                                 error: snapshot.error.as_deref(),
                                 revision: snapshot.revision,
+                                include_udp: snapshot.include_udp,
                             },
                         );
                     }
@@ -346,6 +368,7 @@ impl From<Snapshot> for PortsUpdatedPayload {
             processes: snapshot.processes.to_vec(),
             error: snapshot.error,
             revision: snapshot.revision,
+            include_udp: snapshot.include_udp,
         }
     }
 }
@@ -770,6 +793,48 @@ mod tests {
 
         advance(30).await;
         assert!(running.scans() >= 12, "{} scans", running.scans());
+    }
+
+    // A window closed to the tray with a menu or a dialog still open goes on
+    // saying "paused". The tray is then the only thing on screen.
+    #[tokio::test(start_paused = true)]
+    async fn a_pause_does_not_hold_while_the_window_is_hidden() {
+        let running = Running::start(Config::default(), FakeScanner::default());
+        settle().await;
+
+        running.poller.set_paused(true);
+        running.poller.set_window_visible(false);
+        settle().await;
+        let before = running.scans();
+        advance(60).await;
+        let hidden = running.scans() - before;
+        assert!((3..=5).contains(&hidden), "{hidden} scans in a minute");
+
+        // Back on screen with the dialog still open, the rows keep still.
+        running.poller.set_window_visible(true);
+        settle().await;
+        let before = running.scans();
+        advance(60).await;
+        assert_eq!(running.scans(), before);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_snapshot_says_whether_its_scan_looked_for_udp() {
+        let running = Running::start(
+            Config::default(),
+            FakeScanner::returning([Ok(vec![listener(1, 3000)])]),
+        );
+        settle().await;
+        let latest = || running.poller.snapshot.borrow().clone();
+        assert!(!latest().include_udp);
+        let revision = latest().revision;
+
+        // The same list, found by a scan that looked for more: still news to
+        // whoever compares one scan with the next.
+        running.poller.set_scan_settings(3000, true, false);
+        settle().await;
+        assert!(latest().include_udp);
+        assert_eq!(latest().revision, revision + 1);
     }
 
     #[tokio::test(start_paused = true)]

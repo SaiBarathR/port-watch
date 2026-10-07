@@ -29,6 +29,11 @@ const STANDARD_HOME_FOLDERS: &[&str] = &[
     "Videos",
 ];
 
+// Where a sync client keeps a copy of everything in the account. A server
+// started in one to share it, or a stray project file at its top, makes it
+// the "project folder" of that process; projects kept inside one are fine.
+const SYNCED_HOME_FOLDERS: &[&str] = &["Dropbox", "Google Drive", "iCloudDrive", "OneDrive"];
+
 // App data, settings and installed apps. Nothing at any depth inside these is
 // a project folder; hidden folders in home (.ssh, .config, .local, ...) are
 // treated the same way.
@@ -109,6 +114,10 @@ impl DeleteRules {
             ));
         }
 
+        if !is_nested && is_synced_folder(&first) {
+            return Err(format!("{first} is a synced folder, not a project folder."));
+        }
+
         Ok(())
     }
 }
@@ -133,6 +142,14 @@ pub fn folder_identity(folder: &Path) -> std::io::Result<FolderIdentity> {
         .and_then(|metadata| metadata.created())
         .ok();
     Ok(FolderIdentity { handle, created })
+}
+
+// A work or school account's folder is "OneDrive - <organisation>".
+fn is_synced_folder(name: &str) -> bool {
+    matches_any(name, SYNCED_HOME_FOLDERS)
+        || name
+            .get(.."OneDrive - ".len())
+            .is_some_and(|start| start.eq_ignore_ascii_case("OneDrive - "))
 }
 
 fn matches_any(name: &str, candidates: &[&str]) -> bool {
@@ -246,6 +263,32 @@ mod tests {
             let err = home.rules.resolve(&home.mkdir(name)).unwrap_err();
             assert!(err.contains("standard folders"), "{name}: {err}");
         }
+    }
+
+    #[test]
+    fn rejects_synced_folders_themselves_and_allows_projects_inside() {
+        for name in [
+            "OneDrive",
+            "onedrive",
+            "OneDrive - Contoso",
+            "Dropbox",
+            "Google Drive",
+            "iCloudDrive",
+        ] {
+            // A home of its own: two of these are one folder where the file
+            // system does not tell capitals apart.
+            let home = Home::new();
+            let err = home.rules.resolve(&home.mkdir(name)).unwrap_err();
+            assert!(err.contains("synced folder"), "{name}: {err}");
+
+            let project = home.mkdir(&format!("{name}/my-project"));
+            assert_eq!(home.rules.resolve(&project), Ok(project));
+        }
+
+        // A name that only starts the same way is an ordinary folder.
+        let home = Home::new();
+        let project = home.mkdir("OneDriveBackup");
+        assert_eq!(home.rules.resolve(&project), Ok(project));
     }
 
     #[test]

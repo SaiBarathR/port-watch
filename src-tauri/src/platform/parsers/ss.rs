@@ -38,15 +38,13 @@ fn parse_line(line: &str) -> Option<(Vec<(u32, String)>, &str)> {
         None => (line, None),
     };
 
+    // A users field that does not read as one is not trusted for a PID: the
+    // socket is listed like one whose owner was not reported, which can be
+    // seen and cannot be stopped.
+    let nobody = || vec![(0, "unknown".to_string())];
     let owners = match users_part {
-        Some(users_part) => {
-            let owners = parse_owners(users_part);
-            if owners.is_empty() {
-                return None;
-            }
-            owners
-        }
-        None => vec![(0, "unknown".to_string())],
+        Some(users_part) => parse_owners(users_part.trim_end()).unwrap_or_else(nobody),
+        None => nobody(),
     };
 
     let parts: Vec<&str> = before_users.split_whitespace().collect();
@@ -54,23 +52,44 @@ fn parse_line(line: &str) -> Option<(Vec<(u32, String)>, &str)> {
     Some((owners, local))
 }
 
-// Every ("name",pid=N,fd=M) owner in a users:(...) field.
-fn parse_owners(users_part: &str) -> Vec<(u32, String)> {
+// Every ("name",pid=N,fd=M) owner in a users:((...),(...)) field, or None if
+// the field is not made of such entries from end to end.
+//
+// A process chooses its own name, and ss prints it as it is: up to 15 bytes
+// that may hold quotes, commas and brackets. Taking the name up to the first
+// quote and the PID after the first `pid=` let a process named
+// `sh",pid=4242,` be listed as PID 4242, a process the user would then stop
+// in its place. So a name ends only where the rest of an entry follows and,
+// after it, either the next entry or the end of the field. Forging that
+// inside a name takes `",pid=1,fd=1),("`, which is 16 bytes.
+fn parse_owners(users_part: &str) -> Option<Vec<(u32, String)>> {
+    let mut rest = users_part.strip_prefix("users:(")?;
     let mut owners = Vec::new();
 
-    for segment in users_part.split("(\"").skip(1) {
-        let name = segment.split('"').next().unwrap_or("unknown").to_string();
-        let pid = segment
-            .split("pid=")
-            .nth(1)
-            .and_then(|rest| rest.split([',', ')']).next())
-            .and_then(|value| value.parse().ok());
-        if let Some(pid) = pid {
-            owners.push((pid, name));
+    loop {
+        let (name, pid, after) = split_entry(rest.strip_prefix("(\"")?)?;
+        owners.push((pid, name.to_string()));
+        if after == ")" {
+            return Some(owners);
         }
+        rest = after.strip_prefix(',')?;
     }
+}
 
-    owners
+// `name",pid=N,fd=M)…` as the name, the PID and what follows the entry, cut
+// at the first place the name can end.
+fn split_entry(entry: &str) -> Option<(&str, u32, &str)> {
+    entry.match_indices("\",pid=").find_map(|(at, mark)| {
+        let (pid, after) = leading_number(&entry[at + mark.len()..])?;
+        let (_, after) = leading_number(after.strip_prefix(",fd=")?)?;
+        let after = after.strip_prefix(')')?;
+        (after == ")" || after.starts_with(",(\"")).then_some((&entry[..at], pid, after))
+    })
+}
+
+fn leading_number(text: &str) -> Option<(u32, &str)> {
+    let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+    Some((text[..digits].parse().ok()?, &text[digits..]))
 }
 
 #[cfg(test)]
@@ -159,10 +178,57 @@ mod tests {
     #[test]
     fn a_line_that_is_not_a_socket_is_skipped() {
         assert!(parse_listeners("\n   \nNetid State\n", "TCP").is_empty());
-        // A users field nobody could be read from.
-        assert_eq!(
-            parse_line("LISTEN 0 5 0.0.0.0:80 0.0.0.0:* users:(garbled)"),
-            None
-        );
+    }
+
+    // The socket is still listening, so it is listed, as one nobody owns.
+    #[test]
+    fn a_users_field_that_cannot_be_read_names_nobody() {
+        for users in [
+            "users:(garbled)",
+            "users:((\"node\",pid=12,fd=3)",
+            "users:((\"node\",pid=12,fd=3)) extra",
+            "users:((\"node\",pid=,fd=3))",
+            "users:((\"node\",pid=12))",
+        ] {
+            assert_eq!(
+                parse_line(&format!("LISTEN 0 5 0.0.0.0:80 0.0.0.0:* {users}")),
+                Some((vec![(0, "unknown".to_string())], "0.0.0.0:80")),
+                "{users}"
+            );
+        }
+    }
+
+    // A process picks its own name, up to 15 bytes of it, and ss prints it
+    // as it is. None of these may come out as PID 1.
+    #[test]
+    fn a_name_cannot_pass_itself_off_as_another_pid() {
+        for name in [
+            r#"systemd",pid=1,"#,
+            r#"sh",pid=1,fd=3)"#,
+            r#"x",pid=1,fd=3))"#,
+            r#"),("x",pid=1,"#,
+            r#"a("b"#,
+            r#"users:(("a","#,
+        ] {
+            assert!(name.len() <= 15, "{name}");
+            let alone = format!(r#"LISTEN 0 5 *:80 *:* users:(("{name}",pid=4321,fd=7))"#);
+            assert_eq!(
+                parse_line(&alone),
+                Some((vec![(4321, name.to_string())], "*:80")),
+                "{name}"
+            );
+
+            let shared = format!(
+                r#"LISTEN 0 5 *:80 *:* users:(("{name}",pid=4321,fd=7),("nginx",pid=77,fd=6))"#
+            );
+            assert_eq!(
+                parse_line(&shared),
+                Some((
+                    vec![(4321, name.to_string()), (77, "nginx".to_string())],
+                    "*:80"
+                )),
+                "{name}"
+            );
+        }
     }
 }

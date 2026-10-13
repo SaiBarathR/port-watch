@@ -1,6 +1,7 @@
-// One pass through the real thing: the built app in its own webview, a real
-// listener, a real stop. Everything else is tested in pieces; this is the
-// only place the pieces are seen working together.
+// One pass through the real thing: the built app in its own webview, the
+// guide a first launch opens with, a real listener, a real stop. Everything
+// else is tested in pieces; this is the only place the pieces are seen
+// working together.
 //
 //   node e2e/smoke.mjs <path to the built app> [tauri-driver arguments]
 //
@@ -176,6 +177,33 @@ async function main() {
         {},
       );
     };
+
+    // A first launch opens with the guide, over the window. It is turned a
+    // page and shut here: everything after this is done to what is under it.
+    const guide = `//*[@role="dialog"][.//*[normalize-space(text())="Welcome to Port Watch"]]`;
+    await until("the guide", async () => {
+      const found = await find(guide);
+      return found.length === 1;
+    });
+    step("the first launch opened with the guide");
+    await picture("0-guide");
+    await click(
+      "the guide's Next",
+      `${guide}//button[normalize-space(.)="Next"]`,
+    );
+    await until("the guide's second page", async () => {
+      const found = await find(`${guide}//*[normalize-space(.)="2 of 7"]`);
+      return found.length === 1;
+    });
+    await click(
+      "the guide's Close",
+      `${guide}//button[normalize-space(.)="Close"]`,
+    );
+    await until("the guide to go", async () => {
+      const found = await find(guide);
+      return found.length === 0;
+    });
+    step("turned a page of it, and closed it");
 
     // The port cell holds the number alone, so 3000 does not match 30000.
     const row = `//tr[.//*[normalize-space(text())="${port}"]]`;

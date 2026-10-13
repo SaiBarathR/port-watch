@@ -9,6 +9,7 @@ import {
   type AppSettings,
   type PortProcess,
 } from "@/lib/types";
+import { WELCOME_HIDDEN_KEY } from "@/lib/welcome";
 
 /** A listener as a scan reports it: a dev server unless told otherwise. */
 export function listener(
@@ -50,6 +51,8 @@ export function systemService(pid: number, port: number, name: string) {
 }
 
 interface Launch {
+  /** The system the window believes it is on. A Mac unless told otherwise. */
+  platform?: "macos" | "windows" | "linux";
   processes?: PortProcess[];
   settings?: Partial<AppSettings>;
   /** Leaves the first scan unanswered until `finishFirstScan` is called. */
@@ -62,6 +65,11 @@ interface Launch {
   holdDelete?: boolean;
   /** What the backend says instead of saving a settings change. */
   refuseSettings?: string;
+  /**
+   * Leaves the guide to open with the app, as it does until it is asked to
+   * stay away. Every other launch is of an app that has been asked.
+   */
+  opensWithWelcome?: boolean;
 }
 
 interface Scan {
@@ -81,8 +89,11 @@ export async function launchApp(launch: Launch = {}) {
     toast.dismiss(item.id);
   }
   Object.assign(window, {
-    __TAURI_OS_PLUGIN_INTERNALS__: { platform: "macos" },
+    __TAURI_OS_PLUGIN_INTERNALS__: { platform: launch.platform ?? "macos" },
   });
+  if (!launch.opensWithWelcome) {
+    localStorage.setItem(WELCOME_HIDDEN_KEY, "1");
+  }
 
   let processes = launch.processes ?? [];
   let settings: AppSettings = { ...DEFAULT_SETTINGS, ...launch.settings };

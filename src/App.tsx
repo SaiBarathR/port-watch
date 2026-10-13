@@ -7,6 +7,7 @@ import { PortTable } from "@/components/port-table";
 import { PortToolbar } from "@/components/port-toolbar";
 import { CliInstallBanner } from "@/components/cli-install-banner";
 import { ProcessActionsProvider } from "@/components/process-actions";
+import { WelcomeGuide } from "@/components/welcome-guide";
 import { useChangeToastMuteExpiry } from "@/hooks/use-change-toast-mute";
 import { usePortQuery } from "@/hooks/use-port-query";
 import { useScanSideEffects } from "@/hooks/use-scan-side-effects";
@@ -107,6 +108,7 @@ function App() {
         </main>
       </ProcessActionsProvider>
 
+      <WelcomeGuide />
       <AppToaster theme={resolvedTheme === "light" ? "light" : "dark"} />
     </div>
   );

@@ -139,8 +139,9 @@ jobs:
           if ($withoutUdp -ne 0) { throw "expected exit code 0 for UDP port $udpPort without --udp, got $withoutUdp" }
           exit 0
 
-      # The built app in its real webview: a listener is started, found in the
-      # table and stopped from its row's menu. Linux only: macOS has no
+      # The built app in its real webview: the guide a first launch opens
+      # with is shut, and a listener is started, found in the table and
+      # stopped from its row's menu. Linux only: macOS has no
       # WebDriver for WKWebView, and see below for Windows. The component
       # tests stand in for this on both.
       - name: Install the WebDriver tools (Linux)

@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { launchApp, listener, systemService } from "@/test/app";
@@ -775,5 +781,235 @@ describe("port change toasts", () => {
 
     expect(await table().findByText("5173")).toBeTruthy();
     expect(screen.queryByText(/port changes? detected/i)).toBeNull();
+  });
+});
+
+describe("the welcome guide", () => {
+  const guide = () => screen.queryByRole("dialog", { name: /^Welcome to/ });
+  const heading = (name: string) =>
+    within(screen.getByRole("dialog")).getByRole("heading", { name });
+  // By its label and not its role: behind the guide it has no role to find.
+  const search = () => screen.getByLabelText("Search listeners");
+
+  it("opens with the app until it is asked to stay away", async () => {
+    let app = await launchApp({ opensWithWelcome: true });
+    expect(guide()).toBeTruthy();
+    expect(heading("See what is listening")).toBeTruthy();
+
+    // Shut without the box ticked, it is back at the next launch.
+    await app.user.keyboard("{Escape}");
+    await waitFor(() => expect(guide()).toBeNull());
+    cleanup();
+    app = await launchApp({ opensWithWelcome: true });
+    expect(guide()).toBeTruthy();
+
+    await app.user.click(
+      screen.getByRole("checkbox", { name: "Don’t show this again" }),
+    );
+    await app.user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(guide()).toBeNull());
+    cleanup();
+    await launchApp({ opensWithWelcome: true });
+    expect(guide()).toBeNull();
+  });
+
+  it("is read through with Return, and shut by it at the end", async () => {
+    const app = await launchApp({ opensWithWelcome: true });
+    const pages = within(
+      screen.getByRole("navigation", { name: "Pages of the guide" }),
+    ).getAllByRole("button");
+
+    for (const [index, page] of pages.entries()) {
+      expect(page.getAttribute("aria-current")).toBe("page");
+      expect(screen.getByText(`${index + 1} of ${pages.length}`)).toBeTruthy();
+      if (index < pages.length - 1) {
+        expect(document.activeElement?.textContent).toBe("Next");
+        await app.user.keyboard("{Enter}");
+      }
+    }
+
+    expect(heading("Keyboard shortcuts")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(document.activeElement?.textContent).toBe("Get Started");
+    await app.user.keyboard("{Enter}");
+    await waitFor(() => expect(guide()).toBeNull());
+  });
+
+  it("turns its pages with the arrow keys, and from its list", async () => {
+    const app = await launchApp({ opensWithWelcome: true });
+
+    await app.user.keyboard("{ArrowRight}");
+    expect(heading("Find a port, and who has it")).toBeTruthy();
+    await app.user.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(heading("See what is listening")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Back" }).hasAttribute("disabled"),
+    ).toBe(true);
+
+    await app.user.click(
+      screen.getByRole("button", { name: "Stop and Remove" }),
+    );
+    expect(heading("Stop it, or remove the project")).toBeTruthy();
+
+    // Back onto the first page, where Back is switched off: the keyboard
+    // goes to the button that is still there.
+    await app.user.click(screen.getByRole("button", { name: "Find a Port" }));
+    await app.user.click(screen.getByRole("button", { name: "Back" }));
+    expect(heading("See what is listening")).toBeTruthy();
+    expect(document.activeElement?.textContent).toBe("Next");
+
+    // And on to the last, where there is no Close to be left on.
+    await app.user.click(
+      screen.getByRole("button", { name: "Outside the Window" }),
+    );
+    screen.getByRole("button", { name: "Close" }).focus();
+    await app.user.keyboard("{ArrowRight}");
+    expect(heading("Keyboard shortcuts")).toBeTruthy();
+    expect(document.activeElement?.textContent).toBe("Get Started");
+  });
+
+  // A card with no dot to point at, or a dot with no card, explains nothing.
+  it.each(["macos", "windows", "linux"] as const)(
+    "numbers every card on its page's picture, on %s",
+    async (platform) => {
+      const app = await launchApp({ opensWithWelcome: true, platform });
+      const pages = within(
+        screen.getByRole("navigation", { name: "Pages of the guide" }),
+      ).getAllByRole("button");
+
+      for (const page of pages) {
+        await app.user.click(page);
+        const cards = document.querySelectorAll(
+          '[role="dialog"] section ol > li',
+        );
+        const marks = [
+          ...document.querySelectorAll(
+            '[role="dialog"] [data-welcome-art] [data-guide-mark]',
+          ),
+        ].map((mark) => Number(mark.getAttribute("data-guide-mark")));
+
+        expect(
+          marks.sort((a, b) => a - b),
+          `the picture of “${page.textContent}”`,
+        ).toEqual(cards.length ? [...cards].map((_, index) => index + 1) : []);
+      }
+    },
+  );
+
+  it("names each platform's own keys", async () => {
+    await launchApp({ opensWithWelcome: true, platform: "windows" });
+    const page = within(screen.getByRole("dialog"));
+
+    expect(page.getByText(/Ctrl\+R scans now/)).toBeTruthy();
+    expect(page.queryByText(/⌘/)).toBeNull();
+  });
+
+  it("keeps the window's keys from the window behind it", async () => {
+    const app = await launchApp({
+      opensWithWelcome: true,
+      processes: [listener(4242, 3000)],
+    });
+    await waitFor(() =>
+      expect(app.callsTo("get_listening_ports")).toHaveLength(1),
+    );
+
+    await app.user.keyboard("/{Meta>}f{/Meta}{Meta>}r{/Meta}{Meta>},{/Meta}");
+
+    expect(document.activeElement).not.toBe(search());
+    expect(app.callsTo("trigger_port_scan")).toEqual([]);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(guide()).toBeTruthy();
+  });
+
+  it("hands the keyboard to the rows when it closes", async () => {
+    const app = await launchApp({
+      opensWithWelcome: true,
+      processes: [listener(4242, 3000)],
+    });
+
+    await app.user.keyboard("{Escape}");
+    await waitFor(() => expect(guide()).toBeNull());
+
+    const row = await screen.findByRole("row", { name: /3000/ });
+    await waitFor(() => expect(document.activeElement).toBe(row));
+  });
+
+  it("opens at the list of keys on its own key, which is not the search key", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+    await screen.findByText("node");
+    expect(guide()).toBeNull();
+
+    await app.user.keyboard("{Meta>}/{/Meta}");
+
+    expect(guide()).toBeTruthy();
+    expect(heading("Keyboard shortcuts")).toBeTruthy();
+    expect(document.activeElement).not.toBe(search());
+
+    // Up already, the key turns it to that page.
+    await app.user.keyboard("{ArrowLeft}");
+    expect(heading("Without the window")).toBeTruthy();
+    await app.user.keyboard("{Meta>}/{/Meta}");
+    expect(heading("Keyboard shortcuts")).toBeTruthy();
+
+    // Shut, the keyboard is not left in a search box the key was never
+    // for. "/" alone is still the way there.
+    await app.user.keyboard("{Escape}");
+    await waitFor(() => expect(guide()).toBeNull());
+    const row = screen.getByRole("row", { name: /3000/ });
+    await waitFor(() => expect(document.activeElement).toBe(row));
+    await app.user.keyboard("/");
+    expect(document.activeElement).toBe(search());
+  });
+
+  it("stays in the toolbar's menu", async () => {
+    const app = await launchApp();
+    const open = async (item: string | RegExp) => {
+      await app.user.click(
+        screen.getByRole("button", { name: "More actions" }),
+      );
+      await app.user.click(await screen.findByRole("menuitem", { name: item }));
+    };
+
+    await open("Welcome Guide…");
+    expect(heading("See what is listening")).toBeTruthy();
+    await app.user.keyboard("{Escape}");
+    await waitFor(() => expect(guide()).toBeNull());
+
+    await open(/^Keyboard Shortcuts…/);
+    expect(heading("Keyboard shortcuts")).toBeTruthy();
+  });
+
+  it("does not open over a dialog that is waiting for an answer", async () => {
+    const app = await launchApp({ processes: [listener(4242, 3000)] });
+    const menu = await openRowMenu(app.user, "node");
+    await app.user.click(menu.getByRole("menuitem", { name: /^Stop…/ }));
+    await screen.findByRole("alertdialog");
+
+    await app.user.keyboard("{Meta>}/{/Meta}");
+
+    expect(guide()).toBeNull();
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+
+  // The corner the toasts stack in is the corner its buttons are in.
+  it("holds the port change toasts while it is up", async () => {
+    const app = await launchApp({
+      opensWithWelcome: true,
+      processes: [listener(4242, 3000)],
+    });
+    await waitFor(() =>
+      expect(app.callsTo("get_listening_ports")).toHaveLength(1),
+    );
+
+    await app.scanFinds([
+      listener(4242, 3000),
+      listener(4343, 4000, { name: "vite" }),
+    ]);
+    expect(screen.queryByText("Port change detected")).toBeNull();
+
+    await app.user.keyboard("{Escape}");
+    await waitFor(() => expect(guide()).toBeNull());
+    await app.scanFinds([listener(4242, 3000)]);
+    expect(await screen.findByText("Port change detected")).toBeTruthy();
   });
 });

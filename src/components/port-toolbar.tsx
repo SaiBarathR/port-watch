@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import {
+  BookOpenIcon,
   BracesIcon,
   EllipsisIcon,
   FileTextIcon,
   HistoryIcon,
+  KeyboardIcon,
   OctagonIcon,
   RefreshCwIcon,
   SearchIcon,
@@ -44,6 +46,7 @@ import {
   type ListenerScope,
 } from "@/lib/settings-actions";
 import { updateSettings } from "@/lib/settings-store";
+import { showWelcome } from "@/lib/welcome";
 import {
   SEARCH_FIELD_OPTIONS,
   userProcesses,
@@ -132,7 +135,11 @@ export function PortToolbar({
         (event.target.isContentEditable ||
           ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName));
 
-      if ((mod && (key === "f" || key === "k")) || (key === "/" && !typing)) {
+      if (
+        (mod && (key === "f" || key === "k")) ||
+        // Alone: with the modifier it is the key for the guide's shortcuts.
+        (key === "/" && !typing && !mod && !event.altKey)
+      ) {
         event.preventDefault();
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
@@ -287,6 +294,18 @@ export function PortToolbar({
             <DropdownMenuItem onClick={() => showHistory()}>
               <HistoryIcon />
               Port History…
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => showWelcome()}>
+              <BookOpenIcon />
+              Welcome Guide…
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => showWelcome("keys")}>
+              <KeyboardIcon />
+              <span className="flex-1">Keyboard Shortcuts…</span>
+              <kbd className="ml-6 font-sans text-xs tracking-wide text-muted-foreground">
+                {isMacOS() ? "⌘/" : "Ctrl+/"}
+              </kbd>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

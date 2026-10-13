@@ -18,9 +18,9 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 | --- | --- |
 | ![Row actions menu](docs/screenshots/row-actions-menu.png) | ![Settings dialog](docs/screenshots/settings.png) |
 
-| Port lookup |
-| --- |
-| ![Port lookup: who holds a port, with a button to free it](docs/screenshots/port-lookup.png) |
+| Port lookup | Welcome guide |
+| --- | --- |
+| ![Port lookup: who holds a port, with a button to free it](docs/screenshots/port-lookup.png) | ![The guide's first page: a picture of the table with six numbered points, and a card for each](docs/screenshots/welcome-guide.png) |
 
 ## Features
 
@@ -35,6 +35,7 @@ Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **sha
 - **Export snapshot** — copy filtered results as JSON or Markdown
 - **CLI** — `port-watch check <port> [--udp]` for scripting and CI
 - **Safety guards** — blocks destructive actions on protected system paths
+- **Welcome guide** — opens with the app until told not to: what each part of the window does, and its keyboard shortcuts
 
 ## Platform support
 
@@ -84,7 +85,7 @@ cd src-tauri && cargo test
 node e2e/smoke.mjs <built app>   # Linux: the built app in its webview, see the file
 ```
 
-The Rust tests start real processes and run the system's own tools (`lsof`, `ss`, PowerShell), so each platform's code is only tested on that platform. CI runs all three, and writes a coverage table to each run's summary without enforcing a number. On Linux it also starts the built app in its real webview, finds a listener in the table and stops it from its row; on Windows it checks that the built app starts and stays up.
+The Rust tests start real processes and run the system's own tools (`lsof`, `ss`, PowerShell), so each platform's code is only tested on that platform. CI runs all three, and writes a coverage table to each run's summary without enforcing a number. On Linux it also starts the built app in its real webview, shuts the guide a first launch opens with, finds a listener in the table and stops it from its row; on Windows it checks that the built app starts and stays up.
 
 ## Releases
 
@@ -111,6 +112,12 @@ Builds are unsigned. macOS may show Gatekeeper warnings (right-click → Open, o
 
 ## Usage
 
+### Welcome guide
+
+Port Watch opens with a guide over the window: seven pages, one for each part of the app. Each has a picture of that part of the window, drawn small with a numbered dot on each thing worth knowing, a map of the window with the part lit, and a card for every number saying what can be done there and on which keys. The last page lists the keyboard shortcuts. The pictures are drawn in the app's own colours, so they follow the theme, and the keys named are your platform's.
+
+**Don't show this again** at its foot stops it opening with the app. It stays in the toolbar's **…** menu as **Welcome Guide…**, and on ⌘/ (Ctrl+/ on Windows and Linux), which opens it at the shortcuts. → and ← turn the pages, Return presses **Next**, which has the keyboard when the guide opens, and Esc shuts it.
+
 ### Main window
 
 The full window lists every listening port, largest first in each row: the port, then who can reach it (every network interface, one address, or this machine only), the process, and its project folder. Use the toolbar to search, to switch between your own listeners, the system's, or all of them, to export what is shown, and to open settings.
@@ -134,6 +141,7 @@ The table is one tab stop: Tab onto a row, then use the arrow keys.
 | ⌘K | Ctrl+K | The row's menu |
 | ⌘R | Ctrl+R | Refresh |
 | ⌘, | Ctrl+, | Settings |
+| ⌘/ | Ctrl+/ | The welcome guide, at its list of keys |
 
 ### Tray menu
 

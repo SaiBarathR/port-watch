@@ -5,6 +5,7 @@ import { isShownByScope } from "@/lib/port-filter";
 import { appendPortHistoryEvents } from "@/lib/port-history";
 import { diffScans } from "@/lib/scan-diff";
 import { getSettings } from "@/lib/settings-store";
+import { isWelcomeOpen } from "@/lib/welcome";
 import type { PortProcess, RowChangeKind } from "@/lib/types";
 
 const HIGHLIGHT_MS = 10_000;
@@ -46,9 +47,12 @@ export function useScanSideEffects() {
 
       // A window closed to the tray or minimized cannot show a toast; it
       // would only be held back and shown, stale, when the window returns.
+      // Nor under the guide: the corner the toasts stack in is where its
+      // buttons are.
       if (
         diff.messages.length > 0 &&
         document.visibilityState !== "hidden" &&
+        !isWelcomeOpen() &&
         changeToastStatus(settings, now) === "on"
       ) {
         showPortChanges(diff.messages);

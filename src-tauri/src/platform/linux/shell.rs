@@ -1,9 +1,11 @@
 use crate::platform::identity::{LiveProcess, Probe};
 use crate::platform::unix;
+
+use super::appimage::host_command;
 use crate::scanner::ProcessIdentity;
 
 pub fn open_in_file_manager(path: &str) -> Result<(), String> {
-    let status = std::process::Command::new("xdg-open")
+    let status = host_command("xdg-open")
         .arg(path)
         .status()
         .map_err(|e| format!("Failed to open file manager: {e}"))?;
@@ -15,9 +17,27 @@ pub fn open_in_file_manager(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Opens a web address in the browser from an AppImage, whose own
+/// environment the opener plugin would hand the browser.
+pub fn open_url(url: &str) -> Result<(), String> {
+    use std::process::Stdio;
+
+    let mut child = host_command("xdg-open")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to open URL: {e}"))?;
+    // xdg-open can stay until the browser it started exits; it is reaped
+    // off the caller's thread.
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
 pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     let candidates: [(&str, &[&str]); 3] = [
         ("wl-copy", &[]),
@@ -26,7 +46,7 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     ];
 
     for (cmd, args) in candidates {
-        let mut child = match Command::new(cmd).args(args).stdin(Stdio::piped()).spawn() {
+        let mut child = match host_command(cmd).args(args).stdin(Stdio::piped()).spawn() {
             Ok(child) => child,
             Err(_) => continue,
         };
@@ -57,18 +77,14 @@ pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
             // Not every terminal supports --working-directory; give it a
             // moment and if it exited with an error, retry with the cwd
             // inherited instead. Runs on a worker thread, so the wait is fine.
-            if let Ok(mut child) = std::process::Command::new(&terminal)
+            if let Ok(mut child) = host_command(&terminal)
                 .args(["--working-directory", cwd])
                 .spawn()
             {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 match child.try_wait() {
                     Ok(Some(status)) if !status.success() => {
-                        if std::process::Command::new(&terminal)
-                            .current_dir(cwd)
-                            .spawn()
-                            .is_ok()
-                        {
+                        if host_command(&terminal).current_dir(cwd).spawn().is_ok() {
                             return Ok(());
                         }
                     }
@@ -87,7 +103,7 @@ pub fn open_in_terminal(cwd: &str) -> Result<(), String> {
     ];
 
     for (cmd, args) in attempts {
-        let mut command = std::process::Command::new(cmd);
+        let mut command = host_command(cmd);
         command.args(args);
         if cmd == "xterm" {
             command.current_dir(cwd);
@@ -149,7 +165,13 @@ fn live_process(pid: u32) -> LiveProcess {
     }
 
     LiveProcess::Running {
-        name: parse_comm(&stat),
+        name: parse_comm(&stat).map(|comm| {
+            super::scanner::listed_name(comm, || {
+                std::fs::read_link(format!("/proc/{pid}/exe"))
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+        }),
         started_at: super::scanner::started_at_from_stat(&stat),
     }
 }

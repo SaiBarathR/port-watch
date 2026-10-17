@@ -165,7 +165,7 @@ port-watch check 53 --udp
 What the install puts on your PATH:
 
 - **macOS:** a symlink at `/usr/local/bin/port-watch`. That folder belongs to root on a stock Mac, so installing and uninstalling ask for an administrator password.
-- **Linux:** a symlink at `~/.local/bin/port-watch`.
+- **Linux:** a symlink at `~/.local/bin/port-watch`. From an AppImage it points at the `.AppImage` file; install again after moving that file.
 - **Windows:** a `port-watch.cmd` shim under `%LOCALAPPDATA%\Programs\Port Watch`, added to your user PATH. The app itself is a windowed program that a shell does not wait for; the shim makes `port-watch check` print before the prompt returns and hand back its exit code in both cmd and PowerShell.
 
 **Direct binary examples:**

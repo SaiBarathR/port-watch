@@ -14,12 +14,15 @@ pub fn scan(include_udp: bool) -> Result<RawScan, String> {
     }
 
     let mut details = HashMap::new();
-    for socket in &sockets {
+    for socket in &mut sockets {
         // PID 0 stands for an owner this user cannot see.
         if socket.pid != 0 {
-            details
+            let details = details
                 .entry(socket.pid)
                 .or_insert_with(|| read_details(socket.pid));
+            socket.name = listed_name(std::mem::take(&mut socket.name), || {
+                details.executable_path.clone()
+            });
         }
     }
 
@@ -118,6 +121,27 @@ fn resolve_uid_uncached(uid: u32) -> Option<String> {
     }
 }
 
+// Node names its main thread "MainThread", and on Linux a process goes by the
+// name of its main thread (the `comm` that ss and /proc/<pid>/stat report), so
+// every Node server would be listed as "MainThread". Such a process is listed
+// under its executable's name instead, here and wherever a stop checks that
+// the process is still the one that was listed.
+pub(super) fn listed_name(comm: String, executable_path: impl FnOnce() -> String) -> String {
+    if comm != "MainThread" {
+        return comm;
+    }
+    let executable_path = executable_path();
+    // The kernel marks an executable replaced on disk (Node upgraded under a
+    // running server) with this suffix.
+    let executable_path = executable_path
+        .strip_suffix(" (deleted)")
+        .unwrap_or(&executable_path);
+    Path::new(executable_path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or(comm)
+}
+
 // When the process started, in Unix seconds, from the contents of
 // /proc/<pid>/stat: the boot time plus the start offset the kernel records.
 // Unlike an uptime it is the same on every scan. 0 when it cannot be worked
@@ -160,6 +184,16 @@ pub(super) fn started_at_from_stat(proc_pid_stat: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_main_thread_is_listed_under_its_executables_name() {
+        let named = |comm: &str, exe: &str| listed_name(comm.into(), || exe.into());
+        assert_eq!(named("MainThread", "/home/me/.nvm/bin/node"), "node");
+        assert_eq!(named("MainThread", "/usr/bin/node (deleted)"), "node");
+        // Another user's process, whose executable cannot be read.
+        assert_eq!(named("MainThread", ""), "MainThread");
+        assert_eq!(named("python3", "/usr/bin/python3.12"), "python3");
+    }
 
     #[test]
     fn started_at_is_stable_and_recent_for_this_process() {

@@ -27,6 +27,13 @@ use tray::setup_tray;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        // First, as the plugin requires. Launching the app again (from the
+        // launcher, while its window is hidden in the tray) shows this one's
+        // window instead of starting a second copy with its own tray icon,
+        // scans and notifications.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())

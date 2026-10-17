@@ -14,6 +14,11 @@ pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
         return Err("URL must start with http:// or https://".into());
     }
 
+    #[cfg(target_os = "linux")]
+    if crate::platform::appimage::running() {
+        return crate::platform::shell::open_url(url);
+    }
+
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| format!("Failed to open URL: {e}"))
@@ -83,9 +88,16 @@ fn launch_editor(binary: &str, cwd: &str) -> std::io::Result<std::process::ExitS
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn launch_editor(binary: &str, cwd: &str) -> std::io::Result<std::process::ExitStatus> {
     std::process::Command::new(binary).arg(cwd).status()
+}
+
+#[cfg(target_os = "linux")]
+fn launch_editor(binary: &str, cwd: &str) -> std::io::Result<std::process::ExitStatus> {
+    crate::platform::appimage::host_command(binary)
+        .arg(cwd)
+        .status()
 }
 
 #[tauri::command]

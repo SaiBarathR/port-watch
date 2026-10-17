@@ -1,3 +1,4 @@
+pub mod appimage;
 pub mod classifier;
 pub mod guards;
 pub mod scanner;

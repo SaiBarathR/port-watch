@@ -18,21 +18,44 @@ pub fn open_in_file_manager(path: &str) -> Result<(), String> {
 }
 
 /// Opens a web address in the browser from an AppImage, whose own
-/// environment the opener plugin would hand the browser.
+/// environment the opener plugin would hand the browser. The same openers,
+/// in the same order, as the plugin tries.
 pub fn open_url(url: &str) -> Result<(), String> {
     use std::process::Stdio;
 
-    let mut child = host_command("xdg-open")
-        .arg(url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Failed to open URL: {e}"))?;
-    // xdg-open can stay until the browser it started exits; it is reaped
-    // off the caller's thread.
-    std::thread::spawn(move || child.wait());
-    Ok(())
+    let candidates: [(&str, &[&str]); 4] = [
+        ("xdg-open", &[]),
+        ("gio", &["open"]),
+        ("gnome-open", &[]),
+        ("kde-open", &[]),
+    ];
+
+    let mut last_error = None;
+    for (cmd, args) in candidates {
+        match host_command(cmd)
+            .args(args)
+            .arg(url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                // An opener can stay until the browser it started exits; it
+                // is reaped off the caller's thread.
+                std::thread::spawn(move || child.wait());
+                return Ok(());
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(format!(
+        "Failed to open URL: {}",
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_default()
+    ))
 }
 
 pub fn copy_to_clipboard(text: &str) -> Result<(), String> {

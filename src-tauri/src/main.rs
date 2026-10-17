@@ -46,7 +46,8 @@ fn attach_parent_console() {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let is_cli = args.len() >= 2 && (args[1] == "install-cli" || args[1] == "check");
+    let is_cli =
+        args.len() >= 2 && matches!(args[1].as_str(), "install-cli" | "check" | "--help" | "-h");
 
     #[cfg(windows)]
     if is_cli {
@@ -54,10 +55,10 @@ fn main() {
     }
 
     if is_cli {
-        if args[1] == "install-cli" {
-            port_watch_lib::cli_install::run_install_cli();
-        } else {
-            port_watch_lib::cli::run_check(&args[2..]);
+        match args[1].as_str() {
+            "install-cli" => port_watch_lib::cli_install::run_install_cli(),
+            "check" => port_watch_lib::cli::run_check(&args[2..]),
+            _ => port_watch_lib::cli::print_usage(),
         }
         return;
     }

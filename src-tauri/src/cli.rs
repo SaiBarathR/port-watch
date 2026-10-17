@@ -2,6 +2,16 @@ use std::process;
 
 use crate::scanner::{scan_listening_ports, PortProcess};
 
+pub fn print_usage() {
+    println!(
+        "Usage:
+  port-watch                         Open the app
+  port-watch check <port> [--udp]    Print what listens on <port> as JSON.
+                                     Exits 1 if something does, 0 if not, 2 on error
+  port-watch install-cli             Put this command on your PATH"
+    );
+}
+
 pub fn run_check(args: &[String]) {
     if args.is_empty() {
         eprintln!("Usage: port-watch check <port> [--udp]");

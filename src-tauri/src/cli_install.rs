@@ -31,6 +31,17 @@ pub fn run_install_cli() {
 }
 
 fn current_app_executable() -> Result<PathBuf, String> {
+    // From an AppImage, the executable is in a mount that goes when the app
+    // quits, and a link to it would be left dangling. The image itself stays,
+    // and runs the same command line.
+    #[cfg(target_os = "linux")]
+    if crate::platform::appimage::running() {
+        return crate::platform::appimage::image().ok_or_else(|| {
+            "The AppImage this app was started from has moved. Start it from where it is \
+             now, then install the command-line tool again."
+                .to_string()
+        });
+    }
     std::env::current_exe().map_err(|err| format!("Failed to resolve app executable: {err}"))
 }
 

@@ -26,7 +26,7 @@ pub use macos::guards;
 pub use windows::guards;
 
 #[cfg(target_os = "linux")]
-pub use linux::shell;
+pub use linux::{appimage, shell};
 #[cfg(target_os = "macos")]
 pub use macos::shell;
 #[cfg(target_os = "windows")]

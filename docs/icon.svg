@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3FE6CB"/><stop offset="1" stop-color="#0E8FC4"/>
+    </linearGradient>
+    <linearGradient id="hole" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0A1422"/><stop offset="1" stop-color="#14263A"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="184.5" fill="none" stroke="#fff" stroke-opacity=".28" stroke-width="3"/>
+  <!-- The socket: wide opening, clip notch at the foot -->
+  <path fill="url(#hole)" d="M286 300 H738 a36 36 0 0 1 36 36 V596 a36 36 0 0 1 -36 36 H654 V700 a36 36 0 0 1 -36 36 H406 a36 36 0 0 1 -36 -36 V632 H286 a36 36 0 0 1 -36 -36 V336 a36 36 0 0 1 36 -36 Z"/>
+  <!-- Contacts -->
+  <g fill="#E8FFFA">
+    <rect x="316" y="340" width="40" height="150" rx="10"/>
+    <rect x="388" y="340" width="40" height="150" rx="10"/>
+    <rect x="460" y="340" width="40" height="150" rx="10"/>
+    <rect x="532" y="340" width="40" height="150" rx="10"/>
+    <rect x="604" y="340" width="40" height="150" rx="10"/>
+    <rect x="676" y="340" width="40" height="150" rx="10"/>
+  </g>
+  <!-- The link light: something is listening -->
+  <circle cx="512" cy="632" r="40" fill="#FFC447"/>
+</svg>

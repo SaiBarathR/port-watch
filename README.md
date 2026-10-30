@@ -6,6 +6,11 @@
 
 Cross-platform desktop port monitor built with **Tauri 2**, **React**, and **shadcn/ui**. Scan listening TCP/UDP ports, classify processes, and manage dev servers from the system tray or full window.
 
+https://github.com/user-attachments/assets/3af50d9e-4c0c-4aa8-b758-bfa2412d5170
+
+<sub>Music: "Latin Industries" by Kevin MacLeod (incompetech.com), licensed under
+[Creative Commons: By Attribution 4.0](http://creativecommons.org/licenses/by/4.0/).</sub>
+
 ![Main window — dark mode](docs/screenshots/main-window-dark.png)
 
 ## Screenshots
